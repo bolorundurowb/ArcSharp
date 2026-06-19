@@ -35,6 +35,8 @@ run statics       0 "count=3"
 run fib           0 "fib(10)=55"
 run weak_null     0 "PASS"
 run cycle_weak    0 "done (weak cycle)"
+run cycle_weakref 0 "done (WeakReference cycle)"
+run weakref_get   0 "PASS under ARC"
 run cycle_strong  2 "done (strong cycle)"   # intentional leak without weak
 echo "=== $pass passed, $fail failed ==="
 [ "$fail" = 0 ]

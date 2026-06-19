@@ -182,6 +182,33 @@ void* arc_str_from_bool(int v) {
     return v ? arc_str_new("True", 4) : arc_str_new("False", 5);
 }
 
+/* ---- WeakReference<T> ----------------------------------------------- */
+/* A small ARC object whose single 8-byte slot (offset 24) holds a weak ref. */
+static void arc_weakref_deinit(void* p) {
+    void** slot = (void**)((char*)p + 24);
+    arc_store_weak(slot, 0);           /* weak-release the target */
+}
+static TypeInfo arc_weakref_ti = { "WeakReference", 32, arc_weakref_deinit, 0, 0, 0, 0 };
+
+void* arc_weakref_new(void* target) {
+    ObjHeader* h = (ObjHeader*)calloc(1, 32);
+    h->strong = 1; h->weak = 1; h->type = &arc_weakref_ti;
+    void** slot = (void**)((char*)h + 24);
+    arc_store_weak(slot, target);      /* weak-retain target */
+    g_alloc++;
+    return h;
+}
+void* arc_weakref_try_get(void* wr) {
+    if (!wr) return 0;
+    void** slot = (void**)((char*)wr + 24);
+    return arc_load_weak(slot);        /* +1 strong, or NULL if target died */
+}
+void arc_weakref_set(void* wr, void* target) {
+    if (!wr) return;
+    void** slot = (void**)((char*)wr + 24);
+    arc_store_weak(slot, target);
+}
+
 /* ---- console --------------------------------------------------------- */
 void arc_console_write(void* s, int nl) {
     if (s) fputs(arc_str_data(s), stdout);

@@ -244,6 +244,7 @@ public sealed class Parser
         if (name == "?") Report($"expected type, found {Current.Kind}");
         Advance();
         var ts = new TypeSyntax { Name = name, Line = line };
+        if (At(TokenKind.Less)) ParseTypeArgList(ts.TypeArgs);
         ts.Nullable = Accept(TokenKind.Question);
         if (At(TokenKind.OpenBracket) && Peek(1).Kind == TokenKind.CloseBracket)
         {
@@ -252,6 +253,13 @@ public sealed class Parser
             ts.Nullable = ts.Nullable || Accept(TokenKind.Question);
         }
         return ts;
+    }
+
+    private void ParseTypeArgList(List<TypeSyntax> into)
+    {
+        Expect(TokenKind.Less);
+        do { into.Add(ParseType()); } while (Accept(TokenKind.Comma));
+        Expect(TokenKind.Greater);
     }
 
     // ---- Statements --------------------------------------------------------
@@ -531,9 +539,39 @@ public sealed class Parser
         Expect(TokenKind.OpenParen);
         var args = new List<Expr>();
         if (!At(TokenKind.CloseParen))
-            do { args.Add(ParseExpression()); } while (Accept(TokenKind.Comma));
+            do { args.Add(ParseArgument()); } while (Accept(TokenKind.Comma));
         Expect(TokenKind.CloseParen);
         return args;
+    }
+
+    private Expr ParseArgument()
+    {
+        if (Accept(TokenKind.OutKw))
+        {
+            int line = Current.Line;
+            if (At(TokenKind.VarKw) && Peek(1).Kind == TokenKind.Identifier)
+            {
+                Advance();
+                string n = Advance().Text;
+                return new OutArgExpr { IsDeclaration = true, IsVar = true, Name = n, Line = line };
+            }
+            if (LooksLikeOutDecl())
+            {
+                var t = ParseType();
+                string n = Expect(TokenKind.Identifier).Text;
+                return new OutArgExpr { IsDeclaration = true, DeclType = t, Name = n, Line = line };
+            }
+            var tgt = ParseExpression();
+            return new OutArgExpr { Target = tgt, Line = line };
+        }
+        return ParseExpression();
+    }
+
+    private bool LooksLikeOutDecl()
+    {
+        bool typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
+            or TokenKind.StringKw or TokenKind.CharKw or TokenKind.DoubleKw or TokenKind.Identifier;
+        return typeStart && Peek(1).Kind == TokenKind.Identifier;
     }
 
     private Expr ParsePrimary()
@@ -590,6 +628,8 @@ public sealed class Parser
         int line = Current.Line;
         Expect(TokenKind.NewKw);
         var type = ParseTypeNameForNew();
+        var typeArgs = new List<TypeSyntax>();
+        if (At(TokenKind.Less)) ParseTypeArgList(typeArgs);
         if (At(TokenKind.OpenBracket))
         {
             Advance();
@@ -598,7 +638,7 @@ public sealed class Parser
             return new NewArrayExpr { ElementType = new TypeSyntax { Name = type, Line = line }, Size = size, Line = line };
         }
         var args = ParseArgumentList();
-        return new NewObjectExpr { TypeName = type, Arguments = args, Line = line };
+        return new NewObjectExpr { TypeName = type, TypeArgs = typeArgs, Arguments = args, Line = line };
     }
 
     private string ParseTypeNameForNew()

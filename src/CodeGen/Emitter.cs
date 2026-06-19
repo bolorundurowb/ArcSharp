@@ -78,6 +78,9 @@ public sealed class Emitter
             "declare void @arc_store_strong(i8**, i8*)",
             "declare void @arc_store_weak(i8**, i8*)",
             "declare i8* @arc_load_weak(i8**)",
+            "declare i8* @arc_weakref_new(i8*)",
+            "declare i8* @arc_weakref_try_get(i8*)",
+            "declare void @arc_weakref_set(i8*, i8*)",
             "declare i8* @arc_array_new(i64, i32)",
             "declare i64 @arc_array_length(i8*)",
             "declare void @arc_bounds_check(i8*, i64)",
@@ -370,6 +373,9 @@ public sealed class Emitter
             case BoundUnary u: return EmitUnary(u);
             case BoundAssign asn: return EmitAssign(asn);
             case BoundConversion cv: return EmitConversion(cv);
+            case BoundWeakRefNew wn: return EmitWeakRefNew(wn);
+            case BoundWeakRefTryGet wt: return EmitWeakRefTryGet(wt);
+            case BoundWeakRefSet ws: return EmitWeakRefSet(ws);
             case BoundConsoleCall cc: return EmitConsole(cc);
             default: return "0";
         }
@@ -675,6 +681,60 @@ public sealed class Emitter
         if (from.LlvmType == "i32" && to.LlvmType == "i64") return Inst($"sext i32 {v} to i64");
         if (from.LlvmType == "i64" && to.LlvmType == "i32") return Inst($"trunc i64 {v} to i32");
         return v;
+    }
+
+    private string EmitWeakRefNew(BoundWeakRefNew n)
+    {
+        var target = EmitR(n.Target);
+        if (n.Target.Type.IsReferenceType) _stmtTemps.Add(target);
+        return Inst($"call i8* @arc_weakref_new(i8* {target})");
+    }
+
+    private string EmitWeakRefTryGet(BoundWeakRefTryGet n)
+    {
+        var wr = EmitR(n.WeakRef); _stmtTemps.Add(wr);
+        var got = Inst($"call i8* @arc_weakref_try_get(i8* {wr})");
+        StoreRefLValue(n.OutTarget, got);
+        return Inst($"icmp ne i8* {got}, null");
+    }
+
+    private string EmitWeakRefSet(BoundWeakRefSet n)
+    {
+        var wr = EmitR(n.WeakRef); _stmtTemps.Add(wr);
+        var target = EmitR(n.Target); if (n.Target.Type.IsReferenceType) _stmtTemps.Add(target);
+        Do($"call void @arc_weakref_set(i8* {wr}, i8* {target})");
+        return "";
+    }
+
+    private void StoreRefLValue(BoundExpr lval, string value)
+    {
+        switch (lval)
+        {
+            case BoundLocal lo:
+                Do($"call void @arc_assign_take(i8** {_localSlot[lo.Symbol.Id]}, i8* {value})");
+                break;
+            case BoundParam p:
+                Do($"call void @arc_assign_take(i8** %arg{p.Symbol.Index}, i8* {value})");
+                break;
+            case BoundFieldAccess fa:
+            {
+                string addr;
+                if (fa.Field.IsStatic) addr = fa.Field.MangledStatic;
+                else { var recv = EmitR(fa.Receiver!); _stmtTemps.Add(recv); addr = FieldAddr(recv, fa.Field); }
+                var pp = Inst($"bitcast {fa.Field.Type.LlvmType}* {addr} to i8**");
+                Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
+                break;
+            }
+            case BoundIndex ix:
+            {
+                var arr = EmitR(ix.Receiver); _stmtTemps.Add(arr);
+                var idx = EmitR(ix.Index);
+                var addr = ElemAddr(arr, idx, ix.Type);
+                var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
+                Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
+                break;
+            }
+        }
     }
 
     private string EmitConsole(BoundConsoleCall c)

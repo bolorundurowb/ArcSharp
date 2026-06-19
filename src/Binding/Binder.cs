@@ -16,6 +16,7 @@ public sealed class Binder
 {
     private readonly Dictionary<string, TypeSymbol> _types = new();
     private readonly Dictionary<string, TypeSymbol> _arrayCache = new();
+    private readonly Dictionary<string, TypeSymbol> _weakRefCache = new();
     public List<Diagnostic> Diagnostics { get; } = new();
 
     // predefined
@@ -239,8 +240,26 @@ public sealed class Binder
     }
 
     // ---- type resolution ---------------------------------------------------
+    private TypeSymbol GetWeakRefType(TypeSymbol elem)
+    {
+        string key = "WeakReference<" + elem.Name + ">";
+        if (!_weakRefCache.TryGetValue(key, out var w))
+        {
+            w = new TypeSymbol { Name = key, Kind = TypeKind.WeakRef, ElementType = elem };
+            _weakRefCache[key] = w;
+        }
+        return w;
+    }
+
     private TypeSymbol ResolveType(TypeSyntax ts)
     {
+        if (ts.Name == "WeakReference" && ts.TypeArgs.Count == 1)
+        {
+            var elem = ResolveType(ts.TypeArgs[0]);
+            if (!elem.IsReferenceType && elem.Kind != TypeKind.Error)
+                Report(ts.Line, "WeakReference<T> requires a reference type argument");
+            return GetWeakRefType(elem);
+        }
         TypeSymbol baseT;
         if (!_types.TryGetValue(ts.Name, out var found))
         {
@@ -504,6 +523,8 @@ public sealed class Binder
 
             // instance / virtual / interface method
             var recv = BindExpr(ma.Target);
+            if (recv.Type.Kind == TypeKind.WeakRef)
+                return BindWeakRefCall(recv, ma.Name, inv.Arguments, inv.Line);
             if (recv.Type.Kind == TypeKind.Interface)
             {
                 string key = $"{recv.Type.Name}::{ma.Name}/{args.Count}";
@@ -538,6 +559,40 @@ public sealed class Binder
         return Err();
     }
 
+    private BoundExpr BindWeakRefCall(BoundExpr recv, string name, List<Expr> rawArgs, int line)
+    {
+        var elem = recv.Type.ElementType!;
+        if (name == "TryGetTarget")
+        {
+            if (rawArgs.Count != 1 || rawArgs[0] is not OutArgExpr oa)
+            { Report(line, "TryGetTarget expects a single 'out' argument"); return Err(); }
+            var outLval = BindOutTarget(oa, elem, line);
+            return new BoundWeakRefTryGet { WeakRef = recv, OutTarget = outLval, Type = _bool };
+        }
+        if (name == "SetTarget")
+        {
+            if (rawArgs.Count != 1) { Report(line, "SetTarget(target) takes one argument"); return Err(); }
+            var t = Convert(BindExpr(rawArgs[0]), elem, line);
+            return new BoundWeakRefSet { WeakRef = recv, Target = t, Type = _void };
+        }
+        Report(line, $"WeakReference<T> has no method '{name}'");
+        return Err();
+    }
+
+    private BoundExpr BindOutTarget(OutArgExpr oa, TypeSymbol expected, int line)
+    {
+        if (oa.IsDeclaration)
+        {
+            TypeSymbol t = oa.IsVar ? expected : ResolveType(oa.DeclType!);
+            var sym = DeclareLocal(oa.Name!, t, line);
+            return new BoundLocal { Symbol = sym, Type = t };
+        }
+        var lval = BindExpr(oa.Target!);
+        if (lval is not (BoundLocal or BoundParam or BoundFieldAccess or BoundIndex))
+            Report(line, "'out' argument must be a variable, field, or element");
+        return lval;
+    }
+
     private MethodSymbol? FindInterfaceMethod(TypeSymbol iface, string name, int argc)
     {
         foreach (var m in iface.Methods)
@@ -567,6 +622,14 @@ public sealed class Binder
 
     private BoundExpr BindNewObject(NewObjectExpr no)
     {
+        if (no.TypeName == "WeakReference" && no.TypeArgs.Count == 1)
+        {
+            var elem = ResolveType(no.TypeArgs[0]);
+            var wr = GetWeakRefType(elem);
+            if (no.Arguments.Count != 1) { Report(no.Line, "WeakReference<T>(target) takes one argument"); return Err(); }
+            var target = Convert(BindExpr(no.Arguments[0]), elem, no.Line);
+            return new BoundWeakRefNew { Target = target, Type = wr };
+        }
         if (!_types.TryGetValue(no.TypeName, out var t) || t.Kind is not (TypeKind.Class or TypeKind.Struct))
         { Report(no.Line, $"cannot instantiate '{no.TypeName}'"); return Err(); }
         var args = no.Arguments.Select(BindExpr).ToList();

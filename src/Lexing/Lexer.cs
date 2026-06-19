@@ -7,7 +7,7 @@ public enum TokenKind
     // keywords
     ClassKw, StructKw, InterfaceKw, PublicKw, PrivateKw, ProtectedKw, InternalKw,
     StaticKw, VirtualKw, OverrideKw, AbstractKw, NewKw, ReturnKw, IfKw, ElseKw,
-    WhileKw, ForKw, TrueKw, FalseKw, NullKw, ThisKw, BaseKw, WeakKw, UsingKw, NamespaceKw,
+    WhileKw, ForKw, TrueKw, FalseKw, NullKw, ThisKw, BaseKw, WeakKw, OutKw, UsingKw, NamespaceKw,
     VoidKw, IntKw, LongKw, BoolKw, StringKw, CharKw, DoubleKw, VarKw,
     // punctuation
     OpenBrace, CloseBrace, OpenParen, CloseParen, OpenBracket, CloseBracket,
@@ -45,7 +45,7 @@ public sealed class Lexer
         ["return"] = TokenKind.ReturnKw, ["if"] = TokenKind.IfKw, ["else"] = TokenKind.ElseKw,
         ["while"] = TokenKind.WhileKw, ["for"] = TokenKind.ForKw, ["true"] = TokenKind.TrueKw,
         ["false"] = TokenKind.FalseKw, ["null"] = TokenKind.NullKw, ["this"] = TokenKind.ThisKw,
-        ["base"] = TokenKind.BaseKw, ["weak"] = TokenKind.WeakKw, ["using"] = TokenKind.UsingKw,
+        ["base"] = TokenKind.BaseKw, ["weak"] = TokenKind.WeakKw, ["out"] = TokenKind.OutKw, ["using"] = TokenKind.UsingKw,
         ["namespace"] = TokenKind.NamespaceKw, ["void"] = TokenKind.VoidKw, ["int"] = TokenKind.IntKw,
         ["long"] = TokenKind.LongKw, ["bool"] = TokenKind.BoolKw, ["string"] = TokenKind.StringKw,
         ["char"] = TokenKind.CharKw, ["double"] = TokenKind.DoubleKw, ["var"] = TokenKind.VarKw,

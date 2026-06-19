@@ -51,6 +51,23 @@ public sealed class BoundIndex : BoundExpr
     public required BoundExpr Index;
 }
 
+public sealed class BoundWeakRefNew : BoundExpr
+{
+    public required BoundExpr Target;       // T value the weak ref points at
+}
+
+public sealed class BoundWeakRefTryGet : BoundExpr
+{
+    public required BoundExpr WeakRef;      // the WeakReference<T> object
+    public required BoundExpr OutTarget;    // lvalue receiving the strong (+1) target
+}
+
+public sealed class BoundWeakRefSet : BoundExpr
+{
+    public required BoundExpr WeakRef;
+    public required BoundExpr Target;
+}
+
 public enum BinKind { IntArith, LongArith, IntCmp, LongCmp, RefEq, BoolLogic, StrConcat, StrEq }
 
 public sealed class BoundBinary : BoundExpr

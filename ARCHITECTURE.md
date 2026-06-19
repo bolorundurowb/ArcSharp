@@ -27,12 +27,12 @@ count reaches zero.
 | Reclamation | Deferred, at collection time | Immediate, at last release |
 | Pauses | Stop-the-world phases | None (work is spread inline) |
 | Per-object cost | Amortized | A counter field + retain/release traffic |
-| Cycles | Collected automatically | **Leak** unless broken by `weak` |
+| Cycles | Collected automatically | **Leak** unless broken by `WeakReference<T>` |
 | Determinism | Finalizers run nondeterministically | Destructors run deterministically |
 
 The defining trade-off — and the reason GC exists — is the last row: naive ARC
-cannot reclaim **reference cycles**. ArcSharp addresses this the way Swift does,
-with explicit `weak` references (Section 5).
+cannot reclaim **reference cycles**. ArcSharp addresses this with the standard
+`System.WeakReference<T>` type (Section 5).
 
 ---
 
@@ -181,30 +181,50 @@ deterministic.
 
 ---
 
-## 5. Weak references (cycle breaking)
+## 5. Weak references (cycle breaking) via `System.WeakReference<T>`
 
-Standard C# has no `weak` storage class (only the `WeakReference<T>` *library*
-type, which ArcSharp does not model). ArcSharp therefore adds a **non-standard
-`weak` field modifier** as a language extension:
+Pure ARC leaks strong reference cycles. Rather than invent syntax, ArcSharp
+recognises the **standard BCL type `System.WeakReference<T>`** and lowers it to a
+non-owning (weak) handle. This keeps ArcSharp source **idiomatic C# that also
+compiles unchanged with Roslyn** (verified in `VERIFICATION.md`).
 
 ```csharp
-class Node {
-    public Node? next;        // strong
-    public weak Parent? owner; // weak — does not keep the parent alive
-}
+using System;
+class Parent { public Child child; }                 // strong
+class Child  { public WeakReference<Parent> owner; }  // weak: breaks the cycle
+
+child.owner = new WeakReference<Parent>(parent);
+if (child.owner.TryGetTarget(out var p)) { /* p is a live, +1 reference */ }
 ```
 
-- A `weak` field is stored/loaded via `arc_store_weak` / `arc_load_weak`.
-- Loading a weak field yields either a live, retained (+1) reference or `null`
-  if the target has been destroyed — so use sites are null-checked naturally.
-- `weak` fields are skipped by `__deinit` (they hold no strong count).
+Lowering:
 
-This is the mechanism that lets parent⇄child and other cyclic graphs be
-reclaimed. The verification suite includes a cycle that leaks without `weak`
-and is fully reclaimed with it.
+- A `WeakReference<T>` value is itself a small ARC-managed object: a standard
+  24-byte header plus one 8-byte slot at offset 24 holding a **weak** reference to
+  the target. It is strongly owned by whatever field/local holds it; when that
+  owner is released, the `WeakReference` object's destructor weak-releases its
+  target. So `Child` strongly owns the `WeakReference`, which only weakly points at
+  `Parent` — no cycle.
+- `new WeakReference<T>(x)` → `arc_weakref_new(x)` (weak-retains `x`).
+- `wr.TryGetTarget(out var p)` → `arc_weakref_try_get(wr)`, which returns a live
+  `+1` reference or `null` (via `arc_load_weak`); the result is stored into `p`
+  and the call yields `true`/`false`. Under ARC this flips to `false` the instant
+  the target's last strong reference is gone — **deterministically**, unlike the
+  CLR where it depends on GC timing.
+- `wr.SetTarget(x)` → `arc_weakref_set(wr, x)` (`arc_store_weak`).
 
-First-pass limitation: `weak` is supported on **fields**; weak *locals* and an
-`unowned` (non-zeroing) variant are designed but not yet implemented.
+To support this the compiler also gained minimal **generic-type parsing**
+(`Name<T>` in type and `new` positions) and **`out` arguments**
+(`out var p`, `out T p`, `out existing`).
+
+This is the mechanism that lets parent⇄child and other cyclic graphs be reclaimed.
+The verification suite includes a cycle that leaks under plain strong references
+and is fully reclaimed once the back-edge is a `WeakReference<T>`.
+
+> A legacy, non-standard `weak` **field modifier** also still works (it lowers to
+> the same `arc_store_weak`/`arc_load_weak` primitives) but is not idiomatic C# and
+> will not compile with Roslyn; `WeakReference<T>` is the recommended form. Weak
+> *locals* and an `unowned` (non-zeroing) variant remain future work.
 
 ---
 
@@ -212,9 +232,11 @@ First-pass limitation: `weak` is supported on **fields**; weak *locals* and an
 
 - **Types**: `int` (i32), `long` (i64), `bool` (i1), `void`, `string`, `char`;
   user `class`es; single-dimension arrays `T[]`; `struct`s (value-only fields).
-- **Classes**: instance fields (incl. `weak`), constructors, instance methods,
+- **Classes**: instance fields (incl. `WeakReference<T>`), constructors, instance methods,
   static methods/fields, single inheritance, `virtual`/`override` dispatch.
 - **Interfaces**: declaration + dispatch *(see Section 8 for status)*.
+- **`System.WeakReference<T>`**: `new`, `TryGetTarget(out ...)`, `SetTarget(...)` —
+  plus minimal generic-type parsing and `out` arguments to support it.
 - **Statements**: blocks, local declarations with initializer, assignment,
   `if`/`else`, `while`, `for`, `return`, expression statements.
 - **Expressions**: integer/long/bool/string/`null` literals; identifiers;
@@ -316,9 +338,10 @@ MSVC's `cl`) and linked with `lld-link`/`link.exe`.
 3. **BCL strategy.** Re-implement a minimal corelib under ARC, or shim to an
    existing native library? `string`, collections, and `IDisposable` all need a
    home.
-4. **`weak` surface.** Keep the non-standard `weak` keyword, or instead
-   recognize `System.WeakReference<T>` and lower it? The former is ergonomic but
-   diverges from C#; the latter is conformant but clumsier.
+4. **`weak` surface.** *(Resolved.)* ArcSharp lowers the standard
+   `System.WeakReference<T>` so source stays idiomatic and Roslyn-compatible; the
+   old non-standard `weak` keyword is retained only as a legacy alias. Remaining
+   question: do we also want weak *locals* / an `unowned` (non-zeroing) variant?
 5. **Value types with reference fields.** Copying such a struct must retain its
    reference fields (and releasing must release them). First pass restricts
    structs to value-only fields; do we lift this, and accept the copy cost?

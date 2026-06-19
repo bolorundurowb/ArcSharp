@@ -9,6 +9,7 @@ public sealed class TypeSyntax : Node
 {
     public required string Name;
     public int ArrayRank;          // 0 = not an array, 1 = T[]
+    public List<TypeSyntax> TypeArgs = new();   // generic type arguments, e.g. WeakReference<T>
     public bool Nullable;          // trailing '?', ignored semantically for ref types
     public override string ToString() => Name + (ArrayRank > 0 ? "[]" : "");
 }
@@ -141,7 +142,17 @@ public sealed class InvocationExpr : Expr
 public sealed class NewObjectExpr : Expr
 {
     public required string TypeName;
+    public List<TypeSyntax> TypeArgs = new();
     public List<Expr> Arguments = new();
+}
+
+public sealed class OutArgExpr : Expr
+{
+    public bool IsDeclaration;       // 'out var x' or 'out T x'
+    public bool IsVar;               // 'out var x'
+    public TypeSyntax? DeclType;     // for 'out T x'
+    public string? Name;             // declared name
+    public Expr? Target;             // for 'out existingLvalue'
 }
 
 public sealed class NewArrayExpr : Expr

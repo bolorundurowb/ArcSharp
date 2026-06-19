@@ -13,6 +13,36 @@ See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the design, the ARC ownership
 model, the supported language subset, the features ARC cannot reasonably support,
 and open questions. See **[VERIFICATION.md](VERIFICATION.md)** for test results.
 
+## Why ArcSharp — the rationale
+
+Most C# runs on a tracing garbage collector, and for the vast majority of
+applications that is the right default. ArcSharp targets the cases where it
+isn't: environments where developers would gladly trade away some of C#'s
+features — and some of the raw throughput of JIT-compiled IL — for two
+properties a tracing GC fundamentally cannot give them.
+
+- **Deterministic finalization.** Under ARC an object's destructor runs at the
+  exact, predictable point its last reference disappears — not "sometime later"
+  on a finalizer thread. That matters for scarce non-memory resources (file
+  handles, sockets, GPU buffers, locks, database connections) and for
+  `IDisposable`-style cleanup you want to be both automatic *and* timely, rather
+  than depending on `using` blocks everywhere and hoping finalizers eventually run.
+- **No garbage collector at all.** No background collection threads, no
+  stop-the-world pauses, no managed heap to scan, and a small, auditable runtime.
+  This suits latency-sensitive and soft-real-time workloads (audio, control loops,
+  trading, games), hard memory budgets, and constrained or embedded targets where
+  shipping — and pausing for — a collector is undesirable.
+
+Native AOT already compiles C# to native binaries, but it keeps the tracing GC;
+ArcSharp goes a step further and removes the collector itself. The cost is real
+and deliberate: pure reference counting leaks cycles (you manage them with
+`WeakReference<T>`), refcount traffic has its own overhead, and some language
+features lean hard on the GC (finalizer-queue semantics, `async` state-machine
+lifetimes, unrestricted shared-memory threading). ArcSharp's bet is that for the
+niches above, predictable, GC-free native execution is worth that price — and this
+proof of concept exists to explore how far a faithful C# subset can be pushed
+under that model.
+
 ## What works today (verified end-to-end)
 
 Classes, fields, instance + static methods, constructors with `: base(...)`
@@ -20,9 +50,10 @@ chaining, single inheritance, `virtual`/`override` (vtables), interfaces
 (itable dispatch), single-dimension arrays of value or reference elements,
 strings + `Console.Write`/`WriteLine`, `if`/`while`/`for`, `int`/`long`/`bool`,
 recursion — and the memory model: deterministic ARC with `retain`/`release`,
-recursive destruction, and a **`weak` field modifier that breaks reference
-cycles**. Every sample reclaims all memory (`live=0`); the one strong-cycle
-sample leaks on purpose to document the limitation.
+recursive destruction, and **`System.WeakReference<T>` to break reference cycles**
+(idiomatic C# that also compiles unchanged with Roslyn). Every sample reclaims all
+memory (`live=0`); the one strong-cycle sample leaks on purpose to document the
+limitation.
 
 ## Build & run
 
@@ -50,7 +81,7 @@ bash tools/verify.sh
 
 ```
 arcsharp <input.cs> [-o name] [--target windows|host] [--emit-llvm]
-                    [--run] [--no-bounds] [--runtime path] [--llc name] [--cc name]
+                    [--run] [--no-bounds] [--runtime path] [--llc name] [--cc name] [--clang path]
 ```
 
 ## Build on Windows x64 (native .exe)
@@ -77,15 +108,27 @@ a Windows linker it can find (Visual Studio Build Tools / Windows SDK; or add
 `-fuse-ld=lld` if you only have LLVM's `lld-link`). Without `--clang`, the driver
 instead emits a `.obj` via `llc` and prints the link command.
 
-## The `weak` extension
+## Breaking cycles with `WeakReference<T>`
 
-Standard C# has no `weak` storage class, so ArcSharp adds a non-standard `weak`
-field modifier to break cycles (see ARCHITECTURE.md §5):
+Pure ARC leaks reference cycles, so ArcSharp recognises the standard
+`System.WeakReference<T>` BCL type and lowers it to a non-owning (weak) handle.
+Because it is ordinary C#, the same source also compiles unchanged with Roslyn:
 
 ```csharp
-class Parent { public Child child; }       // strong: keeps child alive
-class Child  { public weak Parent owner; }  // weak: does NOT keep parent alive
+using System;
+class Parent { public Child child; }                 // strong: keeps child alive
+class Child  { public WeakReference<Parent> owner; }  // weak: breaks the cycle
+
+// ...
+child.owner = new WeakReference<Parent>(parent);
+if (child.owner.TryGetTarget(out var p)) { /* p is alive */ }
 ```
+
+`new WeakReference<T>(x)`, `TryGetTarget(out var p)` / `TryGetTarget(out Parent p)`,
+and `SetTarget(x)` are supported. Under ARC, `TryGetTarget` returns `false` the
+moment the target's last strong reference is gone — deterministically, unlike the
+CLR where it depends on GC timing. (A legacy non-standard `weak` field modifier
+also still works, but `WeakReference<T>` is the recommended, Roslyn-compatible form.)
 
 ## Layout
 
@@ -94,8 +137,4 @@ src/Lexing/    lexer + tokens
 src/Syntax/    AST + recursive-descent parser
 src/Binding/   symbols, type/vtable/itable layout, binder -> typed bound tree
 src/CodeGen/   LLVM IR emitter (ARC ownership woven in)
-src/Driver/    CLI + llc/linker invocation
-runtime/       arc_runtime.c — retain/release, weak, arrays, strings, console
-samples/       example programs used by the verifier
-tools/         env.sh (toolchain), verify.sh (test harness)
-```
+src/Driver/    CLI + llc

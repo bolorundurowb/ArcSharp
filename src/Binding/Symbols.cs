@@ -2,7 +2,7 @@ using ArcSharp.Syntax;
 
 namespace ArcSharp.Binding;
 
-public enum TypeKind { Primitive, String, Class, Struct, Interface, Array, Void, Error }
+public enum TypeKind { Primitive, String, Class, Struct, Interface, Array, Void, Error, WeakRef }
 
 public sealed class TypeSymbol
 {
@@ -26,7 +26,7 @@ public sealed class TypeSymbol
     public TypeSymbol? ElementType;
 
     public bool IsReferenceType =>
-        Kind is TypeKind.Class or TypeKind.String or TypeKind.Array or TypeKind.Interface;
+        Kind is TypeKind.Class or TypeKind.String or TypeKind.Array or TypeKind.Interface or TypeKind.WeakRef;
 
     public string LlvmType => Kind switch
     {
