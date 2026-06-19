@@ -1,0 +1,8 @@
+bin/
+obj/
+*.ll
+*.o
+*.obj
+*.exe
+
+.idea/
