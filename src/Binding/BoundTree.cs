@@ -11,6 +11,7 @@ public sealed class BoundLiteral : BoundExpr
     public long IntValue;
     public bool BoolValue;
     public string StringValue = "";
+    public double FloatValue;   // used for float and double literals
 }
 
 public sealed class BoundLocal : BoundExpr { public required LocalSymbol Symbol; }
@@ -68,7 +69,7 @@ public sealed class BoundWeakRefSet : BoundExpr
     public required BoundExpr Target;
 }
 
-public enum BinKind { IntArith, LongArith, IntCmp, LongCmp, RefEq, BoolLogic, StrConcat, StrEq }
+public enum BinKind { IntArith, LongArith, FloatArith, DoubleArith, IntCmp, LongCmp, FloatCmp, DoubleCmp, RefEq, BoolLogic, StrConcat, StrEq }
 
 public sealed class BoundBinary : BoundExpr
 {

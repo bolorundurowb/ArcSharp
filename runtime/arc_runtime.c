@@ -181,6 +181,16 @@ void* arc_str_from_int(intptr_t v) {
 void* arc_str_from_bool(int v) {
     return v ? arc_str_new("True", 4) : arc_str_new("False", 5);
 }
+void* arc_str_from_float(float v) {
+    char tmp[64];
+    int n = snprintf(tmp, sizeof tmp, "%g", (double)v);
+    return arc_str_new(tmp, n);
+}
+void* arc_str_from_double(double v) {
+    char tmp[64];
+    int n = snprintf(tmp, sizeof tmp, "%g", v);
+    return arc_str_new(tmp, n);
+}
 
 /* ---- WeakReference<T> ----------------------------------------------- */
 /* A small ARC object whose single 8-byte slot (offset 24) holds a weak ref. */
@@ -220,6 +230,14 @@ void arc_console_write_int(long v, int nl) {
 }
 void arc_console_write_bool(int v, int nl) {
     fputs(v ? "True" : "False", stdout);
+    if (nl) putchar('\n');
+}
+void arc_console_write_float(float v, int nl) {
+    printf("%g", (double)v);
+    if (nl) putchar('\n');
+}
+void arc_console_write_double(double v, int nl) {
+    printf("%g", v);
     if (nl) putchar('\n');
 }
 void arc_console_newline(void) { putchar('\n'); }

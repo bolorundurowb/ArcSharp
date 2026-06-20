@@ -235,6 +235,7 @@ public sealed class Parser
             TokenKind.BoolKw => "bool",
             TokenKind.StringKw => "string",
             TokenKind.CharKw => "char",
+            TokenKind.FloatKw => "float",
             TokenKind.DoubleKw => "double",
             TokenKind.VoidKw => "void",
             TokenKind.VarKw => "var",
@@ -315,7 +316,7 @@ public sealed class Parser
     private bool LooksLikeLocalDecl()
     {
         if (Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
-            or TokenKind.StringKw or TokenKind.CharKw or TokenKind.DoubleKw or TokenKind.VarKw)
+            or TokenKind.StringKw or TokenKind.CharKw or TokenKind.FloatKw or TokenKind.DoubleKw or TokenKind.VarKw)
         {
             if (Current.Kind == TokenKind.VarKw) return Peek(1).Kind == TokenKind.Identifier;
             if (Peek(1).Kind == TokenKind.Identifier) return true;
@@ -491,12 +492,13 @@ public sealed class Parser
         if (!At(TokenKind.OpenParen)) return false;
         Advance();
         bool typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
-            or TokenKind.StringKw or TokenKind.CharKw or TokenKind.DoubleKw or TokenKind.Identifier;
+            or TokenKind.StringKw or TokenKind.CharKw or TokenKind.FloatKw or TokenKind.DoubleKw or TokenKind.Identifier;
         if (!typeStart) { _i = save; return false; }
         var type = ParseType();
         if (!At(TokenKind.CloseParen)) { _i = save; return false; }
         Advance();
         bool exprStart = Current.Kind is TokenKind.Identifier or TokenKind.IntLiteral or TokenKind.LongLiteral
+            or TokenKind.FloatLiteral or TokenKind.DoubleLiteral
             or TokenKind.StringLiteral or TokenKind.CharLiteral or TokenKind.TrueKw or TokenKind.FalseKw
             or TokenKind.NullKw or TokenKind.OpenParen or TokenKind.ThisKw or TokenKind.NewKw
             or TokenKind.Bang or TokenKind.Minus;
@@ -570,7 +572,7 @@ public sealed class Parser
     private bool LooksLikeOutDecl()
     {
         bool typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
-            or TokenKind.StringKw or TokenKind.CharKw or TokenKind.DoubleKw or TokenKind.Identifier;
+            or TokenKind.StringKw or TokenKind.CharKw or TokenKind.FloatKw or TokenKind.DoubleKw or TokenKind.Identifier;
         return typeStart && Peek(1).Kind == TokenKind.Identifier;
     }
 
@@ -588,6 +590,16 @@ public sealed class Parser
             {
                 var t = Advance();
                 return new LiteralExpr { Kind = LiteralKind.Long, IntValue = long.Parse(t.Text), Line = line };
+            }
+            case TokenKind.FloatLiteral:
+            {
+                var t = Advance();
+                return new LiteralExpr { Kind = LiteralKind.Float, FloatValue = double.Parse(t.Text.TrimEnd('f', 'F')), Line = line };
+            }
+            case TokenKind.DoubleLiteral:
+            {
+                var t = Advance();
+                return new LiteralExpr { Kind = LiteralKind.Double, FloatValue = double.Parse(t.Text.TrimEnd('d', 'D')), Line = line };
             }
             case TokenKind.CharLiteral:
             {
@@ -651,6 +663,7 @@ public sealed class Parser
             TokenKind.BoolKw => Eat("bool"),
             TokenKind.StringKw => Eat("string"),
             TokenKind.CharKw => Eat("char"),
+            TokenKind.FloatKw => Eat("float"),
             TokenKind.DoubleKw => Eat("double"),
             TokenKind.Identifier => Advance().Text,
             _ => Eat("?")

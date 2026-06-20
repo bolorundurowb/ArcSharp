@@ -9,7 +9,8 @@ source "$HERE/tools/env.sh"
 
 BUILD=/tmp/arc-verify
 rm -rf "$BUILD"; mkdir -p "$BUILD/out"
-cp -r "$HERE/src" "$HERE/runtime" "$HERE/samples" "$HERE/ArcSharp.csproj" "$HERE/nuget.config" "$BUILD/"
+cp -r "$HERE/src" "$HERE/runtime" "$HERE/samples" "$HERE/ArcSharp.csproj" "$BUILD/"
+[ -f "$HERE/nuget.config" ] && cp "$HERE/nuget.config" "$BUILD/"
 cd "$BUILD"
 dotnet build -c Release >/tmp/arc-build.log 2>&1 || { echo "BUILD FAILED"; tail -20 /tmp/arc-build.log; exit 1; }
 ASC="dotnet $BUILD/bin/Release/net8.0/arcsharp.dll"
@@ -33,6 +34,7 @@ run interface     0 "circle=75"
 run refarray      0 "refarray sum=5"
 run statics       0 "count=3"
 run fib           0 "fib(10)=55"
+run floats        0 "area=19.6349"
 run weak_null     0 "PASS"
 run cycle_weak    0 "done (weak cycle)"
 run cycle_weakref 0 "done (WeakReference cycle)"

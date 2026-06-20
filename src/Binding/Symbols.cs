@@ -36,6 +36,7 @@ public sealed class TypeSymbol
             "long" => "i64",
             "char" => "i32",
             "bool" => "i1",
+            "float" => "float",
             "double" => "double",
             _ => "i32"
         },

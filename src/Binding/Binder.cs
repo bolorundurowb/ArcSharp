@@ -20,7 +20,7 @@ public sealed class Binder
     public List<Diagnostic> Diagnostics { get; } = new();
 
     // predefined
-    private readonly TypeSymbol _int, _long, _bool, _char, _double, _void, _string, _null, _error;
+    private readonly TypeSymbol _int, _long, _bool, _char, _float, _double, _void, _string, _null, _error;
 
     // interface selectors:  key "Iface::Method/argc" -> selector index
     private readonly Dictionary<string, int> _selectors = new();
@@ -36,12 +36,12 @@ public sealed class Binder
     public Binder()
     {
         _int = Prim("int"); _long = Prim("long"); _bool = Prim("bool");
-        _char = Prim("char"); _double = Prim("double");
+        _char = Prim("char"); _float = Prim("float"); _double = Prim("double");
         _void = new TypeSymbol { Name = "void", Kind = TypeKind.Void };
         _string = new TypeSymbol { Name = "string", Kind = TypeKind.String };
         _null = new TypeSymbol { Name = "<null>", Kind = TypeKind.Class };
         _error = new TypeSymbol { Name = "<error>", Kind = TypeKind.Error };
-        foreach (var t in new[] { _int, _long, _bool, _char, _double, _void, _string })
+        foreach (var t in new[] { _int, _long, _bool, _char, _float, _double, _void, _string })
             _types[t.Name] = t;
         TypeSymbol Prim(string n) => new() { Name = n, Kind = TypeKind.Primitive };
     }
@@ -433,6 +433,8 @@ public sealed class Binder
     {
         LiteralKind.Int => new BoundLiteral { Type = _int, LitKind = l.Kind, IntValue = l.IntValue },
         LiteralKind.Long => new BoundLiteral { Type = _long, LitKind = l.Kind, IntValue = l.IntValue },
+        LiteralKind.Float => new BoundLiteral { Type = _float, LitKind = l.Kind, FloatValue = l.FloatValue },
+        LiteralKind.Double => new BoundLiteral { Type = _double, LitKind = l.Kind, FloatValue = l.FloatValue },
         LiteralKind.Char => new BoundLiteral { Type = _char, LitKind = l.Kind, IntValue = l.IntValue },
         LiteralKind.Bool => new BoundLiteral { Type = _bool, LitKind = l.Kind, BoolValue = l.BoolValue },
         LiteralKind.String => new BoundLiteral { Type = _string, LitKind = l.Kind, StringValue = l.StringValue },
@@ -683,24 +685,41 @@ public sealed class Binder
             return new BoundBinary { Op = b.Op, Kind = BinKind.RefEq, Left = l, Right = r, Type = _bool };
 
         // numeric
-        bool isLong = l.Type == _long || r.Type == _long;
-        return BindNumeric(b, l, r, isLong);
+        return BindNumeric(b, l, r);
     }
 
-    private BoundExpr BindNumeric(BinaryExpr b, BoundExpr l, BoundExpr r, bool isLong)
+    private BoundExpr BindNumeric(BinaryExpr b, BoundExpr l, BoundExpr r)
     {
-        var ot = isLong ? _long : _int;
         if (!IsNumeric(l.Type) || !IsNumeric(r.Type))
         { Report(b.Line, $"operator '{b.Op}' cannot be applied to '{l.Type}' and '{r.Type}'"); return Err(); }
+
+        // promotion order: double > float > long > int
+        TypeSymbol ot;
+        if (l.Type == _double || r.Type == _double) ot = _double;
+        else if (l.Type == _float || r.Type == _float) ot = _float;
+        else if (l.Type == _long || r.Type == _long) ot = _long;
+        else ot = _int;
+
         l = Convert(l, ot, b.Line);
         r = Convert(r, ot, b.Line);
         bool cmp = b.Op is TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater
             or TokenKind.GreaterEquals or TokenKind.EqualsEquals or TokenKind.BangEquals;
-        var kind = cmp ? (isLong ? BinKind.LongCmp : BinKind.IntCmp) : (isLong ? BinKind.LongArith : BinKind.IntArith);
+
+        BinKind kind = (ot, cmp) switch
+        {
+            (_, true) when ot == _double => BinKind.DoubleCmp,
+            (_, true) when ot == _float => BinKind.FloatCmp,
+            (_, true) when ot == _long => BinKind.LongCmp,
+            (_, true) => BinKind.IntCmp,
+            (_, false) when ot == _double => BinKind.DoubleArith,
+            (_, false) when ot == _float => BinKind.FloatArith,
+            (_, false) when ot == _long => BinKind.LongArith,
+            (_, false) => BinKind.IntArith,
+        };
         return new BoundBinary { Op = b.Op, Kind = kind, Left = l, Right = r, Type = cmp ? _bool : ot };
     }
 
-    private bool IsNumeric(TypeSymbol t) => t == _int || t == _long || t == _char;
+    private bool IsNumeric(TypeSymbol t) => t == _int || t == _long || t == _char || t == _float || t == _double;
 
     private BoundExpr BindUnary(UnaryExpr u)
     {
@@ -712,7 +731,7 @@ public sealed class Binder
         }
         // minus
         if (!IsNumeric(o.Type)) Report(u.Line, "unary '-' requires a numeric operand");
-        return new BoundUnary { Op = u.Op, Operand = o, Type = o.Type == _long ? _long : _int };
+        return new BoundUnary { Op = u.Op, Operand = o, Type = o.Type };
     }
 
     private BoundExpr BindAssign(AssignExpr a)
@@ -759,6 +778,9 @@ public sealed class Binder
         // int -> long
         if (e.Type == _int && target == _long) return new BoundConversion { Operand = e, Type = target };
         if (e.Type == _char && (target == _int || target == _long)) return new BoundConversion { Operand = e, Type = target };
+        // integer <-> floating point
+        if (IsNumeric(e.Type) && IsNumeric(target) && e.Type != target)
+            return new BoundConversion { Operand = e, Type = target };
         // reference up/down cast (subclass <-> base, class <-> interface)
         if (e.Type.IsReferenceType && target.IsReferenceType && RefCompatible(e.Type, target))
             return new BoundConversion { Operand = e, Type = target };

@@ -3,12 +3,12 @@ namespace ArcSharp.Lexing;
 public enum TokenKind
 {
     // literals & names
-    Identifier, IntLiteral, LongLiteral, StringLiteral, CharLiteral,
+    Identifier, IntLiteral, LongLiteral, FloatLiteral, DoubleLiteral, StringLiteral, CharLiteral,
     // keywords
     ClassKw, StructKw, InterfaceKw, PublicKw, PrivateKw, ProtectedKw, InternalKw,
     StaticKw, VirtualKw, OverrideKw, AbstractKw, NewKw, ReturnKw, IfKw, ElseKw,
     WhileKw, ForKw, TrueKw, FalseKw, NullKw, ThisKw, BaseKw, WeakKw, OutKw, UsingKw, NamespaceKw,
-    VoidKw, IntKw, LongKw, BoolKw, StringKw, CharKw, DoubleKw, VarKw,
+    VoidKw, IntKw, LongKw, BoolKw, StringKw, CharKw, FloatKw, DoubleKw, VarKw,
     // punctuation
     OpenBrace, CloseBrace, OpenParen, CloseParen, OpenBracket, CloseBracket,
     Semicolon, Comma, Dot, Colon, Question,
@@ -46,9 +46,9 @@ public sealed class Lexer
         ["while"] = TokenKind.WhileKw, ["for"] = TokenKind.ForKw, ["true"] = TokenKind.TrueKw,
         ["false"] = TokenKind.FalseKw, ["null"] = TokenKind.NullKw, ["this"] = TokenKind.ThisKw,
         ["base"] = TokenKind.BaseKw, ["weak"] = TokenKind.WeakKw, ["out"] = TokenKind.OutKw, ["using"] = TokenKind.UsingKw,
-        ["namespace"] = TokenKind.NamespaceKw, ["void"] = TokenKind.VoidKw, ["int"] = TokenKind.IntKw,
+        ["namespace"] = TokenKind.NamespaceKw,         ["void"] = TokenKind.VoidKw, ["int"] = TokenKind.IntKw,
         ["long"] = TokenKind.LongKw, ["bool"] = TokenKind.BoolKw, ["string"] = TokenKind.StringKw,
-        ["char"] = TokenKind.CharKw, ["double"] = TokenKind.DoubleKw, ["var"] = TokenKind.VarKw,
+        ["char"] = TokenKind.CharKw, ["float"] = TokenKind.FloatKw, ["double"] = TokenKind.DoubleKw, ["var"] = TokenKind.VarKw,
     };
 
     private readonly string _text;
@@ -125,14 +125,50 @@ public sealed class Lexer
     private Token LexNumber(int start, int line, int col)
     {
         while (char.IsDigit(Current)) Advance();
+        bool hasDot = false;
+
+        // floating-point literal: digits . digits [suffix]
+        if (Current == '.' && char.IsDigit(Peek()))
+        {
+            Advance(); // '.'
+            while (char.IsDigit(Current)) Advance();
+            hasDot = true;
+        }
+
+        // suffix determines literal kind
+        if (Current == 'f' || Current == 'F')
+            return LexFloatSuffix(start, line, col);
+        if (Current == 'd' || Current == 'D')
+            return LexDoubleSuffix(start, line, col);
+
+        // decimal literals without suffix are double (C# semantics)
+        if (hasDot)
+            return new Token(TokenKind.DoubleLiteral, _text[start.._pos], start, line, col);
+
+        // integer suffixes
         if (Current == 'L' || Current == 'l')
         {
             string lt = _text[start.._pos];
             Advance();
             return new Token(TokenKind.LongLiteral, lt, start, line, col);
         }
+
         string text = _text[start.._pos];
         return new Token(TokenKind.IntLiteral, text, start, line, col);
+    }
+
+    private Token LexFloatSuffix(int start, int line, int col)
+    {
+        if (Current == 'f' || Current == 'F') Advance();
+        string text = _text[start.._pos];
+        return new Token(TokenKind.FloatLiteral, text, start, line, col);
+    }
+
+    private Token LexDoubleSuffix(int start, int line, int col)
+    {
+        if (Current == 'd' || Current == 'D') Advance();
+        string text = _text[start.._pos];
+        return new Token(TokenKind.DoubleLiteral, text, start, line, col);
     }
 
     private Token LexString(int start, int line, int col)

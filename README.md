@@ -11,7 +11,8 @@ produces a native, GC-less executable. Target: **Windows x64**
 
 See **[ARCHITECTURE.md](ARCHITECTURE.md)** for the design, the ARC ownership
 model, the supported language subset, the features ARC cannot reasonably support,
-and open questions. See **[VERIFICATION.md](VERIFICATION.md)** for test results.
+and open questions. See **[VERIFICATION.md](VERIFICATION.md)** for test results,
+and **[ROADMAP.md](ROADMAP.md)** for the production-readiness plan.
 
 ## Why ArcSharp — the rationale
 
@@ -49,7 +50,7 @@ Classes, fields, instance + static methods, constructors with `: base(...)`
 chaining, single inheritance, `virtual`/`override` (vtables), interfaces
 (itable dispatch), single-dimension arrays of value or reference elements,
 strings + `Console.Write`/`WriteLine`, `if`/`while`/`for`, `int`/`long`/`bool`,
-recursion — and the memory model: deterministic ARC with `retain`/`release`,
+`float`/`double`, recursion — and the memory model: deterministic ARC with `retain`/`release`,
 recursive destruction, and **`System.WeakReference<T>` to break reference cycles**
 (idiomatic C# that also compiles unchanged with Roslyn). Every sample reclaims all
 memory (`live=0`); the one strong-cycle sample leaks on purpose to document the

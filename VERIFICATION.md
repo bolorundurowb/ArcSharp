@@ -15,7 +15,7 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (10/10 passing)
+## Results (11/11 passing)
 
 | Sample | Exercises | ARC accounting | Output |
 |---|---|---|---|
@@ -24,6 +24,7 @@ still retained at exit). **`live=0` means no leaks.**
 | `refarray` | `T[]` of reference elements; per-element release on array teardown | alloc=7 dead=7 **live=0** | `refarray sum=5` |
 | `statics` | static fields + static methods, `int Main()` exit code | alloc=3 dead=3 **live=0** | `count=3` |
 | `fib` | recursion, `long` return, `while`, `Console.Write` | alloc=22 dead=22 **live=0** | `fib(10)=55` |
+| `floats` | `float`/`double` literals, arithmetic, comparisons, string concat | alloc=7 dead=7 **live=0** | `area=19.6349` |
 | `weak_null` | a `weak` field whose target is destroyed → load yields `null` | alloc=3 dead=3 **live=0** | `weak-after-death is null: PASS` |
 | `cycle_weak` | parent⇄child graph with a **weak** back-reference | alloc=3 dead=3 **live=0** | `done (weak cycle)` |
 | `cycle_weakref` | same cycle, broken with idiomatic **`WeakReference<T>`** | alloc=4 dead=4 **live=0** | `done (WeakReference cycle)` |

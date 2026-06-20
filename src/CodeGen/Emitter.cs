@@ -89,15 +89,20 @@ public sealed class Emitter
             "declare i8* @arc_str_concat(i8*, i8*)",
             "declare i8* @arc_str_from_int(i64)",
             "declare i8* @arc_str_from_bool(i1)",
+            "declare i8* @arc_str_from_float(float)",
+            "declare i8* @arc_str_from_double(double)",
             "declare void @arc_console_write(i8*, i32)",
             "declare void @arc_console_write_int(i64, i32)",
             "declare void @arc_console_write_bool(i1, i32)",
+            "declare void @arc_console_write_float(float, i32)",
+            "declare void @arc_console_write_double(double, i32)",
             "declare void @arc_console_newline()",
             "declare void @arc_report()",
         }) _mod.AppendLine(d);
     }
 
-    private static string ZeroOf(TypeSymbol t) => t.IsReferenceType ? "null" : (t.LlvmType == "double" ? "0.0" : "0");
+    private static string ZeroOf(TypeSymbol t) => t.IsReferenceType ? "null" : (IsFloatType(t) ? "0.0" : "0");
+    private static bool IsFloatType(TypeSymbol t) => t.LlvmType is "float" or "double";
 
     private void EmitTypeInfo(TypeSymbol t, StringBuilder fns)
     {
@@ -234,7 +239,14 @@ public sealed class Emitter
         fns.AppendLine();
     }
 
-    private static string DefaultVal(TypeSymbol t) => t.IsReferenceType ? "null" : (t.LlvmType == "double" ? "0.0" : "0");
+    private static string DefaultVal(TypeSymbol t) => t.IsReferenceType ? "null" : (IsFloatType(t) ? "0.0" : "0");
+
+    private static string FormatFloatConstant(string s)
+    {
+        // LLVM float/double constants must contain a decimal point or exponent.
+        if (s.Contains('.') || s.Contains('e', StringComparison.OrdinalIgnoreCase)) return s;
+        return s + ".0";
+    }
     private void StoreRet(string val, TypeSymbol t) => Do($"store {t.LlvmType} {val}, {t.LlvmType}* %retval");
 
     private void EmitStmt(BoundStmt s)
@@ -388,6 +400,12 @@ public sealed class Emitter
             case Syntax.LiteralKind.Int: return l.IntValue.ToString();
             case Syntax.LiteralKind.Char: return l.IntValue.ToString();
             case Syntax.LiteralKind.Long: return l.IntValue.ToString();
+            case Syntax.LiteralKind.Float:
+            {
+                var d = FormatFloatConstant(((double)l.FloatValue).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                return Inst($"fptrunc double {d} to float");
+            }
+            case Syntax.LiteralKind.Double: return FormatFloatConstant(l.FloatValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
             case Syntax.LiteralKind.Bool: return l.BoolValue ? "1" : "0";
             case Syntax.LiteralKind.Null: return "null";
             case Syntax.LiteralKind.String:
@@ -548,8 +566,12 @@ public sealed class Emitter
         {
             case BinKind.IntArith: return Inst($"{ArithOp(b.Op)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.LongArith: return Inst($"{ArithOp(b.Op)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.FloatArith: return Inst($"{FloatArithOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.DoubleArith: return Inst($"{FloatArithOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.IntCmp: return Inst($"icmp {CmpOp(b.Op)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.LongCmp: return Inst($"icmp {CmpOp(b.Op)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.FloatCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.DoubleCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.RefEq:
             {
                 var l = EmitR(b.Left); if (b.Left.Type.IsReferenceType) _stmtTemps.Add(l);
@@ -568,11 +590,24 @@ public sealed class Emitter
         TokenKind.Slash => "sdiv", TokenKind.Percent => "srem", _ => "add"
     };
 
+    private static string FloatArithOp(TokenKind op) => op switch
+    {
+        TokenKind.Plus => "fadd", TokenKind.Minus => "fsub", TokenKind.Star => "fmul",
+        TokenKind.Slash => "fdiv", TokenKind.Percent => "frem", _ => "fadd"
+    };
+
     private static string CmpOp(TokenKind op) => op switch
     {
         TokenKind.EqualsEquals => "eq", TokenKind.BangEquals => "ne",
         TokenKind.Less => "slt", TokenKind.LessEquals => "sle",
         TokenKind.Greater => "sgt", TokenKind.GreaterEquals => "sge", _ => "eq"
+    };
+
+    private static string FloatCmpOp(TokenKind op) => op switch
+    {
+        TokenKind.EqualsEquals => "oeq", TokenKind.BangEquals => "one",
+        TokenKind.Less => "olt", TokenKind.LessEquals => "ole",
+        TokenKind.Greater => "ogt", TokenKind.GreaterEquals => "oge", _ => "oeq"
     };
 
     private string EmitLogic(BoundBinary b)
@@ -606,6 +641,8 @@ public sealed class Emitter
         if (e.Type.LlvmType == "i1") return Inst($"call i8* @arc_str_from_bool(i1 {v})");
         if (e.Type.LlvmType == "i64") return Inst($"call i8* @arc_str_from_int(i64 {v})");
         if (e.Type.LlvmType == "i32") { var x = Inst($"sext i32 {v} to i64"); return Inst($"call i8* @arc_str_from_int(i64 {x})"); }
+        if (e.Type.LlvmType == "float") return Inst($"call i8* @arc_str_from_float(float {v})");
+        if (e.Type.LlvmType == "double") return Inst($"call i8* @arc_str_from_double(double {v})");
         if (e.Type.IsReferenceType) return v;
         return Inst("call i8* @arc_str_from_int(i64 0)");
     }
@@ -614,6 +651,7 @@ public sealed class Emitter
     {
         var v = EmitR(u.Operand);
         if (u.Op == TokenKind.Bang) return Inst($"xor i1 {v}, true");
+        if (u.Type.LlvmType is "float" or "double") return Inst($"fneg {u.Type.LlvmType} {v}");
         return Inst($"sub {u.Type.LlvmType} 0, {v}");
     }
 
@@ -678,8 +716,18 @@ public sealed class Emitter
         var from = cv.Operand.Type;
         var to = cv.Type;
         if (from.IsReferenceType && to.IsReferenceType) return v;
+        // integer extension/truncation
         if (from.LlvmType == "i32" && to.LlvmType == "i64") return Inst($"sext i32 {v} to i64");
         if (from.LlvmType == "i64" && to.LlvmType == "i32") return Inst($"trunc i64 {v} to i32");
+        // integer -> floating point
+        if (from.LlvmType is "i32" or "i64" && to.LlvmType is "float" or "double")
+            return Inst($"sitofp {from.LlvmType} {v} to {to.LlvmType}");
+        // floating point -> integer
+        if (from.LlvmType is "float" or "double" && to.LlvmType is "i32" or "i64")
+            return Inst($"fptosi {from.LlvmType} {v} to {to.LlvmType}");
+        // float <-> double
+        if (from.LlvmType == "float" && to.LlvmType == "double") return Inst($"fpext float {v} to double");
+        if (from.LlvmType == "double" && to.LlvmType == "float") return Inst($"fptrunc double {v} to float");
         return v;
     }
 
@@ -746,6 +794,8 @@ public sealed class Emitter
         if (t.LlvmType == "i1") { var v = EmitR(c.Argument); Do($"call void @arc_console_write_bool(i1 {v}, i32 {nl})"); return ""; }
         if (t.LlvmType == "i64") { var v = EmitR(c.Argument); Do($"call void @arc_console_write_int(i64 {v}, i32 {nl})"); return ""; }
         if (t.LlvmType == "i32") { var v = EmitR(c.Argument); var x = Inst($"sext i32 {v} to i64"); Do($"call void @arc_console_write_int(i64 {x}, i32 {nl})"); return ""; }
+        if (t.LlvmType == "float") { var v = EmitR(c.Argument); Do($"call void @arc_console_write_float(float {v}, i32 {nl})"); return ""; }
+        if (t.LlvmType == "double") { var v = EmitR(c.Argument); Do($"call void @arc_console_write_double(double {v}, i32 {nl})"); return ""; }
         var rv = EmitR(c.Argument); if (t.IsReferenceType) _stmtTemps.Add(rv);
         Do($"call void @arc_console_write(i8* {rv}, i32 {nl})");
         return "";

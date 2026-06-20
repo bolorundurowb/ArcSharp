@@ -113,7 +113,7 @@ public sealed class ReturnStmt : Stmt { public Expr? Value; }
 // ---- Expressions -----------------------------------------------------------
 public abstract class Expr : Node { }
 
-public enum LiteralKind { Int, Long, Bool, String, Null, Char }
+public enum LiteralKind { Int, Long, Float, Double, Bool, String, Null, Char }
 
 public sealed class LiteralExpr : Expr
 {
@@ -121,6 +121,7 @@ public sealed class LiteralExpr : Expr
     public long IntValue;
     public bool BoolValue;
     public string StringValue = "";
+    public double FloatValue;   // used for both float and double literals
 }
 
 public sealed class NameExpr : Expr { public required string Name; }
