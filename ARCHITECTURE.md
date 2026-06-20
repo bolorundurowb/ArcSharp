@@ -23,13 +23,13 @@ carries a count of how many strong references point at it, the count is adjusted
 as references are created and destroyed, and the object is freed the instant the
 count reaches zero.
 
-| | Tracing GC (.NET) | ARC (ArcSharp) |
-|---|---|---|
-| Reclamation | Deferred, at collection time | Immediate, at last release |
-| Pauses | Stop-the-world phases | None (work is spread inline) |
-| Per-object cost | Amortized | A counter field + retain/release traffic |
-| Cycles | Collected automatically | **Leak** unless broken by `WeakReference<T>` |
-| Determinism | Finalizers run nondeterministically | Destructors run deterministically |
+|                 | Tracing GC (.NET)                   | ARC (ArcSharp)                               |
+|-----------------|-------------------------------------|----------------------------------------------|
+| Reclamation     | Deferred, at collection time        | Immediate, at last release                   |
+| Pauses          | Stop-the-world phases               | None (work is spread inline)                 |
+| Per-object cost | Amortized                           | A counter field + retain/release traffic     |
+| Cycles          | Collected automatically             | **Leak** unless broken by `WeakReference<T>` |
+| Determinism     | Finalizers run nondeterministically | Destructors run deterministically            |
 
 The defining trade-off — and the reason GC exists — is the last row: naive ARC
 cannot reclaim **reference cycles**. ArcSharp addresses this with the standard
@@ -65,15 +65,15 @@ cannot reclaim **reference cycles**. ArcSharp addresses this with the standard
 
 Source layout:
 
-| Path | Responsibility |
-|---|---|
-| `src/Lexing/` | `Token`, `SyntaxKind`, `Lexer` — text → token stream |
-| `src/Syntax/` | AST node records + `Parser` (recursive descent) |
-| `src/Binding/` | `TypeSymbol`, `MethodSymbol`, `FieldSymbol`, `Binder` — name/type resolution, layout, vtables, type checking → bound tree |
-| `src/CodeGen/` | `Emitter` — bound tree → LLVM IR, with ARC ops woven in |
-| `src/Driver/` | `Compilation`, CLI, invocation of `llc` + linker |
-| `runtime/arc_runtime.c` | Object header, retain/release, weak table, type info, strings, arrays, console |
-| `samples/` | Example `.cs` programs used as tests |
+| Path                    | Responsibility                                                                                                            |
+|-------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| `src/Lexing/`           | `Token`, `SyntaxKind`, `Lexer` — text → token stream                                                                      |
+| `src/Syntax/`           | AST node records + `Parser` (recursive descent)                                                                           |
+| `src/Binding/`          | `TypeSymbol`, `MethodSymbol`, `FieldSymbol`, `Binder` — name/type resolution, layout, vtables, type checking → bound tree |
+| `src/CodeGen/`          | `Emitter` — bound tree → LLVM IR, with ARC ops woven in                                                                   |
+| `src/Driver/`           | `Compilation`, CLI, invocation of `llc` + linker                                                                          |
+| `runtime/arc_runtime.c` | Object header, retain/release, weak table, type info, strings, arrays, console                                            |
+| `samples/`              | Example `.cs` programs used as tests                                                                                      |
 
 ---
 
@@ -153,13 +153,13 @@ The emitter normalizes every evaluated reference expression to **+1 (owned)**:
 
 A +1 value is then *consumed* in exactly one of these ways, or released:
 
-| Context | Disposition of the +1 value |
-|---|---|
+| Context                                  | Disposition of the +1 value                                                                  |
+|------------------------------------------|----------------------------------------------------------------------------------------------|
 | Stored into a local / field / array slot | Ownership transferred: release the slot's **old** value, write the new one (no extra retain) |
-| Passed as a call argument | Borrowed by callee; caller releases it at **end of statement** |
-| Used as a call receiver / member target | Borrowed; released at end of statement |
-| `return`ed | Becomes the caller's +1; not released |
-| Discarded (expression statement) | Released immediately |
+| Passed as a call argument                | Borrowed by callee; caller releases it at **end of statement**                               |
+| Used as a call receiver / member target  | Borrowed; released at end of statement                                                       |
+| `return`ed                               | Becomes the caller's +1; not released                                                        |
+| Discarded (expression statement)         | Released immediately                                                                         |
 
 Two cleanup scopes guarantee balance:
 
@@ -297,24 +297,24 @@ and *scope* (just not built yet).
 
 ## 8. Implementation status (first pass)
 
-| Area | Status |
-|---|---|
-| Lexer, parser, AST | Implemented |
-| Binder: classes, inheritance, fields, methods, statics | Implemented |
-| Type checking (core) | Implemented (lightweight) |
-| Virtual / override dispatch (vtables) | Implemented |
-| ARC: retain/release/deinit, statement & scope cleanup | Implemented |
-| Weak fields + cycle reclamation | Implemented |
-| Arrays (value & reference element types) | Implemented |
-| Strings + `Console` | Implemented |
-| Control flow (`if`/`while`/`for`/`return`) | Implemented |
-| `float` / `double` | Implemented |
-| Structs (value types) | Parsed & bound; codegen pending |
-| Interfaces (itable dispatch) | Implemented & verified |
-| Diagnostics with codes (`ARC0001`…) + severities | Implemented |
-| Multi-file compilation (merged type declarations) | Implemented |
-| Definite-assignment analysis (conservative, warns) | Implemented |
-| Generics, async, closures, exceptions | Not implemented (Section 7 / ROADMAP) |
+| Area                                                   | Status                                |
+|--------------------------------------------------------|---------------------------------------|
+| Lexer, parser, AST                                     | Implemented                           |
+| Binder: classes, inheritance, fields, methods, statics | Implemented                           |
+| Type checking (core)                                   | Implemented (lightweight)             |
+| Virtual / override dispatch (vtables)                  | Implemented                           |
+| ARC: retain/release/deinit, statement & scope cleanup  | Implemented                           |
+| Weak fields + cycle reclamation                        | Implemented                           |
+| Arrays (value & reference element types)               | Implemented                           |
+| Strings + `Console`                                    | Implemented                           |
+| Control flow (`if`/`while`/`for`/`return`)             | Implemented                           |
+| `float` / `double`                                     | Implemented                           |
+| Structs (value types)                                  | Parsed & bound; codegen pending       |
+| Interfaces (itable dispatch)                           | Implemented & verified                |
+| Diagnostics with codes (`ARC0001`…) + severities       | Implemented                           |
+| Multi-file compilation (merged type declarations)      | Implemented                           |
+| Definite-assignment analysis (conservative, warns)     | Implemented                           |
+| Generics, async, closures, exceptions                  | Not implemented (Section 7 / ROADMAP) |
 
 See `VERIFICATION.md` (generated by the test run) for the exact set of sample
 programs that compile and run, with ARC alloc/free accounting.
