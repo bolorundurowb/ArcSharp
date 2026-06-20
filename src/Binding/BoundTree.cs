@@ -1,4 +1,5 @@
 using ArcSharp.Lexing;
+using ArcSharp.Syntax;
 
 namespace ArcSharp.Binding;
 
@@ -25,10 +26,17 @@ public sealed class BoundLocal : BoundExpr
 public sealed class BoundParam : BoundExpr
 {
     public required ParamSymbol Symbol;
+    public bool ByRef;
 }
 
 public sealed class BoundThis : BoundExpr
 {
+}
+
+public sealed class BoundByRefArg : BoundExpr
+{
+    public required BoundExpr Lvalue;
+    public required RefKind Kind;
 }
 
 public sealed class BoundFieldAccess : BoundExpr
@@ -102,6 +110,7 @@ public sealed class BoundBinary : BoundExpr
 {
     public TokenKind Op;
     public BinKind Kind;
+    public bool IsUnsigned;
     public required BoundExpr Left;
     public required BoundExpr Right;
 }
@@ -123,7 +132,19 @@ public sealed class BoundConversion : BoundExpr
     public required BoundExpr Operand; // e.g. int -> long, or reference upcast/downcast
 }
 
-public sealed class BoundLength : BoundExpr // array.Length or string.Length
+public sealed class BoundIs : BoundExpr
+{
+    public required BoundExpr Operand;
+    public required TypeSymbol TestType;
+}
+
+public sealed class BoundAs : BoundExpr
+{
+    public required BoundExpr Operand;
+    public required TypeSymbol TestType;
+}
+
+public sealed class BoundLength : BoundExpr      // array.Length or string.Length
 {
     public required BoundExpr Receiver;
     public bool IsString;

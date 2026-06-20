@@ -32,7 +32,10 @@ struct TypeInfo {
     intptr_t    vtableLen;
     void**      itable;
     intptr_t    itableLen;
+    TypeInfo*   base;
 };
+
+int arc_is_instance(void* obj, TypeInfo* target);
 
 /* ---- accounting (for verification / leak detection) ------------------ */
 static long g_alloc = 0;   /* total objects allocated                    */
@@ -115,7 +118,7 @@ void* arc_load_weak(void** slot) {
 /* ---- arrays ---------------------------------------------------------- */
 static void arc_array_ref_deinit(void* p) {
     intptr_t len = *(intptr_t*)((char*)p + 24);
-    void** elems = (void**)((char*)p + 32);
+    void** elems = (void**)((char*)p + 40);
     for (intptr_t i = 0; i < len; i++)
         if (elems[i]) arc_release(elems[i]);
 }
@@ -124,21 +127,34 @@ static void arc_array_val_deinit(void* p) { (void)p; }
 static TypeInfo arc_array_ref_ti = { "<ref[]>", 0, arc_array_ref_deinit, 0, 0, 0, 0 };
 static TypeInfo arc_array_val_ti = { "<val[]>", 0, arc_array_val_deinit, 0, 0, 0, 0 };
 
-void* arc_array_new(intptr_t length, int isRef) {
-    intptr_t size = 32 + 8 * (length < 0 ? 0 : length);
+void* arc_array_new(intptr_t length, int isRef, TypeInfo* elemType) {
+    intptr_t size = 40 + 8 * (length < 0 ? 0 : length);
     ObjHeader* h = (ObjHeader*)calloc(1, (size_t)size);
     h->strong = 1; h->weak = 1;
     h->type = isRef ? &arc_array_ref_ti : &arc_array_val_ti;
     *(intptr_t*)((char*)h + 24) = length;
+    *(TypeInfo**)((char*)h + 32) = elemType;
     g_alloc++;
     return h;
 }
 intptr_t arc_array_length(void* p) { return p ? *(intptr_t*)((char*)p + 24) : 0; }
+static TypeInfo* arc_array_elem_type(void* p) { return p ? *(TypeInfo**)((char*)p + 32) : 0; }
 
 void arc_bounds_check(void* arr, intptr_t i) {
     intptr_t len = arc_array_length(arr);
     if (i < 0 || i >= len) {
         fprintf(stderr, "IndexOutOfRangeException: index %ld, length %ld\n", (long)i, (long)len);
+        arc_report();
+        exit(70);
+    }
+}
+
+void arc_array_store_check(void* arr, intptr_t i, void* value) {
+    arc_bounds_check(arr, i);
+    TypeInfo* elem = arc_array_elem_type(arr);
+    if (!value || !elem) return;
+    if (!arc_is_instance(value, elem)) {
+        fprintf(stderr, "ArrayTypeMismatchException: cannot store object in array of %s\n", elem->name);
         arc_report();
         exit(70);
     }
@@ -213,6 +229,15 @@ void* arc_weakref_try_get(void* wr) {
     void** slot = (void**)((char*)wr + 24);
     return arc_load_weak(slot);        /* +1 strong, or NULL if target died */
 }
+int arc_is_instance(void* obj, TypeInfo* target) {
+    if (!obj || !target) return 0;
+    TypeInfo* cur = ((ObjHeader*)obj)->type;
+    while (cur) {
+        if (cur == target) return 1;
+        cur = cur->base;
+    }
+    return 0;
+}
 void arc_weakref_set(void* wr, void* target) {
     if (!wr) return;
     void** slot = (void**)((char*)wr + 24);
@@ -224,8 +249,8 @@ void arc_console_write(void* s, int nl) {
     if (s) fputs(arc_str_data(s), stdout);
     if (nl) fputc('\n', stdout);
 }
-void arc_console_write_int(long v, int nl) {
-    printf("%ld", v);
+void arc_console_write_int(long long v, int nl) {
+    printf("%lld", v);
     if (nl) putchar('\n');
 }
 void arc_console_write_bool(int v, int nl) {

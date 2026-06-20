@@ -58,8 +58,17 @@ public sealed class FieldDecl : MemberDecl
     public bool IsWeak;
 }
 
+public sealed class PropertyDecl : MemberDecl
+{
+    public required TypeSyntax Type;
+    public required string Name;
+    public bool HasGetter;
+    public bool HasSetter;
+}
+
 public sealed class ParameterSyntax : Node
 {
+    public RefKind RefKind;
     public required TypeSyntax Type;
     public required string Name;
 }
@@ -186,13 +195,16 @@ public sealed class NewObjectExpr : Expr
     public List<Expr> Arguments = [];
 }
 
-public sealed class OutArgExpr : Expr
+public enum RefKind { None, Ref, Out, In }
+
+public sealed class ByRefArgExpr : Expr
 {
+    public required RefKind Kind;
     public bool IsDeclaration; // 'out var x' or 'out T x'
     public bool IsVar; // 'out var x'
     public TypeSyntax? DeclType; // for 'out T x'
     public string? Name; // declared name
-    public Expr? Target; // for 'out existingLvalue'
+    public Expr? Target; // for existing lvalue
 }
 
 public sealed class NewArrayExpr : Expr
@@ -231,4 +243,16 @@ public sealed class CastExpr : Expr
 {
     public required TypeSyntax Type;
     public required Expr Operand;
+}
+
+public sealed class IsExpr : Expr
+{
+    public required Expr Operand;
+    public required TypeSyntax TestType;
+}
+
+public sealed class AsExpr : Expr
+{
+    public required Expr Operand;
+    public required TypeSyntax TestType;
 }

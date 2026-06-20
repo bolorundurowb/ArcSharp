@@ -1,6 +1,7 @@
 using System.Text;
 using ArcSharp.Lexing;
 using ArcSharp.Binding;
+using ArcSharp.Syntax;
 
 namespace ArcSharp.CodeGen;
 
@@ -66,7 +67,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         _mod.AppendLine("; ArcSharp generated module");
         _mod.AppendLine($"target triple = \"{_triple}\"");
         _mod.AppendLine();
-        _mod.AppendLine("%TypeInfo = type { i8*, i64, void (i8*)*, i8**, i64, i8**, i64 }");
+        _mod.AppendLine("%TypeInfo = type { i8*, i64, void (i8*)*, i8**, i64, i8**, i64, i8* }");
         _mod.AppendLine();
         EmitRuntimeDecls();
         _mod.AppendLine();
@@ -120,9 +121,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                      "declare i8* @arc_weakref_new(i8*)",
                      "declare i8* @arc_weakref_try_get(i8*)",
                      "declare void @arc_weakref_set(i8*, i8*)",
-                     "declare i8* @arc_array_new(i64, i32)",
-                     "declare i64 @arc_array_length(i8*)",
-                     "declare void @arc_bounds_check(i8*, i64)",
+            "declare i8* @arc_array_new(i64, i32, %TypeInfo*)",
+            "declare i64 @arc_array_length(i8*)",
+            "declare void @arc_bounds_check(i8*, i64)",
+            "declare void @arc_array_store_check(i8*, i64, i8*)",
                      "declare i8* @arc_str_lit(i8*, i64)",
                      "declare i64 @arc_str_length(i8*)",
                      "declare i8* @arc_str_concat(i8*, i8*)",
@@ -135,8 +137,9 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                      "declare void @arc_console_write_bool(i1, i32)",
                      "declare void @arc_console_write_float(float, i32)",
                      "declare void @arc_console_write_double(double, i32)",
-                     "declare void @arc_console_newline()",
-                     "declare void @arc_report()",
+            "declare void @arc_console_newline()",
+            "declare i32 @arc_is_instance(i8*, %TypeInfo*)",
+            "declare void @arc_report()",
                  })
         {
             _mod.AppendLine(d);
@@ -184,11 +187,14 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var itExpr = s > 0
             ? $"i8** getelementptr ([{s} x i8*], [{s} x i8*]* @{t.Name}__itable, i64 0, i64 0)"
             : "i8** null";
+        var baseExpr = t.BaseType != null
+            ? $"i8* bitcast (%TypeInfo* @{t.BaseType.Name}__ti to i8*)"
+            : "i8* null";
 
         _mod.AppendLine(
             $"@{t.Name}__ti = constant %TypeInfo {{ " +
             $"i8* getelementptr ([{nameLen} x i8], [{nameLen} x i8]* @{t.Name}__name, i64 0, i64 0), " +
-            $"i64 {size}, void (i8*)* @{t.Name}__deinit, {vtExpr}, i64 {k}, {itExpr}, i64 {s} }}");
+            $"i64 {size}, void (i8*)* @{t.Name}__deinit, {vtExpr}, i64 {k}, {itExpr}, i64 {s}, {baseExpr} }}");
 
         fns.AppendLine($"define void @{t.Name}__deinit(i8* %self) {{");
         fns.AppendLine("entry:");
@@ -222,7 +228,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var ps = new List<string> { "i8*" };
         foreach (var p in m.Parameters)
         {
-            ps.Add(p.Type.LlvmType);
+            ps.Add(p.RefKind != RefKind.None ? p.Type.LlvmType + "*" : p.Type.LlvmType);
         }
 
         return $"{m.ReturnType.LlvmType} ({string.Join(", ", ps)})*";
@@ -248,7 +254,8 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
         foreach (var p in m.Parameters)
         {
-            ps.Add($"{p.Type.LlvmType} %a{p.Index}");
+            var ty = p.RefKind != RefKind.None ? p.Type.LlvmType + "*" : p.Type.LlvmType;
+            ps.Add($"{ty} %a{p.Index}");
         }
 
         if (!m.IsStatic)
@@ -259,8 +266,16 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
         foreach (var p in m.Parameters)
         {
-            _entry.Add($"  %arg{p.Index} = alloca {p.Type.LlvmType}");
-            _entry.Add($"  store {p.Type.LlvmType} %a{p.Index}, {p.Type.LlvmType}* %arg{p.Index}");
+            if (p.RefKind != RefKind.None)
+            {
+                _entry.Add($"  %arg{p.Index} = alloca {p.Type.LlvmType}*");
+                _entry.Add($"  store {p.Type.LlvmType}* %a{p.Index}, {p.Type.LlvmType}** %arg{p.Index}");
+            }
+            else
+            {
+                _entry.Add($"  %arg{p.Index} = alloca {p.Type.LlvmType}");
+                _entry.Add($"  store {p.Type.LlvmType} %a{p.Index}, {p.Type.LlvmType}* %arg{p.Index}");
+            }
         }
 
         foreach (var loc in b.AllLocals)
@@ -522,7 +537,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         {
             case BoundLiteral l: return EmitLiteral(l);
             case BoundLocal lo: return EmitLoadSlot(_localSlot[lo.Symbol.Id], lo.Type);
-            case BoundParam p: return EmitLoadSlot($"%arg{p.Symbol.Index}", p.Type);
+            case BoundParam p: return EmitLoadParam(p);
             case BoundThis:
             {
                 Do("call void @arc_retain(i8* %this)");
@@ -538,6 +553,9 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             case BoundUnary u: return EmitUnary(u);
             case BoundAssign asn: return EmitAssign(asn);
             case BoundConversion cv: return EmitConversion(cv);
+            case BoundIs i: return EmitIs(i);
+            case BoundAs a: return EmitAs(a);
+            case BoundByRefArg br: return EmitR(br.Lvalue);
             case BoundWeakRefNew wn: return EmitWeakRefNew(wn);
             case BoundWeakRefTryGet wt: return EmitWeakRefTryGet(wt);
             case BoundWeakRefSet ws: return EmitWeakRefSet(ws);
@@ -553,6 +571,8 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             case Syntax.LiteralKind.Int: return l.IntValue.ToString();
             case Syntax.LiteralKind.Char: return l.IntValue.ToString();
             case Syntax.LiteralKind.Long: return l.IntValue.ToString();
+            case Syntax.LiteralKind.UInt: return ((uint)l.IntValue).ToString();
+            case Syntax.LiteralKind.ULong: return ((ulong)l.IntValue).ToString();
             case Syntax.LiteralKind.Float:
             {
                 var d = FormatFloatConstant(
@@ -599,6 +619,54 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
 
         return v;
+    }
+
+    private string EmitLoadParam(BoundParam p)
+    {
+        if (!p.ByRef)
+        {
+            return EmitLoadSlot($"%arg{p.Symbol.Index}", p.Type);
+        }
+
+        var ptr = Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}");
+        var v = Inst($"load {p.Type.LlvmType}, {p.Type.LlvmType}* {ptr}");
+        if (p.Type.IsReferenceType)
+        {
+            Do($"call void @arc_retain(i8* {v})");
+        }
+
+        return v;
+    }
+
+    private string LValueAddress(BoundExpr lval)
+    {
+        switch (lval)
+        {
+            case BoundLocal lo:
+                return _localSlot[lo.Symbol.Id];
+            case BoundParam p:
+                if (p.ByRef)
+                {
+                    return Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}");
+                }
+
+                return $"%arg{p.Symbol.Index}";
+            case BoundFieldAccess fa:
+            {
+                var recv = EmitR(fa.Receiver!);
+                _stmtTemps.Add(recv);
+                return FieldAddr(recv, fa.Field);
+            }
+            case BoundIndex ix:
+            {
+                var arr = EmitR(ix.Receiver);
+                _stmtTemps.Add(arr);
+                var idx = EmitR(ix.Index);
+                return ElemAddr(arr, idx, ix.Type);
+            }
+        }
+
+        return "null";
     }
 
     private string FieldAddr(string basePtr, FieldSymbol f)
@@ -662,15 +730,25 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
 
         var argVals = new List<string>();
-        foreach (var a in c.Arguments)
+        for (var i = 0; i < c.Arguments.Count; i++)
         {
-            var v = EmitR(a);
-            if (a.Type.IsReferenceType)
+            var a = c.Arguments[i];
+            var p = i < c.Method.Parameters.Count ? c.Method.Parameters[i] : null;
+            if (p != null && p.RefKind != RefKind.None && a is BoundByRefArg bra)
             {
-                _stmtTemps.Add(v);
+                var addr = LValueAddress(bra.Lvalue);
+                argVals.Add($"{p.Type.LlvmType}* {addr}");
             }
+            else
+            {
+                var v = EmitR(a);
+                if (a.Type.IsReferenceType)
+                {
+                    _stmtTemps.Add(v);
+                }
 
-            argVals.Add($"{a.Type.LlvmType} {v}");
+                argVals.Add($"{a.Type.LlvmType} {v}");
+            }
         }
 
         var m = c.Method;
@@ -745,19 +823,22 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var size = EmitR(a.Size);
         var s64 = Inst($"sext i32 {size} to i64");
         var isRef = a.ElementType.IsReferenceType ? 1 : 0;
-        return Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef})");
+        var elemTi = a.ElementType.Kind == TypeKind.Class
+            ? $"%TypeInfo* @{a.ElementType.Name}__ti"
+            : "%TypeInfo* null";
+        return Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef}, {elemTi})");
     }
 
-    private string ElemAddr(string arr, string idx, TypeSymbol elem)
+    private string ElemAddr(string arr, string idx, TypeSymbol elem, bool checkBounds = true)
     {
         var i64 = Inst($"sext i32 {idx} to i64");
-        if (_boundsChecks)
+        if (checkBounds && _boundsChecks)
         {
             Do($"call void @arc_bounds_check(i8* {arr}, i64 {i64})");
         }
 
         var mul = Inst($"mul i64 {i64}, 8");
-        var off = Inst($"add i64 {mul}, 32");
+        var off = Inst($"add i64 {mul}, 40");
         var p = Inst($"getelementptr i8, i8* {arr}, i64 {off}");
         return Inst($"bitcast i8* {p} to {elem.LlvmType}*");
     }
@@ -781,12 +862,12 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
     {
         switch (b.Kind)
         {
-            case BinKind.IntArith: return Inst($"{ArithOp(b.Op)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
-            case BinKind.LongArith: return Inst($"{ArithOp(b.Op)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.IntArith: return Inst($"{ArithOp(b.Op, b.IsUnsigned)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.LongArith: return Inst($"{ArithOp(b.Op, b.IsUnsigned)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.FloatArith: return Inst($"{FloatArithOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleArith: return Inst($"{FloatArithOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
-            case BinKind.IntCmp: return Inst($"icmp {CmpOp(b.Op)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
-            case BinKind.LongCmp: return Inst($"icmp {CmpOp(b.Op)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.IntCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.LongCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.FloatCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.RefEq:
@@ -811,13 +892,13 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
     }
 
-    private static string ArithOp(TokenKind op) => op switch
+    private static string ArithOp(TokenKind op, bool unsigned) => op switch
     {
         TokenKind.Plus => "add",
         TokenKind.Minus => "sub",
         TokenKind.Star => "mul",
-        TokenKind.Slash => "sdiv",
-        TokenKind.Percent => "srem",
+        TokenKind.Slash => unsigned ? "udiv" : "sdiv",
+        TokenKind.Percent => unsigned ? "urem" : "srem",
         _ => "add"
     };
 
@@ -831,14 +912,14 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         _ => "fadd"
     };
 
-    private static string CmpOp(TokenKind op) => op switch
+    private static string CmpOp(TokenKind op, bool unsigned) => op switch
     {
         TokenKind.EqualsEquals => "eq",
         TokenKind.BangEquals => "ne",
-        TokenKind.Less => "slt",
-        TokenKind.LessEquals => "sle",
-        TokenKind.Greater => "sgt",
-        TokenKind.GreaterEquals => "sge",
+        TokenKind.Less => unsigned ? "ult" : "slt",
+        TokenKind.LessEquals => unsigned ? "ule" : "sle",
+        TokenKind.Greater => unsigned ? "ugt" : "sgt",
+        TokenKind.GreaterEquals => unsigned ? "uge" : "sge",
         _ => "eq"
     };
 
@@ -905,7 +986,13 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
         if (e.Type.LlvmType == "i32")
         {
-            var x = Inst($"sext i32 {v} to i64");
+            var x = Inst($"{(e.Type.IsUnsignedInteger ? "zext" : "sext")} i32 {v} to i64");
+            return Inst($"call i8* @arc_str_from_int(i64 {x})");
+        }
+
+        if (e.Type.LlvmType is "i8" or "i16")
+        {
+            var x = Inst($"{(e.Type.IsUnsignedInteger ? "zext" : "sext")} {e.Type.LlvmType} {v} to i64");
             return Inst($"call i8* @arc_str_from_int(i64 {x})");
         }
 
@@ -961,8 +1048,30 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
                 return value;
             case BoundParam p:
-                Do($"store {p.Type.LlvmType} {value}, {p.Type.LlvmType}* %arg{p.Symbol.Index}");
+            {
+                string addr;
+                if (p.ByRef)
+                {
+                    addr = Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}");
+                }
+                else
+                {
+                    addr = $"%arg{p.Symbol.Index}";
+                }
+
+                if (p.Type.IsReferenceType)
+                {
+                    var pp = Inst($"bitcast {p.Type.LlvmType}* {addr} to i8**");
+                    Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
+                    Do($"call void @arc_retain(i8* {value})");
+                }
+                else
+                {
+                    Do($"store {p.Type.LlvmType} {value}, {p.Type.LlvmType}* {addr}");
+                }
+
                 return value;
+            }
             case BoundFieldAccess fa:
                 return EmitFieldStore(fa, value);
             case BoundIndex ix:
@@ -970,15 +1079,18 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 var arr = EmitR(ix.Receiver);
                 _stmtTemps.Add(arr);
                 var idx = EmitR(ix.Index);
-                var addr = ElemAddr(arr, idx, ix.Type);
+                var i64 = Inst($"sext i32 {idx} to i64");
                 if (ix.Type.IsReferenceType)
                 {
+                    Do($"call void @arc_array_store_check(i8* {arr}, i64 {i64}, i8* {value})");
+                    var addr = ElemAddr(arr, idx, ix.Type, checkBounds: false);
                     var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
                     Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
                     Do($"call void @arc_retain(i8* {value})");
                 }
                 else
                 {
+                    var addr = ElemAddr(arr, idx, ix.Type);
                     Do($"store {ix.Type.LlvmType} {value}, {ix.Type.LlvmType}* {addr}");
                 }
 
@@ -1034,26 +1146,35 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
 
         // integer extension/truncation
-        if (from.LlvmType == "i32" && to.LlvmType == "i64")
+        if (from.IsInteger && to.IsInteger)
         {
-            return Inst($"sext i32 {v} to i64");
-        }
+            var fromBits = int.Parse(from.LlvmType.TrimStart('i'));
+            var toBits = int.Parse(to.LlvmType.TrimStart('i'));
+            if (fromBits < toBits)
+            {
+                return Inst($"{(from.IsUnsignedInteger ? "zext" : "sext")} {from.LlvmType} {v} to {to.LlvmType}");
+            }
 
-        if (from.LlvmType == "i64" && to.LlvmType == "i32")
-        {
-            return Inst($"trunc i64 {v} to i32");
+            if (fromBits > toBits)
+            {
+                return Inst($"trunc {from.LlvmType} {v} to {to.LlvmType}");
+            }
+
+            return v; // same-width reinterpretation (e.g., int <-> uint)
         }
 
         // integer -> floating point
-        if (from.LlvmType is "i32" or "i64" && to.LlvmType is "float" or "double")
+        if (from.IsInteger && to.IsFloat)
         {
-            return Inst($"sitofp {from.LlvmType} {v} to {to.LlvmType}");
+            var op = from.IsUnsignedInteger ? "uitofp" : "sitofp";
+            return Inst($"{op} {from.LlvmType} {v} to {to.LlvmType}");
         }
 
         // floating point -> integer
-        if (from.LlvmType is "float" or "double" && to.LlvmType is "i32" or "i64")
+        if (from.IsFloat && to.IsInteger)
         {
-            return Inst($"fptosi {from.LlvmType} {v} to {to.LlvmType}");
+            var op = to.IsUnsignedInteger ? "fptoui" : "fptosi";
+            return Inst($"{op} {from.LlvmType} {v} to {to.LlvmType}");
         }
 
         // float <-> double
@@ -1068,6 +1189,25 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
 
         return v;
+    }
+
+    private string EmitIs(BoundIs i)
+    {
+        var v = EmitR(i.Operand);
+        if (i.Operand.Type.IsReferenceType) _stmtTemps.Add(v);
+        var r = Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{i.TestType.Name}__ti)");
+        return Inst($"icmp ne i32 {r}, 0");
+    }
+
+    private string EmitAs(BoundAs a)
+    {
+        var v = EmitR(a.Operand);
+        if (a.Operand.Type.IsReferenceType) _stmtTemps.Add(v);
+        var r = Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{a.TestType.Name}__ti)");
+        var ok = Inst($"icmp ne i32 {r}, 0");
+        var cast = Inst($"bitcast i8* {v} to i8*");
+        var nullPtr = "null";
+        return Inst($"select i1 {ok}, i8* {cast}, i8* {nullPtr}");
     }
 
     private string EmitWeakRefNew(BoundWeakRefNew n)
@@ -1180,7 +1320,15 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         if (t.LlvmType == "i32")
         {
             var v = EmitR(c.Argument);
-            var x = Inst($"sext i32 {v} to i64");
+            var x = Inst($"{(t.IsUnsignedInteger ? "zext" : "sext")} i32 {v} to i64");
+            Do($"call void @arc_console_write_int(i64 {x}, i32 {nl})");
+            return "";
+        }
+
+        if (t.LlvmType is "i8" or "i16")
+        {
+            var v = EmitR(c.Argument);
+            var x = Inst($"{(t.IsUnsignedInteger ? "zext" : "sext")} {t.LlvmType} {v} to i64");
             Do($"call void @arc_console_write_int(i64 {x}, i32 {nl})");
             return "";
         }

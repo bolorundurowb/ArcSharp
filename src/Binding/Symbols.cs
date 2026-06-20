@@ -26,6 +26,7 @@ public sealed class TypeSymbol
     public List<FieldSymbol> InstanceFields = []; // includes inherited, in layout order
     public List<FieldSymbol> StaticFields = [];
     public List<MethodSymbol> Methods = []; // declared in this type (incl ctors)
+    public List<PropertySymbol> Properties = []; // declared in this type
     public List<MethodSymbol> Vtable = []; // virtual slot order (incl inherited)
     public Dictionary<int, MethodSymbol> InterfaceImpl = []; // selector -> implementing method
     public ClassDecl? ClassSyntax;
@@ -45,6 +46,12 @@ public sealed class TypeSymbol
         {
             "int" => "i32",
             "long" => "i64",
+            "byte" => "i8",
+            "sbyte" => "i8",
+            "short" => "i16",
+            "ushort" => "i16",
+            "uint" => "i32",
+            "ulong" => "i64",
             "char" => "i32",
             "bool" => "i1",
             "float" => "float",
@@ -55,6 +62,11 @@ public sealed class TypeSymbol
         TypeKind.Struct => "%struct." + Name,
         _ => "i8*" // all reference types are opaque pointers
     };
+
+    public bool IsUnsignedInteger => Kind == TypeKind.Primitive && Name is "byte" or "ushort" or "uint" or "ulong";
+    public bool IsSignedInteger => Kind == TypeKind.Primitive && Name is "sbyte" or "short" or "int" or "long";
+    public bool IsInteger => IsSignedInteger || IsUnsignedInteger || Name == "char";
+    public bool IsFloat => Kind == TypeKind.Primitive && Name is "float" or "double";
 
     // size of one storage slot for this type, in bytes (uniform 8-byte model)
     public int SlotSize => Kind == TypeKind.Struct ? InstanceFields.Count * 8 : 8;
@@ -113,6 +125,7 @@ public sealed class ParamSymbol
 {
     public required string Name;
     public required TypeSymbol Type;
+    public RefKind RefKind;
     public int Index;
 }
 
@@ -121,6 +134,19 @@ public sealed class LocalSymbol
     public required string Name;
     public required TypeSymbol Type;
     public int Id; // unique within a method
+}
+
+public sealed class PropertySymbol
+{
+    public required string Name;
+    public required TypeSymbol Type;
+    public required TypeSymbol Owner;
+    public bool IsStatic;
+    public bool HasGetter;
+    public bool HasSetter;
+    public FieldSymbol? BackingField;
+    public MethodSymbol? Getter;
+    public MethodSymbol? Setter;
 }
 
 public sealed class MethodSymbol

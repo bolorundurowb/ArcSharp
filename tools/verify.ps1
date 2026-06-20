@@ -68,6 +68,11 @@ try {
     Invoke-Sample weakref_get   0 "PASS under ARC"             @("weakref_get")
     Invoke-Sample cycle_strong  2 "done (strong cycle)"        @("cycle_strong")   # intentional leak without weak
     Invoke-Sample multifile     0 "twice=42"                   @("mf_main", "mf_lib")   # two source files compiled together
+    Invoke-Sample numerics      0 "150"                        @("numerics")             # byte/sbyte/short/ushort/uint/ulong
+    Invoke-Sample byref         0 "3"                          @("byref")                # ref/out/in parameters
+    Invoke-Sample properties    0 "Alice"                      @("properties")           # auto-properties
+    Invoke-Sample isas          0 "as Cat: null"               @("isas")                 # is/as runtime type checks
+    Invoke-Sample covariance      0 "stored Dog"                 @("covariance")           # array covariance runtime check
 
     Write-Host "=== $($script:pass) passed, $($script:fail) failed ==="
     if ($script:fail -ne 0) { exit 1 }

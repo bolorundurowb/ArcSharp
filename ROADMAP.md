@@ -27,9 +27,7 @@ so building is done on a developer machine).
 - **Definite-assignment analysis** (§5) — a conservative structured flow pass
   warns on locals read before assignment (promotable to errors via `-Werror`).
 
-**Next phases (sequenced, not yet implemented):** full integer numeric tower
-(byte/short/unsigned) → `ref`/`out`/`in` parameters, properties,
-`using`/`IDisposable` → `is`/`as` + array covariance + type-soundness checks →
+**Next phases (sequenced, not yet implemented):** `using`/`IDisposable` →
 generics (monomorphization) → ARC hardening (atomics, borrow elision) → backend
 upgrade (LLVM C API, debug info, optimization, multi-target) → BCL & threading.
 Per-item design and "concrete first steps" are in the sections below.
@@ -48,16 +46,16 @@ unmarked items are still planned.
 | **Closures / lambdas** | P1 | Lower lambdas to **heap-allocated closure objects** that capture variables by reference into fields. ARC owns the closure. Capture `this` as a weak field by default unless explicitly strong (Swift-style `[strong self]`), to avoid the most common cycle. Anonymous methods and expression-bodied lambdas (`x => x + 1`) are parsed and bound to delegate-compatible types. |
 | **`async`/`await`** | P1 | Lower to a **state machine class** (like Roslyn). The compiler generates `IAsyncStateMachine`-like machinery manually. ARC retain/release must be threaded across suspension points: every captured local/reference field in the state machine is managed, and the state machine itself is ARC-owned. Initially target single-threaded continuations; thread-pool dispatch is P2. |
 | **Value types with reference fields** | P0 | Lift the current "value-only struct fields" restriction. Copying a struct copies its value fields and **retains** its reference fields; assignment/ teardown **release** them. Struct methods receive `this` by managed reference. This is required for idiomatic C# (`struct Node { string name; }`). |
-| **Properties, indexers, events, delegates, enums** | P0/P1 | **Properties** (P0) lower to backing field + getter/setter method calls; auto-properties are trivial. **Indexers** (P1) are instance properties with parameters. **Events** (P1) are multicast delegate fields with `add`/`remove` accessors. **Delegates** (P1) are single/multicast function objects carrying a target reference and function pointer. **Enums** (P1) are integer-typed with named constants. |
+| **Properties, indexers, events, delegates, enums** | P0/P1 | **Properties** (P0) **[done]** lower to backing field + getter/setter method calls; auto-properties are implemented. **Indexers** (P1) are instance properties with parameters. **Events** (P1) are multicast delegate fields with `add`/`remove` accessors. **Delegates** (P1) are single/multicast function objects carrying a target reference and function pointer. **Enums** (P1) are integer-typed with named constants. |
 | **`using` / `IDisposable`** | P0 | Map `using` to deterministic ARC cleanup. A `using (var x = ...)` statement expands to try/finally (Section 1) where the finally block calls `x.Dispose()` and then releases `x`. `IDisposable` is an interface recognized by the compiler; any type implementing `Dispose()` can be used. |
-| **`ref` / `out` / `in` parameters** | P0 | `out` is partially present (for `WeakReference<T>.TryGetTarget`). Generalize to **managed references** (`T&`) in the bound tree and LLVM IR. `ref` allows read/write aliasing of variables/fields/elements; `in` is read-only `ref`. Reference-typed `ref` parameters do not change ownership — they borrow the slot. |
-| **Full numeric tower** | P0/P1 | Add `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong` (P0) and `float`/`double`/`decimal` (P1). `float`/`double` map to LLVM `float`/`double`; `decimal` is initially emulated with a small struct (or omitted until BCL). Integer conversions (`trunc`/`sext`/`zext`) and overflow-checked arithmetic (`checked`/`unchecked`, Section 5) are included. |
+| **`ref` / `out` / `in` parameters** | P0 **[done]** | Generalized to **managed references** (`T&`) in the bound tree and LLVM IR. `ref` allows read/write aliasing of variables/fields/elements; `in` is read-only `ref`; `out` supports both existing-lvalue and declaration-via-inference (`out var` in `WeakReference<T>.TryGetTarget`). Reference-typed `ref` parameters do not change ownership — they borrow the slot. |
+| **Full numeric tower** | P0/P1 **[done]** | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong` added. `float`/`double` already present. Integer conversions (`trunc`/`sext`/`zext`) and signed/unsigned arithmetic/comparisons operational. `decimal` remains emulated (omitted until BCL). Overflow-checked arithmetic (`checked`/`unchecked`, Section 5) is follow-up work. |
 
 ### Concrete first steps for language features
 
-1. **Add `byte`, `short`, `float`, `double` literals and operators** — lexer, binder, emitter, runtime formatters. (`float` is already being added as a demonstrator; see commit history.)
-2. **Generalize `out` to `ref`/`in`** — introduce `BoundByRefArg`, change parameter emission to `T*` / `T&`.
-3. **Properties** — add `PropertyDecl` to AST/Binder and lower auto-properties to a private backing field plus `get_Prop`/`set_Prop` methods; rewrite `obj.Prop` to field access for auto-properties in the first pass.
+1. **Add `byte`, `short`, `float`, `double` literals and operators** — **[done]** lexer, binder, emitter, runtime formatters.
+2. **Generalize `out` to `ref`/`in`** — **[done]** introduced `ByRefArgExpr`/`BoundByRefArg`, by-ref parameter emission via `T*` / `T&`.
+3. **Properties** — **[done]** added `PropertyDecl` to AST/binder; lowered auto-properties to private backing field + `get_Prop`/`set_Prop` methods.
 4. **`using`** — add `UsingStmt` to the parser and lower to `try { ... } finally { x.Dispose(); }`.
 5. **Generics** — add generic parameter lists to type/method declarations, build a substitution map, and instantiate closed types during binding.
 
@@ -128,17 +126,17 @@ unmarked items are still planned.
 | Gap | Priority | Decision / approach |
 |---|---|---|
 | **Null safety** | P0 | Enforce the existing `?` annotation. Reference types without `?` are non-null; assign `null` only to nullable types. Add definite-assignment checks (below) to ensure non-null locals are initialized. |
-| **Type soundness** | P0 | Implement runtime type checks for `is`/`as` and unchecked reference casts. Interface downcasts and `object[]` to `string[]`-style array casts must verify `TypeInfo` compatibility. Store element type in array `TypeInfo`; `arc_array_store` type-checks covariance. |
-| **Array covariance** | P0 | Arrays store their element `TypeInfo`. Every store to a reference-type array performs a runtime assignability check. Value-type arrays are invariant. |
+| **Type soundness** | P0 **[done]** | Runtime type checks for `is`/`as` implemented via `arc_is_instance()` with parent-chain walk in `TypeInfo`. Interface downcasts unchecked at runtime; array casts verify `TypeInfo` compatibility via `arc_array_store_check`. `TypeInfo` extended with `base` pointer. |
+| **Array covariance** | P0 **[done]** | Arrays store their element `TypeInfo` at offset 32 (offset 40 for elements). Every store to a reference-type array performs a runtime assignability check via `arc_array_store_check` that throws `ArrayTypeMismatchException` on mismatch. Value-type arrays are invariant. `S[]` → `T[]` binder conversion allowed when `S` is reference-compatible with `T`. |
 | **Definite assignment** | P0 **[done]** | A conservative structured flow pass (`DefiniteAssignment.cs`) tracks whether each local is definitely assigned before use, with completes-normally tracking so `if`/loop joins don't false-positive. Currently reports `ARC2100` as a warning (promotable via `-Werror`); tightening to a hard error and extending to `out`-parameter exit paths is follow-up work. |
 | **Overflow checking** | P1 | Support `checked`/`unchecked` contexts. Integer arithmetic in `checked` emits `llvm.sadd.with.overflow` / `smul.with.overflow` and branches to an overflow exception. `unchecked` uses plain LLVM integer ops. |
 | **Verification suite** | P0 | Grow from 10 samples to a **thousands-of-tests conformance suite**. Adopt or write a test harness that runs ArcSharp output against expected output and ARC accounting. Target the C# spec incrementally; include negative tests (must-fail diagnostics). |
 
 ### Concrete first steps for correctness
 
-1. Implement definite-assignment analysis in the binder.
-2. Add `is`/`as` operators and runtime type-check helper in `arc_runtime.c`.
-3. Add array-store type check for reference-element arrays.
+1. Implement definite-assignment analysis in the binder. — **[done]**
+2. Add `is`/`as` operators and runtime type-check helper in `arc_runtime.c`. — **[done]**
+3. Add array-store type check for reference-element arrays. — **[done]**
 4. Set up an xUnit/NUnit test project with golden-file tests for samples and targeted unit tests for binder diagnostics.
 
 ---
@@ -165,8 +163,8 @@ unmarked items are still planned.
 
 A pragmatic path from PoC to production:
 
-1. **Correctness foundation** — definite assignment, null safety, `is`/`as`, array covariance, xUnit test harness.
-2. **Language breadth** — `ref`/`out`/`in`, properties, `using`/`IDisposable`, full numeric tower, value types with reference fields.
+1. **Correctness foundation** — **[done]** definite assignment, `is`/`as`, array covariance. Null safety, xUnit test harness remain.
+2. **Language breadth** — **[partly done]** `ref`/`out`/`in`, properties, full numeric tower done. `using`/`IDisposable`, value types with reference fields remain.
 3. **Generics** — monomorphization engine; re-implement collections once generics land.
 4. **ARC hardening** — atomic refcounts, borrow/ownership elision, weak table, cycle collector.
 5. **Backend upgrade** — LLVM C API, debug info, optimizations, multi-target.

@@ -20,7 +20,7 @@ public sealed class Binder
     public List<Diagnostic> Diagnostics { get; } = [];
 
     // predefined
-    private readonly TypeSymbol _int, _long, _bool, _char, _float, _double, _void, _string, _null, _error;
+    private readonly TypeSymbol _int, _long, _bool, _char, _float, _double, _byte, _sbyte, _short, _ushort, _uint, _ulong, _void, _string, _null, _error;
 
     // interface selectors:  key "Iface::Method/argc" -> selector index
     private readonly Dictionary<string, int> _selectors = [];
@@ -41,11 +41,17 @@ public sealed class Binder
         _char = Prim("char");
         _float = Prim("float");
         _double = Prim("double");
+        _byte = Prim("byte");
+        _sbyte = Prim("sbyte");
+        _short = Prim("short");
+        _ushort = Prim("ushort");
+        _uint = Prim("uint");
+        _ulong = Prim("ulong");
         _void = new TypeSymbol { Name = "void", Kind = TypeKind.Void };
         _string = new TypeSymbol { Name = "string", Kind = TypeKind.String };
         _null = new TypeSymbol { Name = "<null>", Kind = TypeKind.Class };
         _error = new TypeSymbol { Name = "<error>", Kind = TypeKind.Error };
-        foreach (var t in new[] { _int, _long, _bool, _char, _float, _double, _void, _string })
+        foreach (var t in new[] { _int, _long, _bool, _char, _float, _double, _byte, _sbyte, _short, _ushort, _uint, _ulong, _void, _string })
         {
             _types[t.Name] = t;
         }
@@ -150,7 +156,13 @@ public sealed class Binder
             }
         }
 
-        // 4. layout + member symbols
+        // 4. expand auto-properties into backing fields + accessor methods
+        foreach (var t in _types.Values.Where(t => t.Kind is TypeKind.Class or TypeKind.Struct or TypeKind.Interface))
+        {
+            ExpandProperties(t);
+        }
+
+        // 5. layout + member symbols
         foreach (var t in _types.Values.Where(t => t.Kind is TypeKind.Class or TypeKind.Struct or TypeKind.Interface))
         {
             LayoutType(t);
@@ -197,6 +209,89 @@ public sealed class Binder
 
         Report(0, "no static 'Main()' entry point found", "ARC2050");
         return null;
+    }
+
+    private void ExpandProperties(TypeSymbol t)
+    {
+        var decl = (TypeDecl?)t.ClassSyntax ?? (TypeDecl?)t.StructSyntax ?? t.InterfaceSyntax;
+        if (decl == null) return;
+        foreach (var pd in decl.Members.OfType<PropertyDecl>().ToList())
+        {
+            var propType = ResolveType(pd.Type);
+            var propSym = new PropertySymbol
+            {
+                Name = pd.Name, Type = propType, Owner = t, IsStatic = pd.IsStatic,
+                HasGetter = pd.HasGetter, HasSetter = pd.HasSetter
+            };
+            t.Properties.Add(propSym);
+
+            var backingName = $"<{pd.Name}>k__BackingField";
+            var backingField = new FieldDecl
+            {
+                Type = pd.Type, Name = backingName, Line = pd.Line, IsStatic = pd.IsStatic,
+                IsPublic = false
+            };
+            if (pd.HasGetter)
+            {
+                var body = new BlockStmt
+                {
+                    Line = pd.Line,
+                    Statements =
+                    [
+                        new ReturnStmt
+                        {
+                            Value = new MemberAccessExpr
+                            {
+                                Target = pd.IsStatic ? new NameExpr { Name = t.Name, Line = pd.Line } : new ThisExpr { Line = pd.Line },
+                                Name = backingName,
+                                Line = pd.Line
+                            },
+                            Line = pd.Line
+                        }
+                    ]
+                };
+                decl.Members.Add(new MethodDecl
+                {
+                    Name = $"get_{pd.Name}", ReturnType = pd.Type, Line = pd.Line,
+                    IsStatic = pd.IsStatic, IsPublic = pd.IsPublic, Body = body
+                });
+            }
+
+            if (pd.HasSetter)
+            {
+                var valueParam = new ParameterSyntax { Type = pd.Type, Name = "value", Line = pd.Line };
+                var body = new BlockStmt
+                {
+                    Line = pd.Line,
+                    Statements =
+                    [
+                        new ExprStmt
+                        {
+                            Expression = new AssignExpr
+                            {
+                                Target = new MemberAccessExpr
+                                {
+                                    Target = pd.IsStatic ? new NameExpr { Name = t.Name, Line = pd.Line } : new ThisExpr { Line = pd.Line },
+                                    Name = backingName,
+                                    Line = pd.Line
+                                },
+                                Value = new NameExpr { Name = "value", Line = pd.Line },
+                                Line = pd.Line
+                            },
+                            Line = pd.Line
+                        }
+                    ]
+                };
+                decl.Members.Add(new MethodDecl
+                {
+                    Name = $"set_{pd.Name}", ReturnType = new TypeSyntax { Name = "void", Line = pd.Line },
+                    Parameters = [valueParam], Line = pd.Line,
+                    IsStatic = pd.IsStatic, IsPublic = pd.IsPublic, Body = body
+                });
+            }
+
+            decl.Members.Add(backingField);
+        }
     }
 
     private void LayoutType(TypeSymbol t)
@@ -258,7 +353,7 @@ public sealed class Binder
             var pi = 0;
             foreach (var p in md.Parameters)
             {
-                m.Parameters.Add(new ParamSymbol { Name = p.Name, Type = ResolveType(p.Type), Index = pi++ });
+                m.Parameters.Add(new ParamSymbol { Name = p.Name, Type = ResolveType(p.Type), RefKind = p.RefKind, Index = pi++ });
             }
 
             t.Methods.Add(m);
@@ -634,6 +729,9 @@ public sealed class Binder
         UnaryExpr u => BindUnary(u),
         AssignExpr a => BindAssign(a),
         CastExpr c => BindCast(c),
+        IsExpr i => BindIs(i),
+        AsExpr ac => BindAs(ac),
+        ByRefArgExpr br => BindByRefArg(br),
         _ => Err()
     };
 
@@ -673,7 +771,7 @@ public sealed class Binder
 
         if (_params.TryGetValue(n.Name, out var p))
         {
-            return new BoundParam { Symbol = p, Type = p.Type };
+            return new BoundParam { Symbol = p, Type = p.Type, ByRef = p.RefKind != RefKind.None };
         }
 
         // instance field via implicit this
@@ -718,6 +816,22 @@ public sealed class Binder
         return null;
     }
 
+    private PropertySymbol? FindProperty(TypeSymbol? t, string name, bool instance)
+    {
+        while (t != null)
+        {
+            foreach (var p in t.Properties)
+            {
+                if (p.Name == name && p.IsStatic == !instance) return p;
+            }
+
+            if (instance) break;
+            t = t.BaseType;
+        }
+
+        return null;
+    }
+
     private BoundExpr BindMemberAccess(MemberAccessExpr m)
     {
         // static member: Target is a type name
@@ -728,6 +842,13 @@ public sealed class Binder
             if (sf != null)
             {
                 return new BoundFieldAccess { Receiver = null, Field = sf, Type = sf.Type };
+            }
+
+            var sp = FindProperty(typeRef, m.Name, instance: false);
+            if (sp is { HasGetter: true })
+            {
+                var getter = FindMethod(typeRef, $"get_{m.Name}", 0);
+                if (getter != null) return new BoundCall { Receiver = null, Method = getter, Arguments = [], Type = sp.Type };
             }
 
             Report(m.Line, $"'{tn.Name}' has no static member '{m.Name}'");
@@ -744,6 +865,13 @@ public sealed class Binder
         if (f != null)
         {
             return new BoundFieldAccess { Receiver = recv, Field = f, Type = f.Type };
+        }
+
+        var p = FindProperty(recv.Type, m.Name, instance: true);
+        if (p is { HasGetter: true })
+        {
+            var getter = FindMethod(recv.Type, $"get_{m.Name}", 0);
+            if (getter != null) return new BoundCall { Receiver = recv, Method = getter, Arguments = [], Type = p.Type };
         }
 
         Report(m.Line, $"'{recv.Type}' has no member '{m.Name}'");
@@ -849,7 +977,7 @@ public sealed class Binder
         var elem = recv.Type.ElementType!;
         if (name == "TryGetTarget")
         {
-            if (rawArgs.Count != 1 || rawArgs[0] is not OutArgExpr oa)
+            if (rawArgs.Count != 1 || rawArgs[0] is not ByRefArgExpr { Kind: RefKind.Out } oa)
             {
                 Report(line, "TryGetTarget expects a single 'out' argument");
                 return Err();
@@ -875,7 +1003,27 @@ public sealed class Binder
         return Err();
     }
 
-    private BoundExpr BindOutTarget(OutArgExpr oa, TypeSymbol expected, int line)
+    private BoundExpr BindByRefArg(ByRefArgExpr br)
+    {
+        // Out declarations are handled by the call site (e.g. WeakReference<T>.TryGetTarget)
+        // once the target parameter type is known. Return a silent error placeholder here
+        // so that the raw syntax is still available to specialized binders.
+        if (br.Kind == RefKind.Out && br.IsDeclaration)
+        {
+            return Err();
+        }
+
+        var lval = BindExpr(br.Target!);
+        if (lval is not (BoundLocal or BoundParam or BoundFieldAccess or BoundIndex))
+        {
+            Report(br.Line, $"'{br.Kind.ToString().ToLowerInvariant()}' argument must be a variable, field, or element");
+            return Err();
+        }
+
+        return new BoundByRefArg { Lvalue = lval, Kind = br.Kind, Type = lval.Type };
+    }
+
+    private BoundExpr BindOutTarget(ByRefArgExpr oa, TypeSymbol expected, int line)
     {
         if (oa.IsDeclaration)
         {
@@ -916,7 +1064,23 @@ public sealed class Binder
         var conv = new List<BoundExpr>();
         for (var i = 0; i < args.Count && i < m.Parameters.Count; i++)
         {
-            conv.Add(Convert(args[i], m.Parameters[i].Type, line));
+            var p = m.Parameters[i];
+            if (p.RefKind != RefKind.None)
+            {
+                if (args[i] is not BoundByRefArg)
+                {
+                    Report(line, $"argument {i + 1} must be passed with '{p.RefKind.ToString().ToLowerInvariant()}'");
+                    conv.Add(Err());
+                }
+                else
+                {
+                    conv.Add(args[i]);
+                }
+            }
+            else
+            {
+                conv.Add(Convert(args[i], p.Type, line));
+            }
         }
 
         return new BoundCall { Receiver = recv, Method = m, Arguments = conv, Type = m.ReturnType };
@@ -1055,45 +1219,52 @@ public sealed class Binder
             return Err();
         }
 
-        // promotion order: double > float > long > int
-        TypeSymbol ot;
-        if (l.Type == _double || r.Type == _double)
-        {
-            ot = _double;
-        }
-        else if (l.Type == _float || r.Type == _float)
-        {
-            ot = _float;
-        }
-        else if (l.Type == _long || r.Type == _long)
-        {
-            ot = _long;
-        }
-        else
-        {
-            ot = _int;
-        }
-
+        var ot = BinaryPromotionType(l.Type, r.Type);
         l = Convert(l, ot, b.Line);
         r = Convert(r, ot, b.Line);
         var cmp = b.Op is TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater
             or TokenKind.GreaterEquals or TokenKind.EqualsEquals or TokenKind.BangEquals;
 
-        var kind = (ot, cmp) switch
+        var (kind, isUnsigned) = (ot, cmp) switch
         {
-            (_, true) when ot == _double => BinKind.DoubleCmp,
-            (_, true) when ot == _float => BinKind.FloatCmp,
-            (_, true) when ot == _long => BinKind.LongCmp,
-            (_, true) => BinKind.IntCmp,
-            (_, false) when ot == _double => BinKind.DoubleArith,
-            (_, false) when ot == _float => BinKind.FloatArith,
-            (_, false) when ot == _long => BinKind.LongArith,
-            (_, false) => BinKind.IntArith,
+            (_, true) when ot == _double => (BinKind.DoubleCmp, false),
+            (_, true) when ot == _float => (BinKind.FloatCmp, false),
+            (_, true) when ot == _long || ot == _ulong => (BinKind.LongCmp, ot.IsUnsignedInteger),
+            (_, true) => (BinKind.IntCmp, ot.IsUnsignedInteger),
+            (_, false) when ot == _double => (BinKind.DoubleArith, false),
+            (_, false) when ot == _float => (BinKind.FloatArith, false),
+            (_, false) when ot == _long || ot == _ulong => (BinKind.LongArith, ot.IsUnsignedInteger),
+            (_, false) => (BinKind.IntArith, ot.IsUnsignedInteger),
         };
-        return new BoundBinary { Op = b.Op, Kind = kind, Left = l, Right = r, Type = cmp ? _bool : ot };
+        return new BoundBinary { Op = b.Op, Kind = kind, IsUnsigned = isUnsigned, Left = l, Right = r, Type = cmp ? _bool : ot };
     }
 
-    private bool IsNumeric(TypeSymbol t) => t == _int || t == _long || t == _char || t == _float || t == _double;
+    private TypeSymbol BinaryPromotionType(TypeSymbol a, TypeSymbol b)
+    {
+        // Floating-point dominates.
+        if (a == _double || b == _double) return _double;
+        if (a == _float || b == _float) return _float;
+
+        // Integer promotion following C# rules (simplified).
+        bool IsULong(TypeSymbol t) => t == _ulong;
+        bool IsLong(TypeSymbol t) => t == _long;
+        bool IsUInt(TypeSymbol t) => t == _uint;
+
+        if (IsULong(a) || IsULong(b))
+        {
+            if (IsLong(a) || IsLong(b)) return _ulong; // unchecked long->ulong
+            return _ulong;
+        }
+        if (IsLong(a) || IsLong(b))
+        {
+            if (IsUInt(a) || IsUInt(b)) return _long;
+            return _long;
+        }
+        if (IsUInt(a) || IsUInt(b)) return _uint;
+        return _int; // byte/sbyte/short/ushort/char/int all promote to int
+    }
+
+    private bool IsNumeric(TypeSymbol t) => t.IsInteger || t.IsFloat;
 
     private BoundExpr BindUnary(UnaryExpr u)
     {
@@ -1119,6 +1290,21 @@ public sealed class Binder
 
     private BoundExpr BindAssign(AssignExpr a)
     {
+        // Property assignment: obj.Prop = value -> obj.set_Prop(value)
+        var propSetter = TryResolvePropertySetter(a.Target);
+        if (propSetter.HasValue)
+        {
+            var ps = propSetter.Value;
+            var rhs = Convert(BindExpr(a.Value), ps.PropertyType, a.Line);
+            return new BoundCall
+            {
+                Receiver = ps.Receiver,
+                Method = ps.Setter,
+                Arguments = [rhs],
+                Type = _void
+            };
+        }
+
         var target = BindExpr(a.Target);
         if (target is not (BoundLocal or BoundParam or BoundFieldAccess or BoundIndex))
         {
@@ -1158,12 +1344,76 @@ public sealed class Binder
         return new BoundAssign { Target = target, Value = value, Type = target.Type };
     }
 
+    private (BoundExpr? Receiver, MethodSymbol Setter, TypeSymbol PropertyType)? TryResolvePropertySetter(Expr target)
+    {
+        if (target is not MemberAccessExpr ma) return null;
+
+        // static property
+        if (ma.Target is NameExpr tn && _types.TryGetValue(tn.Name, out var typeRef)
+                                       && LookupLocal(tn.Name) == null && !_params.ContainsKey(tn.Name))
+        {
+            var prop = FindProperty(typeRef, ma.Name, instance: false);
+            if (prop is { HasSetter: true })
+            {
+                var setter = FindMethod(typeRef, $"set_{ma.Name}", 1);
+                if (setter != null) return (null, setter, prop.Type);
+            }
+
+            return null;
+        }
+
+        var recv = BindExpr(ma.Target);
+        if (recv.Type == _error) return null;
+        var iprop = FindProperty(recv.Type, ma.Name, instance: true);
+        if (iprop is { HasSetter: true })
+        {
+            var setter = FindMethod(recv.Type, $"set_{ma.Name}", 1);
+            if (setter != null) return (recv, setter, iprop.Type);
+        }
+
+        return null;
+    }
+
     private BoundExpr BindCast(CastExpr c)
     {
         var target = ResolveType(c.Type);
         var o = BindExpr(c.Operand);
         // numeric casts and reference up/down casts -> conversion (mostly passthrough in IR)
         return new BoundConversion { Operand = o, Type = target };
+    }
+
+    private BoundExpr BindIs(IsExpr i)
+    {
+        var o = BindExpr(i.Operand);
+        var target = ResolveType(i.TestType);
+        if (!o.Type.IsReferenceType && o.Type != _null)
+        {
+            Report(i.Line, $"'is' requires a reference-type operand, found '{o.Type}'");
+        }
+
+        if (!target.IsReferenceType)
+        {
+            Report(i.Line, $"'is' requires a reference-type test type, found '{target}'");
+        }
+
+        return new BoundIs { Operand = o, TestType = target, Type = _bool };
+    }
+
+    private BoundExpr BindAs(AsExpr a)
+    {
+        var o = BindExpr(a.Operand);
+        var target = ResolveType(a.TestType);
+        if (!o.Type.IsReferenceType && o.Type != _null)
+        {
+            Report(a.Line, $"'as' requires a reference-type operand, found '{o.Type}'");
+        }
+
+        if (!target.IsReferenceType)
+        {
+            Report(a.Line, $"'as' requires a reference-type test type, found '{target}'");
+        }
+
+        return new BoundAs { Operand = o, TestType = target, Type = target };
     }
 
     // ---- conversions -------------------------------------------------------
@@ -1199,6 +1449,14 @@ public sealed class Binder
 
         // reference up/down cast (subclass <-> base, class <-> interface)
         if (e.Type.IsReferenceType && target.IsReferenceType && RefCompatible(e.Type, target))
+        {
+            return new BoundConversion { Operand = e, Type = target };
+        }
+
+        // array covariance: S[] -> T[] when S is reference-compatible with T
+        if (e.Type.Kind == TypeKind.Array && target.Kind == TypeKind.Array
+            && e.Type.ElementType!.IsReferenceType && target.ElementType!.IsReferenceType
+            && RefCompatible(e.Type.ElementType, target.ElementType))
         {
             return new BoundConversion { Operand = e, Type = target };
         }

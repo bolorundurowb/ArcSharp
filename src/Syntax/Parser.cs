@@ -379,6 +379,31 @@ public sealed class Parser(List<Token> tokens)
 
             owner.Members.Add(m);
         }
+        else if (At(TokenKind.OpenBrace))
+        {
+            var prop = new PropertyDecl
+                { Type = type, Name = name, Line = line, IsStatic = isStatic, IsPublic = isPublic };
+            Advance(); // {
+            while (!At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
+            {
+                if (At(TokenKind.Identifier))
+                {
+                    var accessor = Current.Text;
+                    Advance();
+                    if (accessor == "get") prop.HasGetter = true;
+                    else if (accessor == "set") prop.HasSetter = true;
+                }
+                else
+                {
+                    Advance();
+                }
+
+                Expect(TokenKind.Semicolon);
+            }
+
+            Expect(TokenKind.CloseBrace);
+            owner.Members.Add(prop);
+        }
         else
         {
             var f = new FieldDecl
@@ -400,9 +425,13 @@ public sealed class Parser(List<Token> tokens)
         {
             do
             {
+                RefKind rk = RefKind.None;
+                if (Accept(TokenKind.RefKw)) rk = RefKind.Ref;
+                else if (Accept(TokenKind.OutKw)) rk = RefKind.Out;
+                else if (Accept(TokenKind.InKw)) rk = RefKind.In;
                 var t = ParseType();
                 var n = Expect(TokenKind.Identifier).Text;
-                into.Add(new ParameterSyntax { Type = t, Name = n, Line = t.Line });
+                into.Add(new ParameterSyntax { RefKind = rk, Type = t, Name = n, Line = t.Line });
             } while (Accept(TokenKind.Comma));
         }
 
@@ -546,42 +575,18 @@ public sealed class Parser(List<Token> tokens)
             return false;
         }
 
-        if (Peek(1).Kind == TokenKind.Identifier)
+        if (Current.Kind == TokenKind.Identifier)
         {
-            return true;
-        }
-
-        if (Peek(1).Kind == TokenKind.OpenBracket && Peek(2).Kind == TokenKind.CloseBracket)
-        {
-            return true;
+            if (Peek(1).Kind == TokenKind.Identifier) return true;
+            if (Peek(1).Kind == TokenKind.Question && Peek(2).Kind == TokenKind.Identifier) return true;
+            if (Peek(1).Kind == TokenKind.OpenBracket && Peek(2).Kind == TokenKind.CloseBracket
+                && Peek(3).Kind == TokenKind.Identifier) return true;
         }
 
         return false;
     }
-    if (Current.Kind == TokenKind.Identifier)
-    {
-        if (Peek(1).Kind == TokenKind.Identifier)
-        {
-            return true;
-        }
 
-        if (Peek(1).Kind == TokenKind.Question && Peek(2).Kind == TokenKind.Identifier)
-        {
-            return true;
-        }
-
-        if (Peek(1).Kind == TokenKind.OpenBracket && Peek(2).Kind == TokenKind.CloseBracket
-                                                  && Peek(3).Kind == TokenKind.Identifier)
-        {
-            return true;
-        }
-    }
-
-return false;
-
-}
-
-private Stmt ParseIf()
+    private Stmt ParseIf()
 {
     var line = Current.Line;
     Expect(TokenKind.IfKw);
@@ -708,18 +713,35 @@ private Expr ParseEquality()
     return left;
 }
 
-private Expr ParseRelational()
-{
-    var left = ParseAdditive();
-    while (At(TokenKind.Less) || At(TokenKind.LessEquals) || At(TokenKind.Greater) || At(TokenKind.GreaterEquals))
+    private Expr ParseRelational()
     {
-        var op = Advance().Kind;
-        var right = ParseAdditive();
-        left = new BinaryExpr { Op = op, Left = left, Right = right, Line = left.Line };
-    }
+        var left = ParseAdditive();
+        while (At(TokenKind.Less) || At(TokenKind.LessEquals) || At(TokenKind.Greater) || At(TokenKind.GreaterEquals)
+               || At(TokenKind.IsKw) || At(TokenKind.AsKw))
+        {
+            if (At(TokenKind.IsKw))
+            {
+                Advance();
+                var tt = ParseType();
+                left = new IsExpr { Operand = left, TestType = tt, Line = left.Line };
+                continue;
+            }
 
-    return left;
-}
+            if (At(TokenKind.AsKw))
+            {
+                Advance();
+                var tt = ParseType();
+                left = new AsExpr { Operand = left, TestType = tt, Line = left.Line };
+                continue;
+            }
+
+            var op = Advance().Kind;
+            var right = ParseAdditive();
+            left = new BinaryExpr { Op = op, Left = left, Right = right, Line = left.Line };
+        }
+
+        return left;
+    }
 
 private Expr ParseAdditive()
 {
@@ -855,40 +877,48 @@ private List<Expr> ParseArgumentList()
     return args;
 }
 
-private Expr ParseArgument()
-{
-    if (Accept(TokenKind.OutKw))
+    private Expr ParseArgument()
     {
-        var line = Current.Line;
-        if (At(TokenKind.VarKw) && Peek(1).Kind == TokenKind.Identifier)
+        RefKind? rk = null;
+        if (Accept(TokenKind.RefKw)) rk = RefKind.Ref;
+        else if (Accept(TokenKind.OutKw)) rk = RefKind.Out;
+        else if (Accept(TokenKind.InKw)) rk = RefKind.In;
+
+        if (rk != null)
         {
-            Advance();
-            var n = Advance().Text;
-            return new OutArgExpr { IsDeclaration = true, IsVar = true, Name = n, Line = line };
+            var line = Current.Line;
+            if (rk == RefKind.Out)
+            {
+                if (At(TokenKind.VarKw) && Peek(1).Kind == TokenKind.Identifier)
+                {
+                    Advance();
+                    var n = Advance().Text;
+                    return new ByRefArgExpr { Kind = RefKind.Out, IsDeclaration = true, IsVar = true, Name = n, Line = line };
+                }
+
+                if (LooksLikeOutDecl())
+                {
+                    var t = ParseType();
+                    var n = Expect(TokenKind.Identifier).Text;
+                    return new ByRefArgExpr { Kind = RefKind.Out, IsDeclaration = true, DeclType = t, Name = n, Line = line };
+                }
+            }
+
+            var tgt = ParseExpression();
+            return new ByRefArgExpr { Kind = rk.Value, Target = tgt, Line = line };
         }
 
-        if (LooksLikeOutDecl())
-        {
-            var t = ParseType();
-            var n = Expect(TokenKind.Identifier).Text;
-            return new OutArgExpr { IsDeclaration = true, DeclType = t, Name = n, Line = line };
-        }
-
-        var tgt = ParseExpression();
-        return new OutArgExpr { Target = tgt, Line = line };
+        return ParseExpression();
     }
 
-    return ParseExpression();
-}
-
-private bool LooksLikeOutDecl()
-{
-    var typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
-        or TokenKind.StringKw or TokenKind.CharKw or TokenKind.FloatKw or TokenKind.DoubleKw
-        or TokenKind.ByteKw or TokenKind.SByteKw or TokenKind.ShortKw or TokenKind.UShortKw
-        or TokenKind.UIntKw or TokenKind.ULongKw or TokenKind.Identifier;
-    return typeStart && Peek(1).Kind == TokenKind.Identifier;
-}
+    private bool LooksLikeOutDecl()
+    {
+        var typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
+            or TokenKind.StringKw or TokenKind.CharKw or TokenKind.FloatKw or TokenKind.DoubleKw
+            or TokenKind.ByteKw or TokenKind.SByteKw or TokenKind.ShortKw or TokenKind.UShortKw
+            or TokenKind.UIntKw or TokenKind.ULongKw or TokenKind.Identifier;
+        return typeStart && Peek(1).Kind == TokenKind.Identifier;
+    }
 
 private Expr ParsePrimary()
 {
@@ -904,6 +934,16 @@ private Expr ParsePrimary()
         {
             var t = Advance();
             return new LiteralExpr { Kind = LiteralKind.Long, IntValue = long.Parse(t.Text), Line = line };
+        }
+        case TokenKind.UIntLiteral:
+        {
+            var t = Advance();
+            return new LiteralExpr { Kind = LiteralKind.UInt, IntValue = long.Parse(t.Text), Line = line };
+        }
+        case TokenKind.ULongLiteral:
+        {
+            var t = Advance();
+            return new LiteralExpr { Kind = LiteralKind.ULong, IntValue = long.Parse(t.Text), Line = line };
         }
         case TokenKind.FloatLiteral:
         {
