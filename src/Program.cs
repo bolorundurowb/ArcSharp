@@ -11,13 +11,15 @@ for (var i = 0; i < args.Length; i++)
         case "--emit-llvm": o.EmitLlvmOnly = true; break;
         case "--run": o.Run = true; break;
         case "--no-bounds": o.BoundsChecks = false; break;
+        case "-Werror":
+        case "--warn-as-error": o.WarnAsError = true; break;
         case "--runtime": o.Runtime = args[++i]; break;
         case "--llc": o.Llc = args[++i]; break;
         case "--cc": o.Cc = args[++i]; break;
         case "--clang": o.Clang = args[++i]; break;
         case "-h":
         case "--help":
-            Console.WriteLine("usage: arcsharp <input.cs> [-o name] [--target windows|host] [--emit-llvm] [--run] [--no-bounds] [--runtime path] [--llc name] [--cc name] [--clang path]");
+            Console.WriteLine("usage: arcsharp <input.cs> [input2.cs ...] [-o name] [--target windows|host] [--emit-llvm] [--run] [--no-bounds] [-Werror] [--runtime path] [--llc name] [--cc name] [--clang path]");
             return 0;
         default:
             if (a.StartsWith('-'))
@@ -25,11 +27,11 @@ for (var i = 0; i < args.Length; i++)
                 Console.Error.WriteLine($"unknown option {a}");
                 return 2;
             }
-            o.Input = a; break;
+            o.Inputs.Add(a); break;
     }
 }
 
-if (string.IsNullOrEmpty(o.Input))
+if (o.Inputs.Count == 0)
 {
     Console.Error.WriteLine("error: no input file");
     return 2;

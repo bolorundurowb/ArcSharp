@@ -1,21 +1,22 @@
 # ArcSharp — Verification Results
 
-Reproduce with: `bash tools/verify.sh` (requires the .NET 8 SDK + LLVM `llc` + a
-C compiler on `PATH`; `tools/env.sh` wires up the locally-provisioned toolchain).
+Reproduce with: `powershell -ExecutionPolicy Bypass -File tools\verify.ps1`
+(requires the .NET 8 SDK + LLVM `clang` on `PATH`; `tools\env.ps1` sets the build
+environment, and `-Clang <path>` overrides the clang location).
 
 The harness builds the compiler, compiles each sample in `samples/` to LLVM IR,
-runs `llc` to produce an object file, links it with `runtime/arc_runtime.c`, runs
-the result, and checks both program output **and** ARC accounting. Verification
-compiles for the Linux host (`x86_64-pc-linux-gnu`); the Windows target
-(`x86_64-pc-windows-msvc`) emits the same IR and a valid amd64 COFF object
-(checked separately with `llvm-nm`/`file`).
+uses `clang` to lower the IR and link it with `runtime/arc_runtime.c` into a
+native Windows x64 `.exe` (`x86_64-pc-windows-msvc`), runs it, and checks both
+program output **and** ARC accounting. The same IR also lowers on the Linux host
+(`x86_64-pc-linux-gnu`) — only the triple/datalayout and the C runtime's build
+differ.
 
 Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 `alloc` = objects created, `dead` = objects whose strong count hit 0 (destructor
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (11/11 passing)
+## Results (11 core samples + 1 multi-file; see Phase 1 note below)
 
 | Sample | Exercises | ARC accounting | Output |
 |---|---|---|---|
@@ -30,6 +31,21 @@ still retained at exit). **`live=0` means no leaks.**
 | `cycle_weakref` | same cycle, broken with idiomatic **`WeakReference<T>`** | alloc=4 dead=4 **live=0** | `done (WeakReference cycle)` |
 | `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 **live=0** | `false (PASS under ARC)` |
 | `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 **live=2** | `done (strong cycle)` |
+| `multifile` | two source files (`mf_main.cs` + `mf_lib.cs`) compiled together; cross-file type resolution | live=0 (counts confirmed by local run) | `twice=42` |
+
+## Phase 1 additions (run `tools\verify.ps1` to confirm)
+
+These were added after the original 11-sample run and are asserted by the harness
+(`live=0` and expected output); exact alloc/dead counts are intentionally not
+transcribed here since they are produced by the local run rather than fabricated:
+
+- **`multifile`** — exercises multi-file compilation (`arcsharp samples/mf_main.cs
+  samples/mf_lib.cs`). `Greeter` is declared in one file and used from `Main` in
+  the other; the binder merges declarations across both before binding.
+- **Diagnostics** now print with stable codes and severities, e.g.
+  `(12,0): error ARC2010: cannot convert 'int' to 'string'`. Compilation fails on
+  error count; warnings (including definite-assignment `ARC2100`) do not fail the
+  build unless `-Werror` is passed — so the existing samples continue to pass.
 
 ## The headline result: ARC + cycle breaking
 

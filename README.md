@@ -44,7 +44,7 @@ niches above, predictable, GC-free native execution is worth that price — and 
 proof of concept exists to explore how far a faithful C# subset can be pushed
 under that model.
 
-## What works today (verified end-to-end)
+## What works today (run-verified on Linux x64)
 
 Classes, fields, instance + static methods, constructors with `: base(...)`
 chaining, single inheritance, `virtual`/`override` (vtables), interfaces
@@ -56,34 +56,51 @@ recursive destruction, and **`System.WeakReference<T>` to break reference cycles
 memory (`live=0`); the one strong-cycle sample leaks on purpose to document the
 limitation.
 
+Tooling: **multi-file compilation** (pass several `.cs` files; type declarations
+are merged across them), **diagnostics with stable codes** (`ARC0001`…) and
+severities, and a conservative **definite-assignment** analysis that warns on
+locals read before assignment (`-Werror` promotes warnings to errors).
+
+The full pipeline (compile → `llc` → link → run → check output + ARC accounting)
+is driven on Windows x64 by `tools\verify.ps1` (clang lowers the IR and links a
+native `.exe`); the same IR also lowers on the Linux x64 host. See
+[VERIFICATION.md](VERIFICATION.md) and *Portability* in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Build & run
 
-Requires the .NET 8 SDK, LLVM `llc`, and a C compiler (`gcc`/`clang`).
+Requires the .NET 8 SDK and LLVM (`clang`, with `llc` for the object-only path).
 
-```bash
+```powershell
 # build the compiler
 dotnet build -c Release
 
-# compile a program for Windows x64 (emits .ll + .obj; link on Windows)
-dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs --target windows
+# compile, link and run a program to a native Windows x64 .exe in one shot
+dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs `
+    --target windows --clang "C:/Program Files/LLVM/bin/clang.exe" `
+    --runtime runtime/arc_runtime.c --run
 
-# compile, link and run for the local host (Linux/macOS) in one shot
-dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs \
-    -o /tmp/inherit --target host --run --runtime runtime/arc_runtime.c
+# emit a Windows .obj only (link separately); omit --clang to use llc
+dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs --target windows
 
 # just see the generated LLVM IR
 dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs --emit-llvm
 
 # run the full verification suite
-bash tools/verify.sh
+powershell -ExecutionPolicy Bypass -File tools\verify.ps1
 ```
 
 ### CLI
 
 ```
-arcsharp <input.cs> [-o name] [--target windows|host] [--emit-llvm]
-                    [--run] [--no-bounds] [--runtime path] [--llc name] [--cc name] [--clang path]
+arcsharp <input.cs> [input2.cs ...] [-o name] [--target windows|host] [--emit-llvm]
+                    [--run] [--no-bounds] [-Werror] [--runtime path] [--llc name] [--cc name] [--clang path]
 ```
+
+Pass more than one source file to compile a multi-file program; type
+declarations are merged across all inputs. Diagnostics carry stable codes
+(`ARC0001`…) and severities; `-Werror` turns warnings (e.g. definite-assignment)
+into errors.
 
 ## Build on Windows x64 (native .exe)
 
@@ -134,8 +151,28 @@ also still works, but `WeakReference<T>` is the recommended, Roslyn-compatible f
 ## Layout
 
 ```
-src/Lexing/    lexer + tokens
-src/Syntax/    AST + recursive-descent parser
-src/Binding/   symbols, type/vtable/itable layout, binder -> typed bound tree
-src/CodeGen/   LLVM IR emitter (ARC ownership woven in)
-src/Driver/    CLI + llc
+src/Lexing/      lexer + tokens
+src/Syntax/      AST + recursive-descent parser
+src/Binding/     symbols, type/vtable/itable layout, binder -> typed bound tree,
+                 definite-assignment analysis
+src/CodeGen/     LLVM IR emitter (ARC ownership woven in)
+src/Driver/      CLI + llc/clang invocation and linking
+runtime/         arc_runtime.c — object header, retain/release, weak table, strings, arrays
+samples/         example .cs programs used as the verification suite
+tools/           verify.ps1, build-windows.ps1, env.ps1
+```
+
+## Portability
+
+ArcSharp transpiles C# to LLVM IR and lets LLVM lower it to machine code, so the
+architecture is portable in principle. In practice the IR is *portable across
+targets that share an architecture and ABI*, not target-independent: each emitted
+module carries a fixed `target triple` (and, implicitly, a data layout), and the
+object model assumes a uniform 8-byte slot (64-bit pointers, 8-byte alignment).
+That is why the *same* IR validates on both x86-64 Linux and x86-64 Windows today
+— only the triple/datalayout and the C runtime's build differ.
+
+True multi-architecture support (32-bit, ARM, big-endian; per-target ABI lowering
+such as System V AMD64 vs Microsoft x64) is the **P1 "Multi-target"** item on the
+[ROADMAP](ROADMAP.md): parameterize the triple/datalayout and remove the baked-in
+8-byte-slot assumption. Until then, "GC-less native C#" is real but x86-64-scoped.

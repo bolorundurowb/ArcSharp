@@ -46,6 +46,15 @@ public sealed class Binder
         static TypeSymbol Prim(string n) => new() { Name = n, Kind = TypeKind.Primitive };
     }
 
+    // Multi-file entry: merge the type declarations of every compilation unit
+    // into one program before binding. Namespaces are already flattened by the parser.
+    public BoundProgram Bind(IEnumerable<CompilationUnit> units)
+    {
+        var merged = new CompilationUnit { Line = 0 };
+        foreach (var u in units) merged.Types.AddRange(u.Types);
+        return Bind(merged);
+    }
+
     public BoundProgram Bind(CompilationUnit cu)
     {
         // 1. declare types
@@ -110,6 +119,9 @@ public sealed class Binder
             }
         }
 
+        // definite-assignment flow analysis (conservative; reports as warnings)
+        DefiniteAssignment.Analyze(program, (line, msg) => Report(line, msg, "ARC2100", DiagnosticSeverity.Warning));
+
         program.Entry = FindEntry(program.Types);
         program.Diagnostics.AddRange(Diagnostics);
         return program;
@@ -121,7 +133,7 @@ public sealed class Binder
             foreach (var m in t.Methods)
                 if (m.IsStatic && m.Name == "Main" && m.Parameters.Count == 0)
                     return m;
-        Report(0, "no static 'Main()' entry point found");
+        Report(0, "no static 'Main()' entry point found", "ARC2050");
         return null;
     }
 
@@ -461,7 +473,7 @@ public sealed class Binder
         var sf = FindField(_curType, n.Name, instance: false);
         if (sf != null) return new BoundFieldAccess { Receiver = null, Field = sf, Type = sf.Type };
 
-        Report(n.Line, $"unknown name '{n.Name}'");
+        Report(n.Line, $"unknown name '{n.Name}'", "ARC2002");
         return Err();
     }
 
@@ -784,7 +796,7 @@ public sealed class Binder
         // reference up/down cast (subclass <-> base, class <-> interface)
         if (e.Type.IsReferenceType && target.IsReferenceType && RefCompatible(e.Type, target))
             return new BoundConversion { Operand = e, Type = target };
-        Report(line, $"cannot convert '{e.Type}' to '{target}'");
+        Report(line, $"cannot convert '{e.Type}' to '{target}'", "ARC2010");
         return e;
     }
 
@@ -804,6 +816,6 @@ public sealed class Binder
         return false;
     }
 
-    private void Report(int line, string msg) =>
-        Diagnostics.Add(new Diagnostic { Message = msg, Line = line, Column = 0 });
+    private void Report(int line, string msg, string id = "ARC2001", DiagnosticSeverity severity = DiagnosticSeverity.Error) =>
+        Diagnostics.Add(new Diagnostic { Message = msg, Line = line, Column = 0, Id = id, Severity = severity });
 }

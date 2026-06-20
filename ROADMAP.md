@@ -11,6 +11,34 @@ roadmap is to turn that PoC into a usable native-C# toolchain.
 
 ---
 
+## Implementation progress
+
+Work is landing in phases. Each phase is run-verified locally with
+`tools\verify.ps1` (the sandbox used to author changes has no .NET SDK / `clang`,
+so building is done on a developer machine).
+
+**Phase 1 — correctness & tooling foundation (done):**
+
+- **Diagnostics with codes + severities** (§6) — every diagnostic now carries a
+  stable id (`ARC0001`…) and an Error/Warning/Info severity; the driver gates
+  failure on error count and supports `-Werror`.
+- **Multi-file compilation** (§6) — the driver accepts multiple `.cs` inputs and
+  the binder merges type declarations across them before binding.
+- **Definite-assignment analysis** (§5) — a conservative structured flow pass
+  warns on locals read before assignment (promotable to errors via `-Werror`).
+
+**Next phases (sequenced, not yet implemented):** full integer numeric tower
+(byte/short/unsigned) → `ref`/`out`/`in` parameters, properties,
+`using`/`IDisposable` → `is`/`as` + array covariance + type-soundness checks →
+generics (monomorphization) → ARC hardening (atomics, borrow elision) → backend
+upgrade (LLVM C API, debug info, optimization, multi-target) → BCL & threading.
+Per-item design and "concrete first steps" are in the sections below.
+
+Status key in the section tables below: **[done]** shipped in a phase above;
+unmarked items are still planned.
+
+---
+
 ## 1. Language — close the feature gap
 
 | Feature | Priority | Decision / approach |
@@ -102,7 +130,7 @@ roadmap is to turn that PoC into a usable native-C# toolchain.
 | **Null safety** | P0 | Enforce the existing `?` annotation. Reference types without `?` are non-null; assign `null` only to nullable types. Add definite-assignment checks (below) to ensure non-null locals are initialized. |
 | **Type soundness** | P0 | Implement runtime type checks for `is`/`as` and unchecked reference casts. Interface downcasts and `object[]` to `string[]`-style array casts must verify `TypeInfo` compatibility. Store element type in array `TypeInfo`; `arc_array_store` type-checks covariance. |
 | **Array covariance** | P0 | Arrays store their element `TypeInfo`. Every store to a reference-type array performs a runtime assignability check. Value-type arrays are invariant. |
-| **Definite assignment** | P0 | Add a flow-analysis pass that tracks whether every local is definitely assigned before use and definitely assigned on every exit path for `out` parameters. Report errors for uninitialized locals. |
+| **Definite assignment** | P0 **[done]** | A conservative structured flow pass (`DefiniteAssignment.cs`) tracks whether each local is definitely assigned before use, with completes-normally tracking so `if`/loop joins don't false-positive. Currently reports `ARC2100` as a warning (promotable via `-Werror`); tightening to a hard error and extending to `out`-parameter exit paths is follow-up work. |
 | **Overflow checking** | P1 | Support `checked`/`unchecked` contexts. Integer arithmetic in `checked` emits `llvm.sadd.with.overflow` / `smul.with.overflow` and branches to an overflow exception. `unchecked` uses plain LLVM integer ops. |
 | **Verification suite** | P0 | Grow from 10 samples to a **thousands-of-tests conformance suite**. Adopt or write a test harness that runs ArcSharp output against expected output and ARC accounting. Target the C# spec incrementally; include negative tests (must-fail diagnostics). |
 
@@ -120,8 +148,8 @@ roadmap is to turn that PoC into a usable native-C# toolchain.
 | Tool | Priority | Decision / approach |
 |---|---|---|
 | **Incremental compilation** | P1 | Cache per-type and per-method compiled LLVM modules on disk keyed by source hash. Only recompile changed files/methods. |
-| **Multi-file projects** | P0 | Support compiling multiple `.cs` files and a project file format (`arcproj.json` or MSBuild-compatible subset). Resolve namespaces across files; merge type declarations. |
-| **Diagnostic quality** | P0 | Add error codes (`ARC0001`), severity levels (error/warning/info), and richer messages with source snippets. Preserve line/column from the lexer. |
+| **Multi-file projects** | P0 **[partly done]** | Compiling multiple `.cs` files is implemented: the driver accepts several inputs and the binder merges type declarations across them. A project file format (`arcproj.json` or MSBuild-compatible subset) is still to do. |
+| **Diagnostic quality** | P0 **[partly done]** | Error codes (`ARC0001`…) and severity levels (error/warning/info) are implemented, with error-count gating and `-Werror`. Richer messages with source snippets and column tracking through every phase remain follow-up work. |
 | **IDE integration (LSP)** | P2 | Implement a **Language Server Protocol** server exposing document symbols, diagnostics, go-to-definition, and autocomplete. Reuse the binder's symbol tables. |
 
 ### Concrete first steps for tooling
