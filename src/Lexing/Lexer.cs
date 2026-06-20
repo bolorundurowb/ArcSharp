@@ -44,7 +44,7 @@ public sealed class Diagnostic
     public override string ToString() => $"({Line},{Column}): {SeverityText} {Id}: {Message}";
 }
 
-public sealed class Lexer
+public sealed class Lexer(string text)
 {
     private static readonly Dictionary<string, TokenKind> Keywords = new()
     {
@@ -85,13 +85,11 @@ public sealed class Lexer
         ["var"] = TokenKind.VarKw,
     };
 
-    private readonly string _text;
+    private readonly string _text = text;
     private int _pos;
     private int _line = 1;
     private int _col = 1;
-    public List<Diagnostic> Diagnostics { get; } = new();
-
-    public Lexer(string text) => _text = text;
+    public List<Diagnostic> Diagnostics { get; } = [];
 
     private char Current => _pos < _text.Length ? _text[_pos] : '\0';
     private char Peek(int n = 1) => _pos + n < _text.Length ? _text[_pos + n] : '\0';
@@ -237,7 +235,7 @@ public sealed class Lexer
     private Token LexChar(int start, int line, int col)
     {
         Advance(); // opening quote
-        var value = '\0';
+        char value;
         if (Current == '\\')
         {
             Advance();

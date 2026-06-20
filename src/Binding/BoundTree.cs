@@ -28,7 +28,7 @@ public sealed class BoundCall : BoundExpr
 {
     public BoundExpr? Receiver;        // null when static
     public required MethodSymbol Method;
-    public List<BoundExpr> Arguments = new();
+    public List<BoundExpr> Arguments = [];
     public bool Virtual;
     public bool Interface;             // interface dispatch
     public int Selector = -1;          // global interface selector when Interface
@@ -37,7 +37,7 @@ public sealed class BoundCall : BoundExpr
 public sealed class BoundNewObject : BoundExpr
 {
     public MethodSymbol? Ctor;
-    public List<BoundExpr> Arguments = new();
+    public List<BoundExpr> Arguments = [];
 }
 
 public sealed class BoundNewArray : BoundExpr
@@ -114,8 +114,8 @@ public abstract class BoundStmt { }
 
 public sealed class BoundBlock : BoundStmt
 {
-    public List<BoundStmt> Statements = new();
-    public List<LocalSymbol> Locals = new();    // locals declared directly in this block
+    public List<BoundStmt> Statements = [];
+    public List<LocalSymbol> Locals = [];    // locals declared directly in this block
 }
 
 public sealed class BoundLocalDecl : BoundStmt
@@ -153,5 +153,5 @@ public sealed class BoundMethodBody
 {
     public required MethodSymbol Method;
     public required BoundBlock Body;
-    public List<LocalSymbol> AllLocals = new();
+    public List<LocalSymbol> AllLocals = [];
 }

@@ -2,13 +2,11 @@ using ArcSharp.Lexing;
 
 namespace ArcSharp.Syntax;
 
-public sealed class Parser
+public sealed class Parser(List<Token> tokens)
 {
-    private readonly List<Token> _tokens;
+    private readonly List<Token> _tokens = tokens;
     private int _i;
-    public List<Diagnostic> Diagnostics { get; } = new();
-
-    public Parser(List<Token> tokens) => _tokens = tokens;
+    public List<Diagnostic> Diagnostics { get; } = [];
 
     private Token Current => _tokens[Math.Min(_i, _tokens.Count - 1)];
     private Token Peek(int n) => _tokens[Math.Min(_i + n, _tokens.Count - 1)];
@@ -286,15 +284,15 @@ public sealed class Parser
 
     private Stmt ParseStatement()
     {
-        switch (Current.Kind)
+        return Current.Kind switch
         {
-            case TokenKind.OpenBrace: return ParseBlock();
-            case TokenKind.IfKw: return ParseIf();
-            case TokenKind.WhileKw: return ParseWhile();
-            case TokenKind.ForKw: return ParseFor();
-            case TokenKind.ReturnKw: return ParseReturn();
-            default: return ParseSimpleStatement(requireSemicolon: true);
-        }
+            TokenKind.OpenBrace => ParseBlock(),
+            TokenKind.IfKw => ParseIf(),
+            TokenKind.WhileKw => ParseWhile(),
+            TokenKind.ForKw => ParseFor(),
+            TokenKind.ReturnKw => ParseReturn(),
+            _ => ParseSimpleStatement(requireSemicolon: true),
+        };
     }
 
     private Stmt ParseSimpleStatement(bool requireSemicolon)

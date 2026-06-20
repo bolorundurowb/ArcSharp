@@ -9,7 +9,7 @@ public sealed class TypeSyntax : Node
 {
     public required string Name;
     public int ArrayRank;          // 0 = not an array, 1 = T[]
-    public List<TypeSyntax> TypeArgs = new();   // generic type arguments, e.g. WeakReference<T>
+    public List<TypeSyntax> TypeArgs = [];   // generic type arguments, e.g. WeakReference<T>
     public bool Nullable;          // trailing '?', ignored semantically for ref types
     public override string ToString() => Name + (ArrayRank > 0 ? "[]" : "");
 }
@@ -17,19 +17,19 @@ public sealed class TypeSyntax : Node
 // ---- Top level -------------------------------------------------------------
 public sealed class CompilationUnit : Node
 {
-    public List<TypeDecl> Types = new();
+    public List<TypeDecl> Types = [];
 }
 
 public abstract class TypeDecl : Node
 {
     public required string Name;
-    public List<MemberDecl> Members = new();
+    public List<MemberDecl> Members = [];
 }
 
 public sealed class ClassDecl : TypeDecl
 {
     public string? BaseTypeName;
-    public List<string> InterfaceNames = new();
+    public List<string> InterfaceNames = [];
     public bool IsAbstract;
 }
 
@@ -61,7 +61,7 @@ public sealed class MethodDecl : MemberDecl
 {
     public TypeSyntax? ReturnType;        // null for constructors
     public required string Name;
-    public List<ParameterSyntax> Parameters = new();
+    public List<ParameterSyntax> Parameters = [];
     public BlockStmt? Body;               // null for abstract/interface methods
     public bool IsVirtual;
     public bool IsOverride;
@@ -70,13 +70,13 @@ public sealed class MethodDecl : MemberDecl
     // constructor initializer:  : base(args)  or  : this(args)
     public bool HasCtorInit;
     public bool CtorInitIsThis;
-    public List<Expr> CtorInitArgs = new();
+    public List<Expr> CtorInitArgs = [];
 }
 
 // ---- Statements ------------------------------------------------------------
 public abstract class Stmt : Node { }
 
-public sealed class BlockStmt : Stmt { public List<Stmt> Statements = new(); }
+public sealed class BlockStmt : Stmt { public List<Stmt> Statements = []; }
 
 public sealed class LocalDeclStmt : Stmt
 {
@@ -137,14 +137,14 @@ public sealed class MemberAccessExpr : Expr
 public sealed class InvocationExpr : Expr
 {
     public required Expr Callee;
-    public List<Expr> Arguments = new();
+    public List<Expr> Arguments = [];
 }
 
 public sealed class NewObjectExpr : Expr
 {
     public required string TypeName;
-    public List<TypeSyntax> TypeArgs = new();
-    public List<Expr> Arguments = new();
+    public List<TypeSyntax> TypeArgs = [];
+    public List<Expr> Arguments = [];
 }
 
 public sealed class OutArgExpr : Expr

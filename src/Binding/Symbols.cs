@@ -11,12 +11,12 @@ public sealed class TypeSymbol
 
     // class/struct
     public TypeSymbol? BaseType;
-    public List<TypeSymbol> Interfaces = new();
-    public List<FieldSymbol> InstanceFields = new();   // includes inherited, in layout order
-    public List<FieldSymbol> StaticFields = new();
-    public List<MethodSymbol> Methods = new();          // declared in this type (incl ctors)
-    public List<MethodSymbol> Vtable = new();           // virtual slot order (incl inherited)
-    public Dictionary<int, MethodSymbol> InterfaceImpl = new(); // selector -> implementing method
+    public List<TypeSymbol> Interfaces = [];
+    public List<FieldSymbol> InstanceFields = [];   // includes inherited, in layout order
+    public List<FieldSymbol> StaticFields = [];
+    public List<MethodSymbol> Methods = [];          // declared in this type (incl ctors)
+    public List<MethodSymbol> Vtable = [];           // virtual slot order (incl inherited)
+    public Dictionary<int, MethodSymbol> InterfaceImpl = []; // selector -> implementing method
     public ClassDecl? ClassSyntax;
     public StructDecl? StructSyntax;
     public InterfaceDecl? InterfaceSyntax;
@@ -101,7 +101,7 @@ public sealed class MethodSymbol
     public required string Name;
     public required TypeSymbol Owner;
     public TypeSymbol ReturnType = null!;
-    public List<ParamSymbol> Parameters = new();
+    public List<ParamSymbol> Parameters = [];
     public bool IsStatic;
     public bool IsVirtual;
     public bool IsOverride;

@@ -5,32 +5,32 @@ namespace ArcSharp.Binding;
 
 public sealed class BoundProgram
 {
-    public List<TypeSymbol> Types = new();
-    public List<BoundMethodBody> MethodBodies = new();
+    public List<TypeSymbol> Types = [];
+    public List<BoundMethodBody> MethodBodies = [];
     public int InterfaceSelectorCount;
     public MethodSymbol? Entry;
-    public List<Diagnostic> Diagnostics = new();
+    public List<Diagnostic> Diagnostics = [];
 }
 
 public sealed class Binder
 {
-    private readonly Dictionary<string, TypeSymbol> _types = new();
-    private readonly Dictionary<string, TypeSymbol> _arrayCache = new();
-    private readonly Dictionary<string, TypeSymbol> _weakRefCache = new();
-    public List<Diagnostic> Diagnostics { get; } = new();
+    private readonly Dictionary<string, TypeSymbol> _types = [];
+    private readonly Dictionary<string, TypeSymbol> _arrayCache = [];
+    private readonly Dictionary<string, TypeSymbol> _weakRefCache = [];
+    public List<Diagnostic> Diagnostics { get; } = [];
 
     // predefined
     private readonly TypeSymbol _int, _long, _bool, _char, _float, _double, _void, _string, _null, _error;
 
     // interface selectors:  key "Iface::Method/argc" -> selector index
-    private readonly Dictionary<string, int> _selectors = new();
+    private readonly Dictionary<string, int> _selectors = [];
 
     // per-method binding state
     private TypeSymbol _curType = null!;
     private MethodSymbol _curMethod = null!;
-    private readonly List<Dictionary<string, LocalSymbol>> _scopes = new();
-    private Dictionary<string, ParamSymbol> _params = new();
-    private List<LocalSymbol> _methodLocals = new();
+    private readonly List<Dictionary<string, LocalSymbol>> _scopes = [];
+    private Dictionary<string, ParamSymbol> _params = [];
+    private List<LocalSymbol> _methodLocals = [];
     private int _localId;
 
     public Binder()
@@ -43,7 +43,7 @@ public sealed class Binder
         _error = new TypeSymbol { Name = "<error>", Kind = TypeKind.Error };
         foreach (var t in new[] { _int, _long, _bool, _char, _float, _double, _void, _string })
             _types[t.Name] = t;
-        TypeSymbol Prim(string n) => new() { Name = n, Kind = TypeKind.Primitive };
+        static TypeSymbol Prim(string n) => new() { Name = n, Kind = TypeKind.Primitive };
     }
 
     public BoundProgram Bind(CompilationUnit cu)
@@ -287,9 +287,9 @@ public sealed class Binder
         _curType = type;
         _curMethod = m;
         _scopes.Clear();
-        _methodLocals = new List<LocalSymbol>();
+        _methodLocals = [];
         _localId = 0;
-        _params = new Dictionary<string, ParamSymbol>();
+        _params = [];
         foreach (var p in m.Parameters) _params[p.Name] = p;
 
         var block = BindBlock(m.Syntax!.Body!);
@@ -315,7 +315,7 @@ public sealed class Binder
         else if (_curType.BaseType != null && FindCtor(_curType.BaseType, 0) != null)
         {
             targetType = _curType.BaseType;
-            argSyntax = new List<Expr>();
+            argSyntax = [];
         }
         else return null;
 
@@ -327,7 +327,7 @@ public sealed class Binder
         return new BoundCall { Receiver = new BoundThis { Type = _curType }, Method = target, Arguments = args, Type = _void, Virtual = false };
     }
 
-    private void PushScope() => _scopes.Add(new Dictionary<string, LocalSymbol>());
+    private void PushScope() => _scopes.Add([]);
     private void PopScope() => _scopes.RemoveAt(_scopes.Count - 1);
 
     private LocalSymbol DeclareLocal(string name, TypeSymbol type, int line)

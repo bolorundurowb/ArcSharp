@@ -4,29 +4,22 @@ using ArcSharp.Binding;
 
 namespace ArcSharp.CodeGen;
 
-public sealed class Emitter
+public sealed class Emitter(BoundProgram program, string triple, bool boundsChecks = true)
 {
-    private readonly BoundProgram _program;
-    private readonly string _triple;
-    private readonly bool _boundsChecks;
+    private readonly BoundProgram _program = program;
+    private readonly string _triple = triple;
+    private readonly bool _boundsChecks = boundsChecks;
 
     private readonly StringBuilder _mod = new();
-    private readonly List<string> _strings = new();
+    private readonly List<string> _strings = [];
 
-    private List<string> _entry = new();
-    private List<string> _body = new();
-    private readonly List<string> _stmtTemps = new();
+    private List<string> _entry = [];
+    private List<string> _body = [];
+    private readonly List<string> _stmtTemps = [];
     private int _tmp, _lbl, _strId;
     private bool _terminated;
     private MethodSymbol _curMethod = null!;
-    private readonly Dictionary<int, string> _localSlot = new();
-
-    public Emitter(BoundProgram program, string triple, bool boundsChecks = true)
-    {
-        _program = program;
-        _triple = triple;
-        _boundsChecks = boundsChecks;
-    }
+    private readonly Dictionary<int, string> _localSlot = [];
 
     private string T() => "%t" + (_tmp++);
     private string L(string p) => p + (_lbl++);
@@ -172,8 +165,8 @@ public sealed class Emitter
     private void EmitMethod(BoundMethodBody b, StringBuilder fns)
     {
         _curMethod = b.Method;
-        _entry = new List<string>();
-        _body = new List<string>();
+        _entry = [];
+        _body = [];
         _stmtTemps.Clear();
         _localSlot.Clear();
         _tmp = 0; _lbl = 0; _terminated = false;

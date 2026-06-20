@@ -55,20 +55,20 @@ public static class Compilation
         if (!string.IsNullOrEmpty(o.Clang))
         {
             var exe = baseName + (o.Target == "windows" ? ".exe" : "");
-            var crc = Exec(o.Clang, new[] { llPath, o.Runtime, "-o", exe });
+            var crc = Exec(o.Clang, [llPath, o.Runtime, "-o", exe]);
             if (crc != 0) { Console.Error.WriteLine("error: clang build failed"); return crc; }
             Console.Error.WriteLine($"[arcsharp] wrote {exe}");
             if (o.Run)
             {
                 Console.Error.WriteLine($"[arcsharp] running {exe}");
-                return Exec(Path.IsPathRooted(exe) || exe.Contains('/') || exe.Contains('\\') ? exe : "./" + exe, Array.Empty<string>());
+                return Exec(Path.IsPathRooted(exe) || exe.Contains('/') || exe.Contains('\\') ? exe : "./" + exe, []);
             }
             return 0;
         }
 
         // ---- llc + linker path ---------------------------------------------------
         var objPath = baseName + (o.Target == "windows" ? ".obj" : ".o");
-        var rc = Exec(o.Llc, new[] { "-filetype=obj", "-relocation-model=pic", llPath, "-o", objPath });
+        var rc = Exec(o.Llc, ["-filetype=obj", "-relocation-model=pic", llPath, "-o", objPath]);
         if (rc != 0) { Console.Error.WriteLine("error: llc failed"); return rc; }
         Console.Error.WriteLine($"[arcsharp] wrote {objPath}");
 
@@ -81,14 +81,14 @@ public static class Compilation
         }
 
         var exePath = baseName;
-        rc = Exec(o.Cc, new[] { objPath, o.Runtime, "-o", exePath });
+        rc = Exec(o.Cc, [objPath, o.Runtime, "-o", exePath]);
         if (rc != 0) { Console.Error.WriteLine("error: link failed"); return rc; }
         Console.Error.WriteLine($"[arcsharp] wrote {exePath}");
 
         if (o.Run)
         {
             Console.Error.WriteLine($"[arcsharp] running {exePath}");
-            return Exec(Path.IsPathRooted(exePath) ? exePath : "./" + exePath, Array.Empty<string>());
+            return Exec(Path.IsPathRooted(exePath) ? exePath : "./" + exePath, []);
         }
         return 0;
     }
