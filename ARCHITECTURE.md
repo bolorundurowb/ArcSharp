@@ -27,9 +27,9 @@ count reaches zero.
 |-----------------|-------------------------------------|----------------------------------------------|
 | Reclamation     | Deferred, at collection time        | Immediate, at last release                   |
 | Pauses          | Stop-the-world phases               | None (work is spread inline)                 |
-| Per-object cost | Amortized                           | A counter field + retain/release traffic     |
+| Per-object cost | Amortised                           | A counter field + retain/release traffic     |
 | Cycles          | Collected automatically             | **Leak** unless broken by `WeakReference<T>` |
-| Determinism     | Finalizers run nondeterministically | Destructors run deterministically            |
+| Determinism     | Finalisers run nondeterministically | Destructors run deterministically            |
 
 The defining trade-off — and the reason GC exists — is the last row: naive ARC
 cannot reclaim **reference cycles**. ArcSharp addresses this with the standard
@@ -145,7 +145,7 @@ memory is freed only when the last weak reference also goes away.
 
 ### Compile-time discipline (applied by the emitter)
 
-The emitter normalizes every evaluated reference expression to **+1 (owned)**:
+The emitter normalises every evaluated reference expression to **+1 (owned)**:
 
 - `new T(...)` and reference-returning calls yield **+1** by convention.
 - Reading a local, field, parameter, `this`, or array element yields a borrowed
@@ -165,7 +165,7 @@ Two cleanup scopes guarantee balance:
 
 1. **Statement temporaries** — every +1 not consumed by a store/return is
    released at the end of the enclosing full statement.
-2. **Locals** — each reference-typed local is a stack slot initialized to null
+2. **Locals** — each reference-typed local is a stack slot initialised to null
    and released on every path that leaves its scope (fall-through *and*
    `return`).
 
@@ -175,9 +175,9 @@ when `strong` hits 0. This is what makes destruction recursive and
 deterministic.
 
 > This "retain every read to +1, release temporaries per statement, release
-> slots at scope exit" rule over-retains slightly versus an optimizing ARC
+> slots at scope exit" rule over-retains slightly versus an optimising ARC
 > implementation. That is intentional: it is simple, local, and provably
-> balanced, which is what a first pass needs. Optimization (eliding
+> balanced, which is what a first pass needs. Optimisation (eliding
 > retain/release pairs) is future work.
 
 ---
@@ -239,13 +239,13 @@ and is fully reclaimed once the back-edge is a `WeakReference<T>`.
 - **Interfaces**: declaration + dispatch *(see Section 8 for status)*.
 - **`System.WeakReference<T>`**: `new`, `TryGetTarget(out ...)`, `SetTarget(...)` —
   plus minimal generic-type parsing and `out` arguments to support it.
-- **Statements**: blocks, local declarations with initializer, assignment,
+- **Statements**: blocks, local declarations with initialiser, assignment,
   `if`/`else`, `while`, `for`, `return`, expression statements.
 - **Expressions**: integer/long/bool/string/`null` literals; identifiers;
   `this`; field & static member access; method invocation (static, instance,
   virtual); `new T(args)`; `new T[n]`; array indexing (load/store);
   `+ - * / %`, `== != < <= > >=`, `&& || !`, unary `-`; string `+` concatenation;
-  parenthesization; assignment as expression.
+  parenthesisation; assignment as expression.
 - **Built-ins**: `System.Console.WriteLine` / `Console.Write` for
   `string`/`int`/`long`/`bool`, plus `.Length` on arrays and strings.
 - **Entry point**: `static void Main()` (or `static int Main()`).
@@ -266,10 +266,10 @@ and *scope* (just not built yet).
   retain/release (or ownership transfer rules). ArcSharp's counts are
   non-atomic, so shared mutable references across threads are unsound. Atomics
   are a known, measurable throughput cost.
-- **`GC.*` / finalizer semantics.** `GC.Collect`, `GC.KeepAlive`,
-  `WeakReference`, resurrection, and the two-phase finalizer queue assume a
+- **`GC.*` / finaliser semantics.** `GC.Collect`, `GC.KeepAlive`,
+  `WeakReference`, resurrection, and the two-phase finaliser queue assume a
   tracing collector. ArcSharp offers deterministic destructors instead; the GC
-  API surface cannot be honored.
+  API surface cannot be honoured.
 - **`async`/`await` & iterator state machines.** Lifetimes that span suspension
   points must be threaded through a heap-allocated state machine; getting ARC
   retain/release correct across `await` boundaries (and avoiding cycles in
@@ -279,7 +279,7 @@ and *scope* (just not built yet).
   the same `weak`-capture discipline Swift uses) but deferred.
 
 ### Out of scope for the first pass (no fundamental conflict)
-- **Generics.** Requires monomorphization (or a uniform boxed representation).
+- **Generics.** Requires monomorphisation (or a uniform boxed representation).
   Designed-for but not implemented.
 - **Reflection / `dynamic` / attributes at runtime**, `unsafe`/pointers,
   `stackalloc`, pinning.
@@ -352,7 +352,7 @@ What this buys today: the emitted IR is portable *across targets that share an
 architecture and ABI family* — which is exactly why one IR text validates on both
 x86-64 Linux and x86-64 Windows. What it does **not** yet provide: 32-bit, ARM,
 or big-endian targets. Making those work is the **P1 "Multi-target"** roadmap item
-— parameterize the triple/data layout into a `TargetInfo`, lower ABIs per target,
+— parameterise the triple/data layout into a `TargetInfo`, lower ABIs per target,
 and drop the hard-coded 8-byte-slot assumption. In short: GC-less native C# via
 LLVM, currently x86-64-scoped, portable in design.
 
@@ -379,6 +379,6 @@ LLVM, currently x86-64-scoped, portable in design.
    scope must also be a landing pad. Confirm exceptions are wanted before
    committing the emitter to DWARF/SEH unwinding.
 7. **Determinism guarantees.** Do we promise deterministic destruction order as
-   part of the language contract (it changes valid optimizations)?
-8. **Optimization budget.** How much retain/release elision (ownership/borrow
+   part of the language contract (it changes valid optimisations)?
+8. **Optimisation budget.** How much retain/release elision (ownership/borrow
    analysis) is expected for the PoC vs. a later milestone?

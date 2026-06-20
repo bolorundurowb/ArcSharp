@@ -1,6 +1,6 @@
 # ArcSharp
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![Licence: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 A proof-of-concept compiler for a subset of **C# 12** that uses **ARC (Automatic Reference Counting)** instead of a garbage collector, emits **LLVM IR**, and produces native, GC-less executables.
 
@@ -22,16 +22,16 @@ Most C# applications thrive on a tracing garbage collector. ArcSharp targets the
 |---------------------|------------------------------|-------------------------------------------|
 | **Reclamation**     | Deferred, at collection time | Immediate, at last release                |
 | **Pauses**          | Stop-the-world phases        | None (work is spread inline)              |
-| **Per-object cost** | Amortized                    | A counter field + retain/release traffic  |
+| **Per-object cost** | Amortised                    | A counter field + retain/release traffic  |
 | **Cycles**          | Collected automatically      | Leaks unless broken by `WeakReference<T>` |
-| **Determinism**     | Nondeterministic finalizers  | Deterministic destructors                 |
+| **Determinism**     | Nondeterministic finalisers  | Deterministic destructors                 |
 
 ## Key Features
-- **Deterministic Finalization**: Object destructors run the moment the last reference is dropped.
+- **Deterministic Finalisation**: Object destructors run the moment the last reference is dropped.
 - **No Runtime GC**: No background collection threads or stop-the-world pauses.
 - **Native Execution**: Compiles directly to LLVM IR and then to native machine code via `clang` or `llc`.
 - **C# 12 Subset**: Supports classes, inheritance, interfaces, virtual methods, arrays, strings, and more.
-- **Cycle Breaking**: Recognizes standard `System.WeakReference<T>` to break reference cycles, maintaining Roslyn compatibility.
+- **Cycle Breaking**: Recognises standard `System.WeakReference<T>` to break reference cycles, maintaining Roslyn compatibility.
 
 ## Project Status
 ArcSharp is currently a **Proof of Concept**.
