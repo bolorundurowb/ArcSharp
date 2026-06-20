@@ -1,5 +1,7 @@
 # ArcSharp
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+
 A proof-of-concept compiler for a subset of **C# 12** that uses **ARC (Automatic
 Reference Counting)** instead of a garbage collector, emits **LLVM IR**, and
 produces a native, GC-less executable. Target: **Windows x64**
