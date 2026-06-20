@@ -29,8 +29,8 @@ public sealed class Parser
         return Current;
     }
 
-    private void Report(string msg) =>
-        Diagnostics.Add(new Diagnostic { Message = msg, Line = Current.Line, Column = Current.Column });
+    private void Report(string msg, string id = "ARC1001") =>
+        Diagnostics.Add(new Diagnostic { Message = msg, Line = Current.Line, Column = Current.Column, Id = id });
 
     // ---- Compilation unit --------------------------------------------------
     public CompilationUnit ParseCompilationUnit()
@@ -80,7 +80,7 @@ public sealed class Parser
     // ---- Type declarations -------------------------------------------------
     private TypeDecl? ParseTypeDecl()
     {
-        bool isAbstract = false;
+        var isAbstract = false;
         while (true)
         {
             if (Accept(TokenKind.PublicKw) || Accept(TokenKind.PrivateKw) ||
@@ -100,15 +100,15 @@ public sealed class Parser
 
     private ClassDecl ParseClass(bool isAbstract)
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.ClassKw);
-        string name = Expect(TokenKind.Identifier).Text;
+        var name = Expect(TokenKind.Identifier).Text;
         var cls = new ClassDecl { Name = name, Line = line, IsAbstract = isAbstract };
         if (Accept(TokenKind.Colon))
         {
             do
             {
-                string b = Expect(TokenKind.Identifier).Text;
+                var b = Expect(TokenKind.Identifier).Text;
                 cls.InterfaceNames.Add(b);
             } while (Accept(TokenKind.Comma));
         }
@@ -121,9 +121,9 @@ public sealed class Parser
 
     private StructDecl ParseStruct()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.StructKw);
-        string name = Expect(TokenKind.Identifier).Text;
+        var name = Expect(TokenKind.Identifier).Text;
         var s = new StructDecl { Name = name, Line = line };
         if (Accept(TokenKind.Colon))
             do { Expect(TokenKind.Identifier); } while (Accept(TokenKind.Comma));
@@ -136,9 +136,9 @@ public sealed class Parser
 
     private InterfaceDecl ParseInterface()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.InterfaceKw);
-        string name = Expect(TokenKind.Identifier).Text;
+        var name = Expect(TokenKind.Identifier).Text;
         var iface = new InterfaceDecl { Name = name, Line = line };
         if (Accept(TokenKind.Colon))
             do { Expect(TokenKind.Identifier); } while (Accept(TokenKind.Comma));
@@ -152,7 +152,7 @@ public sealed class Parser
     // ---- Members -----------------------------------------------------------
     private void ParseMemberInto(TypeDecl owner, string typeName)
     {
-        int line = Current.Line;
+        var line = Current.Line;
         bool isStatic = false, isVirtual = false, isOverride = false, isAbstract = false, isWeak = false, isPublic = false;
         while (true)
         {
@@ -186,15 +186,20 @@ public sealed class Parser
         }
 
         var type = ParseType();
-        string name = Expect(TokenKind.Identifier).Text;
+        var name = Expect(TokenKind.Identifier).Text;
 
         if (At(TokenKind.OpenParen))
         {
             var m = new MethodDecl
             {
-                Name = name, ReturnType = type, Line = line,
-                IsStatic = isStatic, IsVirtual = isVirtual, IsOverride = isOverride,
-                IsAbstract = isAbstract || owner is InterfaceDecl, IsPublic = isPublic
+                Name = name,
+                ReturnType = type,
+                Line = line,
+                IsStatic = isStatic,
+                IsVirtual = isVirtual,
+                IsOverride = isOverride,
+                IsAbstract = isAbstract || owner is InterfaceDecl,
+                IsPublic = isPublic
             };
             ParseParameterList(m.Parameters);
             if (At(TokenKind.OpenBrace)) m.Body = ParseBlock();
@@ -218,7 +223,7 @@ public sealed class Parser
             do
             {
                 var t = ParseType();
-                string n = Expect(TokenKind.Identifier).Text;
+                var n = Expect(TokenKind.Identifier).Text;
                 into.Add(new ParameterSyntax { Type = t, Name = n, Line = t.Line });
             } while (Accept(TokenKind.Comma));
         }
@@ -227,8 +232,8 @@ public sealed class Parser
 
     private TypeSyntax ParseType()
     {
-        int line = Current.Line;
-        string name = Current.Kind switch
+        var line = Current.Line;
+        var name = Current.Kind switch
         {
             TokenKind.IntKw => "int",
             TokenKind.LongKw => "long",
@@ -266,12 +271,12 @@ public sealed class Parser
     // ---- Statements --------------------------------------------------------
     private BlockStmt ParseBlock()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.OpenBrace);
         var block = new BlockStmt { Line = line };
         while (!At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
         {
-            int before = _i;
+            var before = _i;
             block.Statements.Add(ParseStatement());
             if (_i == before) Advance();
         }
@@ -296,9 +301,9 @@ public sealed class Parser
     {
         if (LooksLikeLocalDecl())
         {
-            int line = Current.Line;
+            var line = Current.Line;
             var type = ParseType();
-            string name = Expect(TokenKind.Identifier).Text;
+            var name = Expect(TokenKind.Identifier).Text;
             Expr? init = null;
             if (Accept(TokenKind.Assign)) init = ParseExpression();
             if (requireSemicolon) Expect(TokenKind.Semicolon);
@@ -306,7 +311,7 @@ public sealed class Parser
         }
         else
         {
-            int line = Current.Line;
+            var line = Current.Line;
             var e = ParseExpression();
             if (requireSemicolon) Expect(TokenKind.Semicolon);
             return new ExprStmt { Expression = e, Line = line };
@@ -335,7 +340,7 @@ public sealed class Parser
 
     private Stmt ParseIf()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.IfKw);
         Expect(TokenKind.OpenParen);
         var cond = ParseExpression();
@@ -348,7 +353,7 @@ public sealed class Parser
 
     private Stmt ParseWhile()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.WhileKw);
         Expect(TokenKind.OpenParen);
         var cond = ParseExpression();
@@ -359,7 +364,7 @@ public sealed class Parser
 
     private Stmt ParseFor()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.ForKw);
         Expect(TokenKind.OpenParen);
         Stmt? init = null;
@@ -377,7 +382,7 @@ public sealed class Parser
 
     private Stmt ParseReturn()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.ReturnKw);
         Expr? v = null;
         if (!At(TokenKind.Semicolon)) v = ParseExpression();
@@ -476,7 +481,7 @@ public sealed class Parser
     {
         if (At(TokenKind.Bang) || At(TokenKind.Minus))
         {
-            int line = Current.Line;
+            var line = Current.Line;
             var op = Advance().Kind;
             var operand = ParseUnary();
             return new UnaryExpr { Op = op, Operand = operand, Line = line };
@@ -488,16 +493,16 @@ public sealed class Parser
     private bool TryParseCast(out Expr? cast)
     {
         cast = null;
-        int save = _i;
+        var save = _i;
         if (!At(TokenKind.OpenParen)) return false;
         Advance();
-        bool typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
+        var typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
             or TokenKind.StringKw or TokenKind.CharKw or TokenKind.FloatKw or TokenKind.DoubleKw or TokenKind.Identifier;
         if (!typeStart) { _i = save; return false; }
         var type = ParseType();
         if (!At(TokenKind.CloseParen)) { _i = save; return false; }
         Advance();
-        bool exprStart = Current.Kind is TokenKind.Identifier or TokenKind.IntLiteral or TokenKind.LongLiteral
+        var exprStart = Current.Kind is TokenKind.Identifier or TokenKind.IntLiteral or TokenKind.LongLiteral
             or TokenKind.FloatLiteral or TokenKind.DoubleLiteral
             or TokenKind.StringLiteral or TokenKind.CharLiteral or TokenKind.TrueKw or TokenKind.FalseKw
             or TokenKind.NullKw or TokenKind.OpenParen or TokenKind.ThisKw or TokenKind.NewKw
@@ -516,7 +521,7 @@ public sealed class Parser
             if (At(TokenKind.Dot))
             {
                 Advance();
-                string name = Expect(TokenKind.Identifier).Text;
+                var name = Expect(TokenKind.Identifier).Text;
                 e = new MemberAccessExpr { Target = e, Name = name, Line = e.Line };
             }
             else if (At(TokenKind.OpenParen))
@@ -550,17 +555,17 @@ public sealed class Parser
     {
         if (Accept(TokenKind.OutKw))
         {
-            int line = Current.Line;
+            var line = Current.Line;
             if (At(TokenKind.VarKw) && Peek(1).Kind == TokenKind.Identifier)
             {
                 Advance();
-                string n = Advance().Text;
+                var n = Advance().Text;
                 return new OutArgExpr { IsDeclaration = true, IsVar = true, Name = n, Line = line };
             }
             if (LooksLikeOutDecl())
             {
                 var t = ParseType();
-                string n = Expect(TokenKind.Identifier).Text;
+                var n = Expect(TokenKind.Identifier).Text;
                 return new OutArgExpr { IsDeclaration = true, DeclType = t, Name = n, Line = line };
             }
             var tgt = ParseExpression();
@@ -571,63 +576,63 @@ public sealed class Parser
 
     private bool LooksLikeOutDecl()
     {
-        bool typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
+        var typeStart = Current.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
             or TokenKind.StringKw or TokenKind.CharKw or TokenKind.FloatKw or TokenKind.DoubleKw or TokenKind.Identifier;
         return typeStart && Peek(1).Kind == TokenKind.Identifier;
     }
 
     private Expr ParsePrimary()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         switch (Current.Kind)
         {
             case TokenKind.IntLiteral:
-            {
-                var t = Advance();
-                return new LiteralExpr { Kind = LiteralKind.Int, IntValue = long.Parse(t.Text), Line = line };
-            }
+                {
+                    var t = Advance();
+                    return new LiteralExpr { Kind = LiteralKind.Int, IntValue = long.Parse(t.Text), Line = line };
+                }
             case TokenKind.LongLiteral:
-            {
-                var t = Advance();
-                return new LiteralExpr { Kind = LiteralKind.Long, IntValue = long.Parse(t.Text), Line = line };
-            }
+                {
+                    var t = Advance();
+                    return new LiteralExpr { Kind = LiteralKind.Long, IntValue = long.Parse(t.Text), Line = line };
+                }
             case TokenKind.FloatLiteral:
-            {
-                var t = Advance();
-                return new LiteralExpr { Kind = LiteralKind.Float, FloatValue = double.Parse(t.Text.TrimEnd('f', 'F')), Line = line };
-            }
+                {
+                    var t = Advance();
+                    return new LiteralExpr { Kind = LiteralKind.Float, FloatValue = double.Parse(t.Text.TrimEnd('f', 'F')), Line = line };
+                }
             case TokenKind.DoubleLiteral:
-            {
-                var t = Advance();
-                return new LiteralExpr { Kind = LiteralKind.Double, FloatValue = double.Parse(t.Text.TrimEnd('d', 'D')), Line = line };
-            }
+                {
+                    var t = Advance();
+                    return new LiteralExpr { Kind = LiteralKind.Double, FloatValue = double.Parse(t.Text.TrimEnd('d', 'D')), Line = line };
+                }
             case TokenKind.CharLiteral:
-            {
-                var t = Advance();
-                return new LiteralExpr { Kind = LiteralKind.Char, IntValue = long.Parse(t.Text), Line = line };
-            }
+                {
+                    var t = Advance();
+                    return new LiteralExpr { Kind = LiteralKind.Char, IntValue = long.Parse(t.Text), Line = line };
+                }
             case TokenKind.StringLiteral:
-            {
-                var t = Advance();
-                return new LiteralExpr { Kind = LiteralKind.String, StringValue = t.Text, Line = line };
-            }
+                {
+                    var t = Advance();
+                    return new LiteralExpr { Kind = LiteralKind.String, StringValue = t.Text, Line = line };
+                }
             case TokenKind.TrueKw: Advance(); return new LiteralExpr { Kind = LiteralKind.Bool, BoolValue = true, Line = line };
             case TokenKind.FalseKw: Advance(); return new LiteralExpr { Kind = LiteralKind.Bool, BoolValue = false, Line = line };
             case TokenKind.NullKw: Advance(); return new LiteralExpr { Kind = LiteralKind.Null, Line = line };
             case TokenKind.ThisKw: Advance(); return new ThisExpr { Line = line };
             case TokenKind.Identifier:
-            {
-                var t = Advance();
-                return new NameExpr { Name = t.Text, Line = line };
-            }
+                {
+                    var t = Advance();
+                    return new NameExpr { Name = t.Text, Line = line };
+                }
             case TokenKind.NewKw: return ParseNew();
             case TokenKind.OpenParen:
-            {
-                Advance();
-                var e = ParseExpression();
-                Expect(TokenKind.CloseParen);
-                return e;
-            }
+                {
+                    Advance();
+                    var e = ParseExpression();
+                    Expect(TokenKind.CloseParen);
+                    return e;
+                }
             default:
                 Report($"unexpected token {Current.Kind} '{Current.Text}' in expression");
                 Advance();
@@ -637,7 +642,7 @@ public sealed class Parser
 
     private Expr ParseNew()
     {
-        int line = Current.Line;
+        var line = Current.Line;
         Expect(TokenKind.NewKw);
         var type = ParseTypeNameForNew();
         var typeArgs = new List<TypeSyntax>();

@@ -106,21 +106,21 @@ public sealed class Emitter
 
     private void EmitTypeInfo(TypeSymbol t, StringBuilder fns)
     {
-        int nameLen = t.Name.Length + 1;
+        var nameLen = t.Name.Length + 1;
         _mod.AppendLine($"@{t.Name}__name = private constant [{nameLen} x i8] c\"{t.Name}\\00\"");
 
-        int k = t.Vtable.Count;
+        var k = t.Vtable.Count;
         if (k > 0)
         {
             var entries = t.Vtable.Select(m => $"i8* bitcast ({FnPtrType(m)} @{m.MangledName} to i8*)");
             _mod.AppendLine($"@{t.Name}__vtable = private constant [{k} x i8*] [ {string.Join(", ", entries)} ]");
         }
 
-        int s = _program.InterfaceSelectorCount;
+        var s = _program.InterfaceSelectorCount;
         if (s > 0)
         {
             var entries = new List<string>();
-            for (int sel = 0; sel < s; sel++)
+            for (var sel = 0; sel < s; sel++)
             {
                 if (t.InterfaceImpl.TryGetValue(sel, out var m))
                     entries.Add($"i8* bitcast ({FnPtrType(m)} @{m.MangledName} to i8*)");
@@ -129,11 +129,11 @@ public sealed class Emitter
             _mod.AppendLine($"@{t.Name}__itable = private constant [{s} x i8*] [ {string.Join(", ", entries)} ]");
         }
 
-        int size = 24 + t.InstanceFields.Count * 8;
-        string vtExpr = k > 0
+        var size = 24 + t.InstanceFields.Count * 8;
+        var vtExpr = k > 0
             ? $"i8** getelementptr ([{k} x i8*], [{k} x i8*]* @{t.Name}__vtable, i64 0, i64 0)"
             : "i8** null";
-        string itExpr = s > 0
+        var itExpr = s > 0
             ? $"i8** getelementptr ([{s} x i8*], [{s} x i8*]* @{t.Name}__itable, i64 0, i64 0)"
             : "i8** null";
 
@@ -195,14 +195,14 @@ public sealed class Emitter
         }
         foreach (var loc in b.AllLocals)
         {
-            string slot = $"%loc{loc.Id}";
+            var slot = $"%loc{loc.Id}";
             _localSlot[loc.Id] = slot;
             _entry.Add($"  {slot} = alloca {loc.Type.LlvmType}");
             if (loc.Type.IsReferenceType)
                 _entry.Add($"  store i8* null, i8** {slot}");
         }
 
-        bool isVoid = m.ReturnType.Kind == TypeKind.Void;
+        var isVoid = m.ReturnType.Kind == TypeKind.Void;
         if (!isVoid)
         {
             _entry.Add($"  %retval = alloca {m.ReturnType.LlvmType}");
@@ -266,9 +266,9 @@ public sealed class Emitter
     private void EmitLocalDecl(BoundLocalDecl d)
     {
         if (d.Initializer == null) return;
-        int mark = _stmtTemps.Count;
+        var mark = _stmtTemps.Count;
         var v = EmitR(d.Initializer);
-        string slot = _localSlot[d.Symbol.Id];
+        var slot = _localSlot[d.Symbol.Id];
         if (d.Symbol.Type.IsReferenceType)
             Do($"call void @arc_assign_take(i8** {slot}, i8* {v})");
         else
@@ -278,7 +278,7 @@ public sealed class Emitter
 
     private void EmitExprStmt(BoundExprStmt e)
     {
-        int mark = _stmtTemps.Count;
+        var mark = _stmtTemps.Count;
         var v = EmitR(e.Expression);
         if (e.Expression.Type.IsReferenceType) _stmtTemps.Add(v);
         ReleaseTemps(mark);
@@ -286,11 +286,11 @@ public sealed class Emitter
 
     private void EmitIf(BoundIf s)
     {
-        int mark = _stmtTemps.Count;
+        var mark = _stmtTemps.Count;
         var c = EmitR(s.Condition);
         ReleaseTemps(mark);
         string thenL = L("then"), endL = L("endif");
-        string elseL = s.Else != null ? L("else") : endL;
+        var elseL = s.Else != null ? L("else") : endL;
         Term($"br i1 {c}, label %{thenL}, label %{elseL}");
         Lbl(thenL);
         EmitStmt(s.Then);
@@ -309,7 +309,7 @@ public sealed class Emitter
         string condL = L("while.cond"), bodyL = L("while.body"), endL = L("while.end");
         Term($"br label %{condL}");
         Lbl(condL);
-        int mark = _stmtTemps.Count;
+        var mark = _stmtTemps.Count;
         var c = EmitR(s.Condition);
         ReleaseTemps(mark);
         Term($"br i1 {c}, label %{bodyL}, label %{endL}");
@@ -327,7 +327,7 @@ public sealed class Emitter
         Lbl(condL);
         if (s.Condition != null)
         {
-            int mark = _stmtTemps.Count;
+            var mark = _stmtTemps.Count;
             var c = EmitR(s.Condition);
             ReleaseTemps(mark);
             Term($"br i1 {c}, label %{bodyL}, label %{endL}");
@@ -339,7 +339,7 @@ public sealed class Emitter
         Lbl(stepL);
         if (s.Update != null)
         {
-            int mark = _stmtTemps.Count;
+            var mark = _stmtTemps.Count;
             EmitR(s.Update);
             ReleaseTemps(mark);
         }
@@ -349,7 +349,7 @@ public sealed class Emitter
 
     private void EmitReturn(BoundReturn r)
     {
-        int mark = _stmtTemps.Count;
+        var mark = _stmtTemps.Count;
         if (r.Value != null)
         {
             var v = EmitR(r.Value);
@@ -362,7 +362,7 @@ public sealed class Emitter
 
     private void ReleaseTemps(int mark)
     {
-        for (int i = _stmtTemps.Count - 1; i >= mark; i--)
+        for (var i = _stmtTemps.Count - 1; i >= mark; i--)
             Do($"call void @arc_release(i8* {_stmtTemps[i]})");
         _stmtTemps.RemoveRange(mark, _stmtTemps.Count - mark);
     }
@@ -401,29 +401,29 @@ public sealed class Emitter
             case Syntax.LiteralKind.Char: return l.IntValue.ToString();
             case Syntax.LiteralKind.Long: return l.IntValue.ToString();
             case Syntax.LiteralKind.Float:
-            {
-                var d = FormatFloatConstant(((double)l.FloatValue).ToString(System.Globalization.CultureInfo.InvariantCulture));
-                return Inst($"fptrunc double {d} to float");
-            }
+                {
+                    var d = FormatFloatConstant(((double)l.FloatValue).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    return Inst($"fptrunc double {d} to float");
+                }
             case Syntax.LiteralKind.Double: return FormatFloatConstant(l.FloatValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
             case Syntax.LiteralKind.Bool: return l.BoolValue ? "1" : "0";
             case Syntax.LiteralKind.Null: return "null";
             case Syntax.LiteralKind.String:
-            {
-                var bytes = Encoding.UTF8.GetBytes(l.StringValue);
-                int len = bytes.Length;
-                var sb = new StringBuilder();
-                foreach (var bt in bytes)
                 {
-                    if (bt >= 0x20 && bt < 0x7f && bt != (byte)'"' && bt != (byte)'\\')
-                        sb.Append((char)bt);
-                    else sb.Append("\\" + bt.ToString("X2"));
+                    var bytes = Encoding.UTF8.GetBytes(l.StringValue);
+                    var len = bytes.Length;
+                    var sb = new StringBuilder();
+                    foreach (var bt in bytes)
+                    {
+                        if (bt >= 0x20 && bt < 0x7f && bt != (byte)'"' && bt != (byte)'\\')
+                            sb.Append((char)bt);
+                        else sb.Append("\\" + bt.ToString("X2"));
+                    }
+                    var g = $"@.str.{_strId++}";
+                    _strings.Add($"{g} = private constant [{len + 1} x i8] c\"{sb}\\00\"");
+                    var ptr = Inst($"getelementptr [{len + 1} x i8], [{len + 1} x i8]* {g}, i64 0, i64 0");
+                    return Inst($"call i8* @arc_str_lit(i8* {ptr}, i64 {len})");
                 }
-                string g = $"@.str.{_strId++}";
-                _strings.Add($"{g} = private constant [{len + 1} x i8] c\"{sb}\\00\"");
-                var ptr = Inst($"getelementptr [{len + 1} x i8], [{len + 1} x i8]* {g}, i64 0, i64 0");
-                return Inst($"call i8* @arc_str_lit(i8* {ptr}, i64 {len})");
-            }
         }
         return "0";
     }
@@ -445,7 +445,7 @@ public sealed class Emitter
     {
         if (fa.Field.IsStatic)
         {
-            string g = fa.Field.MangledStatic;
+            var g = fa.Field.MangledStatic;
             if (fa.Field.IsWeak) return Inst($"call i8* @arc_load_weak(i8** {g})");
             var v = Inst($"load {fa.Field.Type.LlvmType}, {fa.Field.Type.LlvmType}* {g}");
             if (fa.Field.Type.IsReferenceType) Do($"call void @arc_retain(i8* {v})");
@@ -485,22 +485,22 @@ public sealed class Emitter
         }
 
         var m = c.Method;
-        string ret = m.ReturnType.LlvmType;
-        bool isVoid = m.ReturnType.Kind == TypeKind.Void;
+        var ret = m.ReturnType.LlvmType;
+        var isVoid = m.ReturnType.Kind == TypeKind.Void;
 
         if (c.Virtual || c.Interface)
         {
             var tip = Inst($"getelementptr i8, i8* {recv}, i64 16");
             var tipp = Inst($"bitcast i8* {tip} to %TypeInfo**");
             var ti = Inst($"load %TypeInfo*, %TypeInfo** {tipp}");
-            int tableField = c.Interface ? 5 : 3;
-            int slot = c.Interface ? c.Selector : m.VtableSlot;
+            var tableField = c.Interface ? 5 : 3;
+            var slot = c.Interface ? c.Selector : m.VtableSlot;
             var tabp = Inst($"getelementptr %TypeInfo, %TypeInfo* {ti}, i32 0, i32 {tableField}");
             var tab = Inst($"load i8**, i8*** {tabp}");
             var fpp = Inst($"getelementptr i8*, i8** {tab}, i64 {slot}");
             var fp = Inst($"load i8*, i8** {fpp}");
             var fn = Inst($"bitcast i8* {fp} to {FnPtrType(m)}");
-            string callArgs = string.Join(", ", new[] { $"i8* {recv}" }.Concat(argVals));
+            var callArgs = string.Join(", ", new[] { $"i8* {recv}" }.Concat(argVals));
             if (isVoid) { Do($"call void {fn}({callArgs})"); return ""; }
             return Inst($"call {ret} {fn}({callArgs})");
         }
@@ -508,7 +508,7 @@ public sealed class Emitter
         var parts = new List<string>();
         if (!m.IsStatic) parts.Add($"i8* {recv}");
         parts.AddRange(argVals);
-        string args = string.Join(", ", parts);
+        var args = string.Join(", ", parts);
         if (isVoid) { Do($"call void @{m.MangledName}({args})"); return ""; }
         return Inst($"call {ret} @{m.MangledName}({args})");
     }
@@ -525,7 +525,7 @@ public sealed class Emitter
                 if (a.Type.IsReferenceType) _stmtTemps.Add(v);
                 argVals.Add($"{a.Type.LlvmType} {v}");
             }
-            string args = string.Join(", ", new[] { $"i8* {obj}" }.Concat(argVals));
+            var args = string.Join(", ", new[] { $"i8* {obj}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
         }
         return obj;
@@ -535,7 +535,7 @@ public sealed class Emitter
     {
         var size = EmitR(a.Size);
         var s64 = Inst($"sext i32 {size} to i64");
-        int isRef = a.ElementType.IsReferenceType ? 1 : 0;
+        var isRef = a.ElementType.IsReferenceType ? 1 : 0;
         return Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef})");
     }
 
@@ -573,11 +573,11 @@ public sealed class Emitter
             case BinKind.FloatCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.RefEq:
-            {
-                var l = EmitR(b.Left); if (b.Left.Type.IsReferenceType) _stmtTemps.Add(l);
-                var r = EmitR(b.Right); if (b.Right.Type.IsReferenceType) _stmtTemps.Add(r);
-                return Inst($"icmp {(b.Op == TokenKind.EqualsEquals ? "eq" : "ne")} i8* {l}, {r}");
-            }
+                {
+                    var l = EmitR(b.Left); if (b.Left.Type.IsReferenceType) _stmtTemps.Add(l);
+                    var r = EmitR(b.Right); if (b.Right.Type.IsReferenceType) _stmtTemps.Add(r);
+                    return Inst($"icmp {(b.Op == TokenKind.EqualsEquals ? "eq" : "ne")} i8* {l}, {r}");
+                }
             case BinKind.BoolLogic: return EmitLogic(b);
             case BinKind.StrConcat: return EmitConcat(b);
             default: return "0";
@@ -586,28 +586,44 @@ public sealed class Emitter
 
     private static string ArithOp(TokenKind op) => op switch
     {
-        TokenKind.Plus => "add", TokenKind.Minus => "sub", TokenKind.Star => "mul",
-        TokenKind.Slash => "sdiv", TokenKind.Percent => "srem", _ => "add"
+        TokenKind.Plus => "add",
+        TokenKind.Minus => "sub",
+        TokenKind.Star => "mul",
+        TokenKind.Slash => "sdiv",
+        TokenKind.Percent => "srem",
+        _ => "add"
     };
 
     private static string FloatArithOp(TokenKind op) => op switch
     {
-        TokenKind.Plus => "fadd", TokenKind.Minus => "fsub", TokenKind.Star => "fmul",
-        TokenKind.Slash => "fdiv", TokenKind.Percent => "frem", _ => "fadd"
+        TokenKind.Plus => "fadd",
+        TokenKind.Minus => "fsub",
+        TokenKind.Star => "fmul",
+        TokenKind.Slash => "fdiv",
+        TokenKind.Percent => "frem",
+        _ => "fadd"
     };
 
     private static string CmpOp(TokenKind op) => op switch
     {
-        TokenKind.EqualsEquals => "eq", TokenKind.BangEquals => "ne",
-        TokenKind.Less => "slt", TokenKind.LessEquals => "sle",
-        TokenKind.Greater => "sgt", TokenKind.GreaterEquals => "sge", _ => "eq"
+        TokenKind.EqualsEquals => "eq",
+        TokenKind.BangEquals => "ne",
+        TokenKind.Less => "slt",
+        TokenKind.LessEquals => "sle",
+        TokenKind.Greater => "sgt",
+        TokenKind.GreaterEquals => "sge",
+        _ => "eq"
     };
 
     private static string FloatCmpOp(TokenKind op) => op switch
     {
-        TokenKind.EqualsEquals => "oeq", TokenKind.BangEquals => "one",
-        TokenKind.Less => "olt", TokenKind.LessEquals => "ole",
-        TokenKind.Greater => "ogt", TokenKind.GreaterEquals => "oge", _ => "oeq"
+        TokenKind.EqualsEquals => "oeq",
+        TokenKind.BangEquals => "one",
+        TokenKind.Less => "olt",
+        TokenKind.LessEquals => "ole",
+        TokenKind.Greater => "ogt",
+        TokenKind.GreaterEquals => "oge",
+        _ => "oeq"
     };
 
     private string EmitLogic(BoundBinary b)
@@ -670,19 +686,19 @@ public sealed class Emitter
             case BoundFieldAccess fa:
                 return EmitFieldStore(fa, value);
             case BoundIndex ix:
-            {
-                var arr = EmitR(ix.Receiver); _stmtTemps.Add(arr);
-                var idx = EmitR(ix.Index);
-                var addr = ElemAddr(arr, idx, ix.Type);
-                if (ix.Type.IsReferenceType)
                 {
-                    var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
-                    Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
-                    Do($"call void @arc_retain(i8* {value})");
+                    var arr = EmitR(ix.Receiver); _stmtTemps.Add(arr);
+                    var idx = EmitR(ix.Index);
+                    var addr = ElemAddr(arr, idx, ix.Type);
+                    if (ix.Type.IsReferenceType)
+                    {
+                        var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
+                        Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
+                        Do($"call void @arc_retain(i8* {value})");
+                    }
+                    else Do($"store {ix.Type.LlvmType} {value}, {ix.Type.LlvmType}* {addr}");
+                    return value;
                 }
-                else Do($"store {ix.Type.LlvmType} {value}, {ix.Type.LlvmType}* {addr}");
-                return value;
-            }
         }
         return value;
     }
@@ -765,29 +781,29 @@ public sealed class Emitter
                 Do($"call void @arc_assign_take(i8** %arg{p.Symbol.Index}, i8* {value})");
                 break;
             case BoundFieldAccess fa:
-            {
-                string addr;
-                if (fa.Field.IsStatic) addr = fa.Field.MangledStatic;
-                else { var recv = EmitR(fa.Receiver!); _stmtTemps.Add(recv); addr = FieldAddr(recv, fa.Field); }
-                var pp = Inst($"bitcast {fa.Field.Type.LlvmType}* {addr} to i8**");
-                Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
-                break;
-            }
+                {
+                    string addr;
+                    if (fa.Field.IsStatic) addr = fa.Field.MangledStatic;
+                    else { var recv = EmitR(fa.Receiver!); _stmtTemps.Add(recv); addr = FieldAddr(recv, fa.Field); }
+                    var pp = Inst($"bitcast {fa.Field.Type.LlvmType}* {addr} to i8**");
+                    Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
+                    break;
+                }
             case BoundIndex ix:
-            {
-                var arr = EmitR(ix.Receiver); _stmtTemps.Add(arr);
-                var idx = EmitR(ix.Index);
-                var addr = ElemAddr(arr, idx, ix.Type);
-                var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
-                Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
-                break;
-            }
+                {
+                    var arr = EmitR(ix.Receiver); _stmtTemps.Add(arr);
+                    var idx = EmitR(ix.Index);
+                    var addr = ElemAddr(arr, idx, ix.Type);
+                    var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
+                    Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
+                    break;
+                }
         }
     }
 
     private string EmitConsole(BoundConsoleCall c)
     {
-        int nl = c.Which == ConsoleKind.WriteLine ? 1 : 0;
+        var nl = c.Which == ConsoleKind.WriteLine ? 1 : 0;
         if (c.Argument == null) { Do("call void @arc_console_newline()"); return ""; }
         var t = c.Argument.Type;
         if (t.Kind == TypeKind.String) { var v = EmitR(c.Argument); _stmtTemps.Add(v); Do($"call void @arc_console_write(i8* {v}, i32 {nl})"); return ""; }

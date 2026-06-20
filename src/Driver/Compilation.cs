@@ -25,7 +25,7 @@ public static class Compilation
     public static int Run(Options o)
     {
         if (!File.Exists(o.Input)) { Console.Error.WriteLine($"error: input not found: {o.Input}"); return 2; }
-        string src = File.ReadAllText(o.Input);
+        var src = File.ReadAllText(o.Input);
 
         var lexer = new Lexer(src);
         var tokens = lexer.Lex();
@@ -38,14 +38,14 @@ public static class Compilation
         foreach (var d in diags) Console.Error.WriteLine($"{o.Input}{d}");
         if (diags.Count > 0) { Console.Error.WriteLine($"compilation failed: {diags.Count} diagnostic(s)"); return 1; }
 
-        string triple = o.Target == "windows" ? "x86_64-pc-windows-msvc" : "x86_64-pc-linux-gnu";
+        var triple = o.Target == "windows" ? "x86_64-pc-windows-msvc" : "x86_64-pc-linux-gnu";
         var emitter = new Emitter(program, triple, o.BoundsChecks);
-        string ir = emitter.Emit();
+        var ir = emitter.Emit();
 
-        string baseName = string.IsNullOrEmpty(o.Output)
+        var baseName = string.IsNullOrEmpty(o.Output)
             ? Path.GetFileNameWithoutExtension(o.Input)
             : o.Output;
-        string llPath = baseName + ".ll";
+        var llPath = baseName + ".ll";
         File.WriteAllText(llPath, ir);
         Console.Error.WriteLine($"[arcsharp] wrote {llPath}");
 
@@ -54,8 +54,8 @@ public static class Compilation
         // ---- one-shot clang path: clang compiles .ll + runtime and links --------
         if (!string.IsNullOrEmpty(o.Clang))
         {
-            string exe = baseName + (o.Target == "windows" ? ".exe" : "");
-            int crc = Exec(o.Clang, new[] { llPath, o.Runtime, "-o", exe });
+            var exe = baseName + (o.Target == "windows" ? ".exe" : "");
+            var crc = Exec(o.Clang, new[] { llPath, o.Runtime, "-o", exe });
             if (crc != 0) { Console.Error.WriteLine("error: clang build failed"); return crc; }
             Console.Error.WriteLine($"[arcsharp] wrote {exe}");
             if (o.Run)
@@ -67,8 +67,8 @@ public static class Compilation
         }
 
         // ---- llc + linker path ---------------------------------------------------
-        string objPath = baseName + (o.Target == "windows" ? ".obj" : ".o");
-        int rc = Exec(o.Llc, new[] { "-filetype=obj", "-relocation-model=pic", llPath, "-o", objPath });
+        var objPath = baseName + (o.Target == "windows" ? ".obj" : ".o");
+        var rc = Exec(o.Llc, new[] { "-filetype=obj", "-relocation-model=pic", llPath, "-o", objPath });
         if (rc != 0) { Console.Error.WriteLine("error: llc failed"); return rc; }
         Console.Error.WriteLine($"[arcsharp] wrote {objPath}");
 
@@ -80,7 +80,7 @@ public static class Compilation
             return 0;
         }
 
-        string exePath = baseName;
+        var exePath = baseName;
         rc = Exec(o.Cc, new[] { objPath, o.Runtime, "-o", exePath });
         if (rc != 0) { Console.Error.WriteLine("error: link failed"); return rc; }
         Console.Error.WriteLine($"[arcsharp] wrote {exePath}");

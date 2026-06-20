@@ -88,7 +88,7 @@ public sealed class Binder
         {
             foreach (var m in t.InterfaceSyntax!.Members.OfType<MethodDecl>())
             {
-                string key = $"{t.Name}::{m.Name}/{m.Parameters.Count}";
+                var key = $"{t.Name}::{m.Name}/{m.Parameters.Count}";
                 if (!_selectors.ContainsKey(key)) _selectors[key] = _selectors.Count;
             }
         }
@@ -130,7 +130,7 @@ public sealed class Binder
         if (t.LayoutDone) return;
         t.LayoutDone = true;
 
-        TypeDecl decl = (TypeDecl?)t.ClassSyntax ?? (TypeDecl?)t.StructSyntax ?? t.InterfaceSyntax!;
+        var decl = (TypeDecl?)t.ClassSyntax ?? (TypeDecl?)t.StructSyntax ?? t.InterfaceSyntax!;
 
         // inherited layout first
         if (t.BaseType != null)
@@ -165,7 +165,7 @@ public sealed class Binder
                 IsConstructor = md.IsConstructor,
                 Syntax = md
             };
-            int pi = 0;
+            var pi = 0;
             foreach (var p in md.Parameters)
                 m.Parameters.Add(new ParamSymbol { Name = p.Name, Type = ResolveType(p.Type), Index = pi++ });
             t.Methods.Add(m);
@@ -189,8 +189,8 @@ public sealed class Binder
         {
             foreach (var im in iface.InterfaceSyntax!.Members.OfType<MethodDecl>())
             {
-                string key = $"{iface.Name}::{im.Name}/{im.Parameters.Count}";
-                if (!_selectors.TryGetValue(key, out int sel)) continue;
+                var key = $"{iface.Name}::{im.Name}/{im.Parameters.Count}";
+                if (!_selectors.TryGetValue(key, out var sel)) continue;
                 var impl = FindMethod(t, im.Name, im.Parameters.Count);
                 if (impl != null) t.InterfaceImpl[sel] = impl;
                 else if (t.Kind == TypeKind.Class)
@@ -242,7 +242,7 @@ public sealed class Binder
     // ---- type resolution ---------------------------------------------------
     private TypeSymbol GetWeakRefType(TypeSymbol elem)
     {
-        string key = "WeakReference<" + elem.Name + ">";
+        var key = "WeakReference<" + elem.Name + ">";
         if (!_weakRefCache.TryGetValue(key, out var w))
         {
             w = new TypeSymbol { Name = key, Kind = TypeKind.WeakRef, ElementType = elem };
@@ -270,7 +270,7 @@ public sealed class Binder
 
         if (ts.ArrayRank == 1)
         {
-            string key = baseT.Name + "[]";
+            var key = baseT.Name + "[]";
             if (!_arrayCache.TryGetValue(key, out var arr))
             {
                 arr = new TypeSymbol { Name = key, Kind = TypeKind.Array, ElementType = baseT };
@@ -323,7 +323,7 @@ public sealed class Binder
         var args = argSyntax.Select(BindExpr).ToList();
         var target = FindCtor(targetType, args.Count);
         if (target == null) { Report(md.Line, $"no matching constructor on '{targetType}'"); return null; }
-        for (int i = 0; i < args.Count; i++) args[i] = Convert(args[i], target.Parameters[i].Type, md.Line);
+        for (var i = 0; i < args.Count; i++) args[i] = Convert(args[i], target.Parameters[i].Type, md.Line);
         return new BoundCall { Receiver = new BoundThis { Type = _curType }, Method = target, Arguments = args, Type = _void, Virtual = false };
     }
 
@@ -340,7 +340,7 @@ public sealed class Binder
 
     private LocalSymbol? LookupLocal(string name)
     {
-        for (int i = _scopes.Count - 1; i >= 0; i--)
+        for (var i = _scopes.Count - 1; i >= 0; i--)
             if (_scopes[i].TryGetValue(name, out var s)) return s;
         return null;
     }
@@ -368,7 +368,7 @@ public sealed class Binder
 
     private BoundStmt BindLocalDecl(LocalDeclStmt d)
     {
-        BoundExpr? init = d.Initializer == null ? null : BindExpr(d.Initializer);
+        var init = d.Initializer == null ? null : BindExpr(d.Initializer);
         TypeSymbol type;
         if (d.Type.Name == "var")
         {
@@ -385,9 +385,9 @@ public sealed class Binder
     private BoundStmt BindFor(ForStmt f)
     {
         PushScope();
-        BoundStmt? init = f.Init == null ? null : BindStatement(f.Init);
-        BoundExpr? cond = f.Condition == null ? null : BindToBool(f.Condition);
-        BoundExpr? upd = f.Update == null ? null : BindExpr(f.Update);
+        var init = f.Init == null ? null : BindStatement(f.Init);
+        var cond = f.Condition == null ? null : BindToBool(f.Condition);
+        var upd = f.Update == null ? null : BindExpr(f.Update);
         var body = BindStatement(f.Body);
         PopScope();
         return new BoundFor { Init = init, Condition = cond, Update = upd, Body = body };
@@ -529,8 +529,8 @@ public sealed class Binder
                 return BindWeakRefCall(recv, ma.Name, inv.Arguments, inv.Line);
             if (recv.Type.Kind == TypeKind.Interface)
             {
-                string key = $"{recv.Type.Name}::{ma.Name}/{args.Count}";
-                if (_selectors.TryGetValue(key, out int sel))
+                var key = $"{recv.Type.Name}::{ma.Name}/{args.Count}";
+                if (_selectors.TryGetValue(key, out var sel))
                 {
                     var im = FindInterfaceMethod(recv.Type, ma.Name, args.Count)!;
                     var call = MakeCall(recv, im, args, inv.Line);
@@ -585,7 +585,7 @@ public sealed class Binder
     {
         if (oa.IsDeclaration)
         {
-            TypeSymbol t = oa.IsVar ? expected : ResolveType(oa.DeclType!);
+            var t = oa.IsVar ? expected : ResolveType(oa.DeclType!);
             var sym = DeclareLocal(oa.Name!, t, line);
             return new BoundLocal { Symbol = sym, Type = t };
         }
@@ -607,7 +607,7 @@ public sealed class Binder
         if (args.Count != m.Parameters.Count)
             Report(line, $"method '{m.Name}' expects {m.Parameters.Count} args, got {args.Count}");
         var conv = new List<BoundExpr>();
-        for (int i = 0; i < args.Count && i < m.Parameters.Count; i++)
+        for (var i = 0; i < args.Count && i < m.Parameters.Count; i++)
             conv.Add(Convert(args[i], m.Parameters[i].Type, line));
         return new BoundCall { Receiver = recv, Method = m, Arguments = conv, Type = m.ReturnType };
     }
@@ -637,7 +637,7 @@ public sealed class Binder
         var args = no.Arguments.Select(BindExpr).ToList();
         var ctor = FindCtor(t, args.Count);
         if (ctor != null)
-            for (int i = 0; i < args.Count; i++) args[i] = Convert(args[i], ctor.Parameters[i].Type, no.Line);
+            for (var i = 0; i < args.Count; i++) args[i] = Convert(args[i], ctor.Parameters[i].Type, no.Line);
         else if (args.Count != 0)
             Report(no.Line, $"no constructor of '{no.TypeName}' takes {args.Count} arguments");
         return new BoundNewObject { Ctor = ctor, Arguments = args, Type = t };
@@ -646,7 +646,7 @@ public sealed class Binder
     private BoundExpr BindNewArray(NewArrayExpr na)
     {
         var elem = ResolveType(na.ElementType);
-        string key = elem.Name + "[]";
+        var key = elem.Name + "[]";
         if (!_arrayCache.TryGetValue(key, out var arr))
         { arr = new TypeSymbol { Name = key, Kind = TypeKind.Array, ElementType = elem }; _arrayCache[key] = arr; }
         var size = Convert(BindExpr(na.Size), _int, na.Line);
@@ -702,10 +702,10 @@ public sealed class Binder
 
         l = Convert(l, ot, b.Line);
         r = Convert(r, ot, b.Line);
-        bool cmp = b.Op is TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater
+        var cmp = b.Op is TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater
             or TokenKind.GreaterEquals or TokenKind.EqualsEquals or TokenKind.BangEquals;
 
-        BinKind kind = (ot, cmp) switch
+        var kind = (ot, cmp) switch
         {
             (_, true) when ot == _double => BinKind.DoubleCmp,
             (_, true) when ot == _float => BinKind.FloatCmp,
@@ -752,7 +752,7 @@ public sealed class Binder
                 value = new BoundBinary { Op = TokenKind.Plus, Kind = BinKind.StrConcat, Left = target, Right = value, Type = _string };
             else
             {
-                bool isLong = target.Type == _long;
+                var isLong = target.Type == _long;
                 value = Convert(value, target.Type, a.Line);
                 value = new BoundBinary { Op = op, Kind = isLong ? BinKind.LongArith : BinKind.IntArith, Left = target, Right = value, Type = target.Type };
             }
