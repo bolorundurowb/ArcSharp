@@ -19,7 +19,8 @@ for (var i = 0; i < args.Length; i++)
         case "--clang": o.Clang = args[++i]; break;
         case "-h":
         case "--help":
-            Console.WriteLine("usage: arcsharp <input.cs> [input2.cs ...] [-o name] [--target windows|host] [--emit-llvm] [--run] [--no-bounds] [-Werror] [--runtime path] [--llc name] [--cc name] [--clang path]");
+            Console.WriteLine(
+                "usage: arcsharp <input.cs> [input2.cs ...] [-o name] [--target windows|host] [--emit-llvm] [--run] [--no-bounds] [-Werror] [--runtime path] [--llc name] [--cc name] [--clang path]");
             return 0;
         default:
             if (a.StartsWith('-'))
@@ -27,7 +28,9 @@ for (var i = 0; i < args.Length; i++)
                 Console.Error.WriteLine($"unknown option {a}");
                 return 2;
             }
-            o.Inputs.Add(a); break;
+
+            o.Inputs.Add(a);
+            break;
     }
 }
 

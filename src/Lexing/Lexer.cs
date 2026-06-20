@@ -3,20 +3,92 @@ namespace ArcSharp.Lexing;
 public enum TokenKind
 {
     // literals & names
-    Identifier, IntLiteral, LongLiteral, FloatLiteral, DoubleLiteral, StringLiteral, CharLiteral,
+    Identifier,
+    IntLiteral,
+    LongLiteral,
+    UIntLiteral,
+    ULongLiteral,
+    FloatLiteral,
+    DoubleLiteral,
+    StringLiteral,
+    CharLiteral,
+
     // keywords
-    ClassKw, StructKw, InterfaceKw, PublicKw, PrivateKw, ProtectedKw, InternalKw,
-    StaticKw, VirtualKw, OverrideKw, AbstractKw, NewKw, ReturnKw, IfKw, ElseKw,
-    WhileKw, ForKw, TrueKw, FalseKw, NullKw, ThisKw, BaseKw, WeakKw, OutKw, UsingKw, NamespaceKw,
-    VoidKw, IntKw, LongKw, BoolKw, StringKw, CharKw, FloatKw, DoubleKw, VarKw,
+    ClassKw,
+    StructKw,
+    InterfaceKw,
+    PublicKw,
+    PrivateKw,
+    ProtectedKw,
+    InternalKw,
+    StaticKw,
+    VirtualKw,
+    OverrideKw,
+    AbstractKw,
+    NewKw,
+    ReturnKw,
+    IfKw,
+    ElseKw,
+    WhileKw,
+    ForKw,
+    TrueKw,
+    FalseKw,
+    NullKw,
+    ThisKw,
+    BaseKw,
+    WeakKw,
+    OutKw,
+    UsingKw,
+    NamespaceKw,
+    VoidKw,
+    IntKw,
+    LongKw,
+    BoolKw,
+    StringKw,
+    CharKw,
+    FloatKw,
+    DoubleKw,
+    ByteKw,
+    SByteKw,
+    ShortKw,
+    UShortKw,
+    UIntKw,
+    ULongKw,
+    VarKw,
+
     // punctuation
-    OpenBrace, CloseBrace, OpenParen, CloseParen, OpenBracket, CloseBracket,
-    Semicolon, Comma, Dot, Colon, Question,
+    OpenBrace,
+    CloseBrace,
+    OpenParen,
+    CloseParen,
+    OpenBracket,
+    CloseBracket,
+    Semicolon,
+    Comma,
+    Dot,
+    Colon,
+    Question,
+
     // operators
-    Assign, EqualsEquals, BangEquals, Less, LessEquals, Greater, GreaterEquals,
-    Plus, Minus, Star, Slash, Percent, Bang, AmpAmp, PipePipe,
-    PlusEquals, MinusEquals,
-    EndOfFile, Bad
+    Assign,
+    EqualsEquals,
+    BangEquals,
+    Less,
+    LessEquals,
+    Greater,
+    GreaterEquals,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Bang,
+    AmpAmp,
+    PipePipe,
+    PlusEquals,
+    MinusEquals,
+    EndOfFile,
+    Bad
 }
 
 public readonly record struct Token(TokenKind Kind, string Text, int Position, int Line, int Column)
@@ -24,7 +96,12 @@ public readonly record struct Token(TokenKind Kind, string Text, int Position, i
     public override string ToString() => $"{Kind}('{Text}')";
 }
 
-public enum DiagnosticSeverity { Error, Warning, Info }
+public enum DiagnosticSeverity
+{
+    Error,
+    Warning,
+    Info
+}
 
 public sealed class Diagnostic
 {
@@ -82,6 +159,12 @@ public sealed class Lexer(string text)
         ["char"] = TokenKind.CharKw,
         ["float"] = TokenKind.FloatKw,
         ["double"] = TokenKind.DoubleKw,
+        ["byte"] = TokenKind.ByteKw,
+        ["sbyte"] = TokenKind.SByteKw,
+        ["short"] = TokenKind.ShortKw,
+        ["ushort"] = TokenKind.UShortKw,
+        ["uint"] = TokenKind.UIntKw,
+        ["ulong"] = TokenKind.ULongKw,
         ["var"] = TokenKind.VarKw,
     };
 
@@ -96,8 +179,16 @@ public sealed class Lexer(string text)
 
     private void Advance()
     {
-        if (Current == '\n') { _line++; _col = 1; }
-        else _col++;
+        if (Current == '\n')
+        {
+            _line++;
+            _col = 1;
+        }
+        else
+        {
+            _col++;
+        }
+
         _pos++;
     }
 
@@ -105,8 +196,15 @@ public sealed class Lexer(string text)
     {
         var tokens = new List<Token>();
         Token t;
-        do { t = Next(); if (t.Kind != TokenKind.Bad) tokens.Add(t); }
-        while (t.Kind != TokenKind.EndOfFile);
+        do
+        {
+            t = Next();
+            if (t.Kind != TokenKind.Bad)
+            {
+                tokens.Add(t);
+            }
+        } while (t.Kind != TokenKind.EndOfFile);
+
         return tokens;
     }
 
@@ -114,13 +212,32 @@ public sealed class Lexer(string text)
     {
         SkipTrivia();
         int startLine = _line, startCol = _col, start = _pos;
-        if (_pos >= _text.Length) return new Token(TokenKind.EndOfFile, "", start, startLine, startCol);
+        if (_pos >= _text.Length)
+        {
+            return new Token(TokenKind.EndOfFile, "", start, startLine, startCol);
+        }
 
         var c = Current;
-        if (char.IsLetter(c) || c == '_') return LexIdentifierOrKeyword(start, startLine, startCol);
-        if (char.IsDigit(c)) return LexNumber(start, startLine, startCol);
-        if (c == '"') return LexString(start, startLine, startCol);
-        if (c == '\'') return LexChar(start, startLine, startCol);
+        if (char.IsLetter(c) || c == '_')
+        {
+            return LexIdentifierOrKeyword(start, startLine, startCol);
+        }
+
+        if (char.IsDigit(c))
+        {
+            return LexNumber(start, startLine, startCol);
+        }
+
+        if (c == '"')
+        {
+            return LexString(start, startLine, startCol);
+        }
+
+        if (c == '\'')
+        {
+            return LexChar(start, startLine, startCol);
+        }
+
         return LexPunctuation(start, startLine, startCol);
     }
 
@@ -129,26 +246,51 @@ public sealed class Lexer(string text)
         while (_pos < _text.Length)
         {
             var c = Current;
-            if (char.IsWhiteSpace(c)) { Advance(); continue; }
+            if (char.IsWhiteSpace(c))
+            {
+                Advance();
+                continue;
+            }
+
             if (c == '/' && Peek() == '/')
             {
-                while (_pos < _text.Length && Current != '\n') Advance();
+                while (_pos < _text.Length && Current != '\n')
+                {
+                    Advance();
+                }
+
                 continue;
             }
+
             if (c == '/' && Peek() == '*')
             {
-                Advance(); Advance();
-                while (_pos < _text.Length && !(Current == '*' && Peek() == '/')) Advance();
-                if (_pos < _text.Length) { Advance(); Advance(); }
+                Advance();
+                Advance();
+                while (_pos < _text.Length && !(Current == '*' && Peek() == '/'))
+                {
+                    Advance();
+                }
+
+                if (_pos < _text.Length)
+                {
+                    Advance();
+                    Advance();
+                }
+
                 continue;
             }
+
             break;
         }
     }
 
     private Token LexIdentifierOrKeyword(int start, int line, int col)
     {
-        while (char.IsLetterOrDigit(Current) || Current == '_') Advance();
+        while (char.IsLetterOrDigit(Current) || Current == '_')
+        {
+            Advance();
+        }
+
         var text = _text[start.._pos];
         var kind = Keywords.TryGetValue(text, out var kw) ? kw : TokenKind.Identifier;
         return new Token(kind, text, start, line, col);
@@ -156,33 +298,67 @@ public sealed class Lexer(string text)
 
     private Token LexNumber(int start, int line, int col)
     {
-        while (char.IsDigit(Current)) Advance();
+        while (char.IsDigit(Current))
+        {
+            Advance();
+        }
+
         var hasDot = false;
 
         // floating-point literal: digits . digits [suffix]
         if (Current == '.' && char.IsDigit(Peek()))
         {
             Advance(); // '.'
-            while (char.IsDigit(Current)) Advance();
+            while (char.IsDigit(Current))
+            {
+                Advance();
+            }
+
             hasDot = true;
         }
 
         // suffix determines literal kind
         if (Current == 'f' || Current == 'F')
+        {
             return LexFloatSuffix(start, line, col);
+        }
+
         if (Current == 'd' || Current == 'D')
+        {
             return LexDoubleSuffix(start, line, col);
+        }
 
         // decimal literals without suffix are double (C# semantics)
         if (hasDot)
+        {
             return new Token(TokenKind.DoubleLiteral, _text[start.._pos], start, line, col);
+        }
 
         // integer suffixes
         if (Current == 'L' || Current == 'l')
         {
             var lt = _text[start.._pos];
             Advance();
+            if (Current == 'U' || Current == 'u')
+            {
+                Advance();
+                return new Token(TokenKind.ULongLiteral, lt, start, line, col);
+            }
+
             return new Token(TokenKind.LongLiteral, lt, start, line, col);
+        }
+
+        if (Current == 'U' || Current == 'u')
+        {
+            var ut = _text[start.._pos];
+            Advance();
+            if (Current == 'L' || Current == 'l')
+            {
+                Advance();
+                return new Token(TokenKind.ULongLiteral, ut, start, line, col);
+            }
+
+            return new Token(TokenKind.UIntLiteral, ut, start, line, col);
         }
 
         var text = _text[start.._pos];
@@ -191,14 +367,22 @@ public sealed class Lexer(string text)
 
     private Token LexFloatSuffix(int start, int line, int col)
     {
-        if (Current == 'f' || Current == 'F') Advance();
+        if (Current == 'f' || Current == 'F')
+        {
+            Advance();
+        }
+
         var text = _text[start.._pos];
         return new Token(TokenKind.FloatLiteral, text, start, line, col);
     }
 
     private Token LexDoubleSuffix(int start, int line, int col)
     {
-        if (Current == 'd' || Current == 'D') Advance();
+        if (Current == 'd' || Current == 'D')
+        {
+            Advance();
+        }
+
         var text = _text[start.._pos];
         return new Token(TokenKind.DoubleLiteral, text, start, line, col);
     }
@@ -225,10 +409,22 @@ public sealed class Lexer(string text)
                 });
                 Advance();
             }
-            else { sb.Append(Current); Advance(); }
+            else
+            {
+                sb.Append(Current);
+                Advance();
+            }
         }
-        if (Current == '"') Advance();
-        else Report(line, col, "unterminated string literal", "ARC0002");
+
+        if (Current == '"')
+        {
+            Advance();
+        }
+        else
+        {
+            Report(line, col, "unterminated string literal", "ARC0002");
+        }
+
         return new Token(TokenKind.StringLiteral, sb.ToString(), start, line, col);
     }
 
@@ -239,12 +435,27 @@ public sealed class Lexer(string text)
         if (Current == '\\')
         {
             Advance();
-            value = Current switch { 'n' => '\n', 't' => '\t', 'r' => '\r', '0' => '\0', '\'' => '\'', '\\' => '\\', _ => Current };
+            value = Current switch
+            {
+                'n' => '\n', 't' => '\t', 'r' => '\r', '0' => '\0', '\'' => '\'', '\\' => '\\', _ => Current
+            };
             Advance();
         }
-        else { value = Current; Advance(); }
-        if (Current == '\'') Advance();
-        else Report(line, col, "unterminated char literal", "ARC0002");
+        else
+        {
+            value = Current;
+            Advance();
+        }
+
+        if (Current == '\'')
+        {
+            Advance();
+        }
+        else
+        {
+            Report(line, col, "unterminated char literal", "ARC0002");
+        }
+
         return new Token(TokenKind.CharLiteral, ((int)value).ToString(), start, line, col);
     }
 
@@ -267,23 +478,120 @@ public sealed class Lexer(string text)
             case '.': kind = TokenKind.Dot; break;
             case ':': kind = TokenKind.Colon; break;
             case '?': kind = TokenKind.Question; break;
-            case '=': if (n == '=') { kind = TokenKind.EqualsEquals; len = 2; } else kind = TokenKind.Assign; break;
-            case '!': if (n == '=') { kind = TokenKind.BangEquals; len = 2; } else kind = TokenKind.Bang; break;
-            case '<': if (n == '=') { kind = TokenKind.LessEquals; len = 2; } else kind = TokenKind.Less; break;
-            case '>': if (n == '=') { kind = TokenKind.GreaterEquals; len = 2; } else kind = TokenKind.Greater; break;
-            case '+': if (n == '=') { kind = TokenKind.PlusEquals; len = 2; } else kind = TokenKind.Plus; break;
-            case '-': if (n == '=') { kind = TokenKind.MinusEquals; len = 2; } else kind = TokenKind.Minus; break;
+            case '=':
+                if (n == '=')
+                {
+                    kind = TokenKind.EqualsEquals;
+                    len = 2;
+                }
+                else
+                {
+                    kind = TokenKind.Assign;
+                }
+
+                break;
+            case '!':
+                if (n == '=')
+                {
+                    kind = TokenKind.BangEquals;
+                    len = 2;
+                }
+                else
+                {
+                    kind = TokenKind.Bang;
+                }
+
+                break;
+            case '<':
+                if (n == '=')
+                {
+                    kind = TokenKind.LessEquals;
+                    len = 2;
+                }
+                else
+                {
+                    kind = TokenKind.Less;
+                }
+
+                break;
+            case '>':
+                if (n == '=')
+                {
+                    kind = TokenKind.GreaterEquals;
+                    len = 2;
+                }
+                else
+                {
+                    kind = TokenKind.Greater;
+                }
+
+                break;
+            case '+':
+                if (n == '=')
+                {
+                    kind = TokenKind.PlusEquals;
+                    len = 2;
+                }
+                else
+                {
+                    kind = TokenKind.Plus;
+                }
+
+                break;
+            case '-':
+                if (n == '=')
+                {
+                    kind = TokenKind.MinusEquals;
+                    len = 2;
+                }
+                else
+                {
+                    kind = TokenKind.Minus;
+                }
+
+                break;
             case '*': kind = TokenKind.Star; break;
             case '/': kind = TokenKind.Slash; break;
             case '%': kind = TokenKind.Percent; break;
-            case '&': if (n == '&') { kind = TokenKind.AmpAmp; len = 2; } else { Report(line, col, "single '&' not supported", "ARC0003"); Advance(); return new Token(TokenKind.Bad, "&", start, line, col); } break;
-            case '|': if (n == '|') { kind = TokenKind.PipePipe; len = 2; } else { Report(line, col, "single '|' not supported", "ARC0003"); Advance(); return new Token(TokenKind.Bad, "|", start, line, col); } break;
+            case '&':
+                if (n == '&')
+                {
+                    kind = TokenKind.AmpAmp;
+                    len = 2;
+                }
+                else
+                {
+                    Report(line, col, "single '&' not supported", "ARC0003");
+                    Advance();
+                    return new Token(TokenKind.Bad, "&", start, line, col);
+                }
+
+                break;
+            case '|':
+                if (n == '|')
+                {
+                    kind = TokenKind.PipePipe;
+                    len = 2;
+                }
+                else
+                {
+                    Report(line, col, "single '|' not supported", "ARC0003");
+                    Advance();
+                    return new Token(TokenKind.Bad, "|", start, line, col);
+                }
+
+                break;
             default:
                 Report(line, col, $"unexpected character '{c}'");
                 Advance();
                 return new Token(TokenKind.Bad, c.ToString(), start, line, col);
         }
-        for (var i = 0; i < len; i++) Advance();
+
+        for (var i = 0; i < len; i++)
+        {
+            Advance();
+        }
+
         return new Token(kind, _text[start.._pos], start, line, col);
     }
 

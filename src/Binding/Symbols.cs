@@ -2,7 +2,18 @@ using ArcSharp.Syntax;
 
 namespace ArcSharp.Binding;
 
-public enum TypeKind { Primitive, String, Class, Struct, Interface, Array, Void, Error, WeakRef }
+public enum TypeKind
+{
+    Primitive,
+    String,
+    Class,
+    Struct,
+    Interface,
+    Array,
+    Void,
+    Error,
+    WeakRef
+}
 
 public sealed class TypeSymbol
 {
@@ -12,10 +23,10 @@ public sealed class TypeSymbol
     // class/struct
     public TypeSymbol? BaseType;
     public List<TypeSymbol> Interfaces = [];
-    public List<FieldSymbol> InstanceFields = [];   // includes inherited, in layout order
+    public List<FieldSymbol> InstanceFields = []; // includes inherited, in layout order
     public List<FieldSymbol> StaticFields = [];
-    public List<MethodSymbol> Methods = [];          // declared in this type (incl ctors)
-    public List<MethodSymbol> Vtable = [];           // virtual slot order (incl inherited)
+    public List<MethodSymbol> Methods = []; // declared in this type (incl ctors)
+    public List<MethodSymbol> Vtable = []; // virtual slot order (incl inherited)
     public Dictionary<int, MethodSymbol> InterfaceImpl = []; // selector -> implementing method
     public ClassDecl? ClassSyntax;
     public StructDecl? StructSyntax;
@@ -42,7 +53,7 @@ public sealed class TypeSymbol
         },
         TypeKind.Void => "void",
         TypeKind.Struct => "%struct." + Name,
-        _ => "i8*"   // all reference types are opaque pointers
+        _ => "i8*" // all reference types are opaque pointers
     };
 
     // size of one storage slot for this type, in bytes (uniform 8-byte model)
@@ -51,7 +62,16 @@ public sealed class TypeSymbol
     public bool IsSubclassOf(TypeSymbol other)
     {
         var t = BaseType;
-        while (t != null) { if (t == other) return true; t = t.BaseType; }
+        while (t != null)
+        {
+            if (t == other)
+            {
+                return true;
+            }
+
+            t = t.BaseType;
+        }
+
         return false;
     }
 
@@ -60,9 +80,14 @@ public sealed class TypeSymbol
         var t = this;
         while (t != null)
         {
-            if (t.Interfaces.Contains(iface)) return true;
+            if (t.Interfaces.Contains(iface))
+            {
+                return true;
+            }
+
             t = t.BaseType;
         }
+
         return false;
     }
 
@@ -76,8 +101,10 @@ public sealed class FieldSymbol
     public required TypeSymbol Owner;
     public bool IsStatic;
     public bool IsWeak;
-    public int Index;          // slot index among instance fields (0-based)
+    public int Index; // slot index among instance fields (0-based)
+
     public string MangledStatic => $"@{Owner.Name}__sf__{Name}";
+
     // byte offset of this field within an instance (after the 24-byte header)
     public int ByteOffset => 24 + Index * 8;
 }
@@ -93,7 +120,7 @@ public sealed class LocalSymbol
 {
     public required string Name;
     public required TypeSymbol Type;
-    public int Id;             // unique within a method
+    public int Id; // unique within a method
 }
 
 public sealed class MethodSymbol
@@ -114,7 +141,11 @@ public sealed class MethodSymbol
     {
         get
         {
-            if (IsConstructor) return $"{Owner.Name}__ctor__{Parameters.Count}";
+            if (IsConstructor)
+            {
+                return $"{Owner.Name}__ctor__{Parameters.Count}";
+            }
+
             return $"{Owner.Name}__{Name}__{Parameters.Count}";
         }
     }
