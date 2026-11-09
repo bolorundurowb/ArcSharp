@@ -4,48 +4,53 @@ Reproduce with: `powershell -ExecutionPolicy Bypass -File tools\verify.ps1`
 (requires the .NET 8 SDK + LLVM `clang` on `PATH`; `tools\env.ps1` sets the build
 environment, and `-Clang <path>` overrides the clang location).
 
-The harness builds the compiler, compiles each sample in `samples/` to LLVM IR,
-uses `clang` to lower the IR and link it with `runtime/arc_runtime.c` into a
-native Windows x64 `.exe` (`x86_64-pc-windows-msvc`), runs it, and checks both
-program output **and** ARC accounting. The same IR also lowers on the Linux host
-(`x86_64-pc-linux-gnu`) — only the triple/datalayout and the C runtime's build
-differ.
+The harness builds the compiler with the .NET 8 SDK selected by `global.json`,
+compiles each sample in `samples/` to LLVM IR, uses `clang` to lower the IR and
+link it with `runtime/arc_runtime.c` into a native Windows x64 `.exe`
+(`x86_64-pc-windows-msvc`), runs it, and checks both program output **and** ARC
+accounting. The compiler can also emit the Linux x64 triple
+(`x86_64-pc-linux-gnu`); the table below is a Windows x64 run. On Linux only the
+triple, data layout, and the C runtime build differ.
 
 Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 `alloc` = objects created, `dead` = objects whose strong count hit 0 (destructor
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (11 core samples + 1 multi-file; see Phase 1 note below)
+## Results (17 samples, Windows x64, 9 November 2026)
+
+`tools\verify.ps1` reported **17 passed, 0 failed** with the .NET 8.0.427 SDK.
+`live=0` means every object was reclaimed. `numerics` and `byref` allocate
+nothing because they use only value types. `cycle_strong` is the leak the
+harness asserts on purpose.
 
 | Sample | Exercises | ARC accounting | Output |
 |---|---|---|---|
 | `inherit` | single inheritance, `virtual`/`override`, `: base(...)`, arrays, `for`, string concat | alloc=5 dead=5 **live=0** | `25`, `sum=42` |
-| `interface` | interface declaration + dispatch through an interface-typed variable (itable) | alloc=8 dead=8 **live=0** | `rect=12`, `circle=75` |
+| `interface` | interface declaration and dispatch through an interface-typed variable (itable) | alloc=8 dead=8 **live=0** | `rect=12`, `circle=75` |
 | `refarray` | `T[]` of reference elements; per-element release on array teardown | alloc=7 dead=7 **live=0** | `refarray sum=5` |
-| `statics` | static fields + static methods, `int Main()` exit code | alloc=3 dead=3 **live=0** | `count=3` |
+| `statics` | static fields and static methods, `int Main()` exit code | alloc=3 dead=3 **live=0** | `count=3` |
 | `fib` | recursion, `long` return, `while`, `Console.Write` | alloc=22 dead=22 **live=0** | `fib(10)=55` |
 | `floats` | `float`/`double` literals, arithmetic, comparisons, string concat | alloc=7 dead=7 **live=0** | `area=19.6349` |
-| `weak_null` | a `weak` field whose target is destroyed → load yields `null` | alloc=3 dead=3 **live=0** | `weak-after-death is null: PASS` |
-| `cycle_weak` | parent⇄child graph with a **weak** back-reference | alloc=3 dead=3 **live=0** | `done (weak cycle)` |
-| `cycle_weakref` | same cycle, broken with idiomatic **`WeakReference<T>`** | alloc=4 dead=4 **live=0** | `done (WeakReference cycle)` |
+| `weak_null` | a `weak` field whose target is destroyed, so a load yields `null` | alloc=3 dead=3 **live=0** | `weak-after-death is null: PASS` |
+| `cycle_weak` | parent/child graph with a **weak** back-reference | alloc=3 dead=3 **live=0** | `done (weak cycle)` |
+| `cycle_weakref` | the same cycle, broken with idiomatic **`WeakReference<T>`** | alloc=4 dead=4 **live=0** | `done (WeakReference cycle)` |
 | `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 **live=0** | `false (PASS under ARC)` |
 | `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 **live=2** | `done (strong cycle)` |
-| `multifile` | two source files (`mf_main.cs` + `mf_lib.cs`) compiled together; cross-file type resolution | live=0 (counts confirmed by local run) | `twice=42` |
+| `multifile` | `mf_main.cs` and `mf_lib.cs` compiled together; `Greeter` is declared in one file and used from the other | alloc=4 dead=4 **live=0** | `twice=42` |
+| `numerics` | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong`, unsigned arithmetic, casts | alloc=0 dead=0 **live=0** | `150` |
+| `byref` | `ref`, `out`, and `in` parameters | alloc=0 dead=0 **live=0** | `3` |
+| `properties` | auto-properties | alloc=2 dead=2 **live=0** | `Alice` |
+| `isas` | `is` and `as` runtime type checks | alloc=5 dead=5 **live=0** | `as Cat: null` |
+| `covariance` | covariant store of a compatible reference element | alloc=3 dead=3 **live=0** | `stored Dog` |
 
-## Phase 1 additions (run `tools\verify.ps1` to confirm)
+## Diagnostics
 
-These were added after the original 11-sample run and are asserted by the harness
-(`live=0` and expected output); exact alloc/dead counts are intentionally not
-transcribed here since they are produced by the local run rather than fabricated:
-
-- **`multifile`** — exercises multi-file compilation (`arcsharp samples/mf_main.cs
-  samples/mf_lib.cs`). `Greeter` is declared in one file and used from `Main` in
-  the other; the binder merges declarations across both before binding.
-- **Diagnostics** now print with stable codes and severities, e.g.
-  `(12,0): error ARC2010: cannot convert 'int' to 'string'`. Compilation fails on
-  error count; warnings (including definite-assignment `ARC2100`) do not fail the
-  build unless `-Werror` is passed — so the existing samples continue to pass.
+Diagnostics print with a stable code and a severity, for example
+`(12,0): error ARC2010: cannot convert 'int' to 'string'`. Compilation fails
+when the error count is non-zero. Warnings, including definite-assignment
+`ARC2100`, do not fail the build unless `-Werror` is passed, so the samples
+above still pass.
 
 ## The headline result: ARC + cycle breaking
 

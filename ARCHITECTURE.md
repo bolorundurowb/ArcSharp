@@ -231,24 +231,39 @@ and is fully reclaimed once the back-edge is a `WeakReference<T>`.
 
 ## 6. Supported C# 12 subset (first pass)
 
-- **Types**: `int` (i32), `long` (i64), `bool` (i1), `void`, `string`, `char`,
-  `float` (f32), `double` (f64); user `class`es; single-dimension arrays `T[]`;
-  `struct`s (value-only fields).
-- **Classes**: instance fields (incl. `WeakReference<T>`), constructors, instance methods,
-  static methods/fields, single inheritance, `virtual`/`override` dispatch.
-- **Interfaces**: declaration + dispatch *(see Section 8 for status)*.
+- **Types**: `int` (i32), `uint` (i32), `long` (i64), `ulong` (i64), `bool` (i1),
+  `void`, `string`, `char` (i32), `float` (f32), `double` (f64), `byte`/`sbyte`
+  (i8), `short`/`ushort` (i16); user `class`es; single-dimension arrays `T[]`.
+  `struct` declarations are parsed and bound; the emitter does not lower them yet.
+- **Classes**: instance fields (including `WeakReference<T>`), constructors,
+  instance methods, static methods and fields, single inheritance,
+  `virtual`/`override` dispatch, and auto-properties (a private backing field
+  plus a getter and a setter).
+- **Interfaces**: declaration and itable dispatch.
+- **Parameters**: `ref`, `out`, and `in`, lowered to managed references. A
+  reference-typed `ref` borrows the slot and does not transfer ownership.
+  Reassigning a reference-typed parameter is rejected.
+- **Type tests and arrays**: `is` and `as` walk the `TypeInfo` parent chain at
+  run time. A class downcast is checked; an interface downcast is accepted
+  without a runtime test. A store into a reference-element array checks
+  assignability. A mismatch prints `ArrayTypeMismatchException` and exits.
+  Value-type arrays stay invariant.
 - **`System.WeakReference<T>`**: `new`, `TryGetTarget(out ...)`, `SetTarget(...)` —
-  plus minimal generic-type parsing and `out` arguments to support it.
-- **Statements**: blocks, local declarations with initialiser, assignment,
+  plus the `Name<T>` parsing and `out` arguments that those calls need.
+- **Statements**: blocks, local declarations with an initialiser, assignment,
   `if`/`else`, `while`, `for`, `return`, expression statements.
-- **Expressions**: integer/long/bool/string/`null` literals; identifiers;
-  `this`; field & static member access; method invocation (static, instance,
-  virtual); `new T(args)`; `new T[n]`; array indexing (load/store);
-  `+ - * / %`, `== != < <= > >=`, `&& || !`, unary `-`; string `+` concatenation;
-  parenthesisation; assignment as expression.
-- **Built-ins**: `System.Console.WriteLine` / `Console.Write` for
-  `string`/`int`/`long`/`bool`, plus `.Length` on arrays and strings.
-- **Entry point**: `static void Main()` (or `static int Main()`).
+- **Expressions**: integer, unsigned, floating, `char`, `bool`, `string`, and
+  `null` literals; identifiers; `this`; field, property, and static member
+  access; method invocation (static, instance, virtual, interface); `new T(args)`;
+  `new T[n]`; array indexing (load and store); `+ - * / %`, `== != < <= > >=`,
+  `&& || !`, unary `-`; string `+` concatenation; explicit numeric casts;
+  `is` / `as`; parenthesisation; assignment as an expression.
+- **Built-ins**: `System.Console.Write` / `WriteLine` for `string`, `bool`, the
+  integer types, `float`, and `double`, plus `.Length` on arrays and strings.
+- **Compilation unit**: one or more `.cs` files. A `using` directive is skipped,
+  so a file may keep `using System;`. A `namespace` declaration is flattened and
+  its name is discarded. A trailing `?` on a type is accepted and ignored.
+- **Entry point**: `static void Main()` or `static int Main()`.
 
 ---
 
@@ -280,18 +295,24 @@ and *scope* (just not built yet).
 
 ### Out of scope for the first pass (no fundamental conflict)
 - **Generics.** Requires monomorphisation (or a uniform boxed representation).
-  Designed-for but not implemented.
+  `Name<T>` is parsed only so `System.WeakReference<T>` can be recognised.
 - **Reflection / `dynamic` / attributes at runtime**, `unsafe`/pointers,
   `stackalloc`, pinning.
-- **Exceptions** (`try`/`catch`/`finally`) — note that exceptions also interact
-  with ARC: every unwinding path must release live locals, which the cleanup
-  model already anticipates but the emitter does not yet wire to landing pads.
-- **Full numeric tower** (`float`/`decimal`/unsigned/`short`/`byte`), `enum`,
-  `nullable<T>` value types, properties, events, delegates, pattern matching,
-  LINQ, `using`/`IDisposable`, operator overloading, partial classes,
-  extension methods, `params`, optional/named args.
-- **Multi-file / namespace resolution** beyond a flat program, and the BCL
-  (only a hard-coded `Console` shim exists).
+- **Exceptions** (`try`/`catch`/`finally`). Every unwinding path must release
+  live locals. The cleanup model anticipates that, and the emitter does not yet
+  emit landing pads.
+- **Still absent from the language subset**: `decimal`, `enum`, nullable value
+  types, indexers, events, delegates, pattern matching, LINQ, `using`
+  statements / `IDisposable`, operator overloading, partial classes, extension
+  methods, `params`, optional and named arguments, and bitwise operators
+  (`&`, `|`, `^`, shifts). A single `&` or `|` is a lexer error (`ARC0003`).
+- **Null safety.** A trailing `?` is parsed and then ignored.
+- **Namespace identity.** Declarations from every file are flattened into one
+  program, so two types with the same simple name collide.
+- **The BCL**, beyond a hard-coded `Console` shim.
+- **Struct code generation.** Structs are parsed and bound. The emitter skips
+  them, and copying a struct that contains a reference field is still an open
+  design question (Section 10).
 
 ---
 
@@ -309,12 +330,17 @@ and *scope* (just not built yet).
 | Strings + `Console`                                    | Implemented                           |
 | Control flow (`if`/`while`/`for`/`return`)             | Implemented                           |
 | `float` / `double`                                     | Implemented                           |
-| Structs (value types)                                  | Parsed & bound; codegen pending       |
-| Interfaces (itable dispatch)                           | Implemented & verified                |
-| Diagnostics with codes (`ARC0001`…) + severities       | Implemented                           |
+| `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
+| `ref` / `out` / `in` parameters                        | Implemented                           |
+| Auto-properties                                        | Implemented                           |
+| `is` / `as`                                            | Implemented                           |
+| Array covariance (runtime store check)                 | Implemented                           |
+| Structs (value types)                                  | Parsed and bound; code generation pending |
+| Interfaces (itable dispatch)                           | Implemented and verified              |
+| Diagnostics with codes (`ARC0001`…) and severities     | Implemented                           |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
-| Generics, async, closures, exceptions                  | Not implemented (Section 7 / ROADMAP) |
+| Generics, async, closures, exceptions, `using`         | Not implemented (Section 7 / ROADMAP) |
 
 See `VERIFICATION.md` (generated by the test run) for the exact set of sample
 programs that compile and run, with ARC alloc/free accounting.
@@ -348,10 +374,10 @@ principle. But the IR it emits is **not** target-independent:
   convention and aggregate passing); the C runtime must also be compiled per
   platform.
 
-What this buys today: the emitted IR is portable *across targets that share an
-architecture and ABI family* — which is exactly why one IR text validates on both
-x86-64 Linux and x86-64 Windows. What it does **not** yet provide: 32-bit, ARM,
-or big-endian targets. Making those work is the **P1 "Multi-target"** roadmap item
+What this buys today: the emitted IR is portable across targets that share an
+architecture and ABI family, so one module shape covers x86-64 Windows and
+x86-64 Linux. The latest recorded run is Windows x64 (`VERIFICATION.md`).
+What it does **not** yet provide: 32-bit, ARM, or big-endian targets. Making those work is the **P1 "Multi-target"** roadmap item
 — parameterise the triple/data layout into a `TargetInfo`, lower ABIs per target,
 and drop the hard-coded 8-byte-slot assumption. In short: GC-less native C# via
 LLVM, currently x86-64-scoped, portable in design.
@@ -373,8 +399,9 @@ LLVM, currently x86-64-scoped, portable in design.
    old non-standard `weak` keyword is retained only as a legacy alias. Remaining
    question: do we also want weak *locals* / an `unowned` (non-zeroing) variant?
 5. **Value types with reference fields.** Copying such a struct must retain its
-   reference fields (and releasing must release them). First pass restricts
-   structs to value-only fields; do we lift this, and accept the copy cost?
+   reference fields, and releasing a copy must release them. Structs are parsed
+   and bound, and code generation is still pending. When that lands, do we
+   allow reference fields and accept the copy cost?
 6. **Exceptions vs. ARC unwinding.** If exceptions are in scope, every cleanup
    scope must also be a landing pad. Confirm exceptions are wanted before
    committing the emitter to DWARF/SEH unwinding.

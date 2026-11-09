@@ -30,12 +30,12 @@ Most C# applications thrive on a tracing garbage collector. ArcSharp targets the
 - **Deterministic Finalisation**: Object destructors run the moment the last reference is dropped.
 - **No Runtime GC**: No background collection threads or stop-the-world pauses.
 - **Native Execution**: Compiles directly to LLVM IR and then to native machine code via `clang` or `llc`.
-- **C# 12 Subset**: Supports classes, inheritance, interfaces, virtual methods, arrays, strings, and more.
+- **C# 12 Subset**: Classes, inheritance, interfaces, virtual methods, arrays, strings, the integer and floating numeric types, `ref`/`out`/`in`, auto-properties, and `is`/`as`.
 - **Cycle Breaking**: Recognises standard `System.WeakReference<T>` to break reference cycles, maintaining Roslyn compatibility.
 
 ## Project Status
 ArcSharp is currently a **Proof of Concept**.
-- **Run-verified** on Windows x64 and Linux x64.
+- **Run-verified** on Windows x64: 17 samples, 9 November 2026 (`VERIFICATION.md`). The same pipeline can emit a Linux x64 triple; that host was not part of this run.
 - **Full pipeline** (Compile → LLVM → Link → Run → ARC Accounting) is operational.
 - **Diagnostics**: Stable codes (`ARC0001`…) and severities.
 - **Analysis**: Conservative definite-assignment analysis.
@@ -43,8 +43,8 @@ ArcSharp is currently a **Proof of Concept**.
 ## Getting Started
 
 ### Prerequisites
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [LLVM / Clang](https://llvm.org/) (Ensure `clang` or `llc` is in your PATH)
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). `global.json` selects the newest installed 8.0 SDK and does not roll forward to .NET 9 or later.
+- [LLVM / Clang](https://llvm.org/) (`clang` on `PATH`, or pass `-Clang` to `tools\verify.ps1`)
 
 ### 1. Build the Compiler
 ```powershell

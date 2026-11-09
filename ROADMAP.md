@@ -5,9 +5,10 @@ section restates the gap, the design decision, and the concrete work required.
 Items are prioritised as **P0** (required for any real use), **P1** (expected by
 production users), or **P2** (important quality-of-life / performance work).
 
-The current codebase is a proof-of-concept single-file compiler for a C# 12
-subset with textual LLVM-IR emission and a ~225-line C runtime. The goal of this
-roadmap is to turn that PoC into a usable native-C# toolchain.
+The current codebase is a proof-of-concept compiler for a C# 12 subset, with
+textual LLVM-IR emission and a small C runtime. It accepts more than one source
+file. The goal of this roadmap is to turn that proof of concept into a usable
+native C# toolchain.
 
 ---
 
