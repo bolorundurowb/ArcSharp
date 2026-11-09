@@ -8,8 +8,9 @@
  *   offset  0 : intptr_t strong        reference count
  *   offset  8 : intptr_t weak          weak count (+1 while object is live)
  *   offset 16 : TypeInfo* type         type descriptor
- *   offset 24 : first field / array length / string length
- *   offset 32 : array elements / string bytes
+ *   offset 24 : first field / array length / string length / WeakReference slot
+ *   offset 32 : string bytes, or the element TypeInfo* of an array
+ *   offset 40 : array elements (8-byte slots)
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -38,15 +39,16 @@ struct TypeInfo {
 int arc_is_instance(void* obj, TypeInfo* target);
 
 /* ---- accounting (for verification / leak detection) ------------------ */
-static long g_alloc = 0;   /* total objects allocated                    */
-static long g_dead  = 0;   /* objects whose strong count reached 0        */
-static long g_free  = 0;   /* allocations actually freed (weak hit 0)     */
+/* long long, not long: C long is 32 bits on Windows (LLP64). */
+static long long g_alloc = 0;   /* total objects allocated                    */
+static long long g_dead  = 0;   /* objects whose strong count reached 0        */
+static long long g_free  = 0;   /* allocations actually freed (weak hit 0)     */
 
 void arc_report(void) {
-    fprintf(stderr, "[arc] alloc=%ld dead=%ld freed=%ld live=%ld\n",
+    fprintf(stderr, "[arc] alloc=%lld dead=%lld freed=%lld live=%lld\n",
             g_alloc, g_dead, g_free, g_alloc - g_dead);
 }
-long arc_live_count(void) { return g_alloc - g_dead; }
+long long arc_live_count(void) { return g_alloc - g_dead; }
 
 /* ---- core retain / release ------------------------------------------- */
 void* arc_alloc(TypeInfo* type) {
@@ -143,7 +145,7 @@ static TypeInfo* arc_array_elem_type(void* p) { return p ? *(TypeInfo**)((char*)
 void arc_bounds_check(void* arr, intptr_t i) {
     intptr_t len = arc_array_length(arr);
     if (i < 0 || i >= len) {
-        fprintf(stderr, "IndexOutOfRangeException: index %ld, length %ld\n", (long)i, (long)len);
+        fprintf(stderr, "IndexOutOfRangeException: index %lld, length %lld\n", (long long)i, (long long)len);
         arc_report();
         exit(70);
     }
@@ -191,7 +193,7 @@ void* arc_str_concat(void* a, void* b) {
 }
 void* arc_str_from_int(intptr_t v) {
     char tmp[32];
-    int n = snprintf(tmp, sizeof tmp, "%ld", (long)v);
+    int n = snprintf(tmp, sizeof tmp, "%lld", (long long)v);
     return arc_str_new(tmp, n);
 }
 void* arc_str_from_bool(int v) {

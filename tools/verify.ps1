@@ -101,6 +101,7 @@ try {
     Invoke-Sample properties    0 "Alice"                      @("properties")           # auto-properties
     Invoke-Sample isas          0 "as Cat: null"               @("isas")                 # is/as runtime type checks
     Invoke-Sample covariance      0 "stored Dog"                 @("covariance")           # array covariance runtime check
+    Invoke-Sample longconcat      0 "concat=20000000000 uint=3000000000" @("longconcat") # long and uint to string; C long is 32-bit on Windows
 
     Write-Host "=== $($script:pass) passed, $($script:fail) failed ==="
     if ($script:fail -ne 0) { exit 1 }
