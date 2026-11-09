@@ -26,9 +26,36 @@ try {
 
     $dll = Join-Path $root "bin/Release/net8.0/arcsharp.dll"
     $runtime = Join-Path $root "runtime/arc_runtime.c"
-    $errFile = Join-Path $build "stderr.txt"
     $script:pass = 0
     $script:fail = 0
+
+    # Windows PowerShell turns a native command's stderr into an error record,
+    # and PowerShell 7 does the same while ErrorActionPreference is Stop.
+    # The compiler writes progress lines such as "[arcsharp] wrote ..." there,
+    # so read both streams from the process instead of calling dotnet directly.
+    function Invoke-Captured {
+        param([string[]] $Arguments)
+        $start = New-Object System.Diagnostics.ProcessStartInfo
+        $start.FileName = "dotnet"
+        $start.WorkingDirectory = $root
+        $start.UseShellExecute = $false
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.CreateNoWindow = $true
+        $start.Arguments = ($Arguments | ForEach-Object {
+            if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+        }) -join ' '
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $start
+        [void]$process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        [void]$process.WaitForExit()
+        [void]$stdout.Wait()
+        [void]$stderr.Wait()
+        return @{ Out = $stdout.Result; Err = $stderr.Result; ExitCode = $process.ExitCode }
+    }
 
     function Invoke-Sample {
         param(
@@ -40,8 +67,9 @@ try {
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/$Name"
         $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
-        $out = (& dotnet $dll @a 2> $errFile) -join "`n"
-        $err = if (Test-Path $errFile) { Get-Content $errFile -Raw } else { "" }
+        $run = Invoke-Captured (@($dll) + $a)
+        $out = $run.Out
+        $err = $run.Err
         $arc = ($err -split "`r?`n" | Where-Object { $_ -match '\[arc\]' }) -join ""
         $gotLive = if ($arc -match 'live=(\d+)') { [int]$Matches[1] } else { -1 }
         $ok = ($gotLive -eq $Live) -and ($out -match [regex]::Escape($Want))
