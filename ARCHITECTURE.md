@@ -99,8 +99,11 @@ typedef struct TypeInfo {
     const char* name;
     intptr_t    instanceSize;     // header + fields, in bytes
     void      (*deinit)(void*);   // releases all strong fields of an instance
-    intptr_t    vtableLength;
-    void*       vtable[];         // virtual method slots (function pointers)
+    void**      vtable;           // virtual method slots (function pointers)
+    intptr_t    vtableLen;
+    void**      itable;           // interface method slots, indexed by selector
+    intptr_t    itableLen;
+    TypeInfo*   base;             // base class, or NULL; used by is/as
 } TypeInfo;
 ```
 
@@ -386,9 +389,11 @@ LLVM, currently x86-64-scoped, portable in design.
 
 ## 10. Open questions
 
-1. **Cycle policy.** Is programmer-managed `weak`/`unowned` acceptable for the
-   product's goals, or is a backup cycle collector required? This is the single
-   biggest semantic decision.
+1. **Cycle policy.** *(Partly decided.)* A strong cycle still leaks, and the
+   programmer breaks it with `WeakReference<T>`. The compiler and a Roslyn
+   analyser will warn when strong fields can form one (`ROADMAP.md` section 7).
+   Whether a backup cycle collector is also required stays open; that work is
+   section 2 of the roadmap.
 2. **Threading.** Do we commit to atomic refcounts (and the throughput cost) or
    to a single-threaded / actor-style ownership model?
 3. **BCL strategy.** Re-implement a minimal corelib under ARC, or shim to an

@@ -246,6 +246,7 @@ warnings fail it only with `-Werror`.
 | `ARC0xxx` | Lexer | `ARC0001` (default), `ARC0002` unterminated literal, `ARC0003` unsupported operator |
 | `ARC1xxx` | Parser | `ARC1001` (default) |
 | `ARC2xxx` | Binder | `ARC2001` (default), `ARC2002` unknown name, `ARC2010` conversion, `ARC2050` no entry point, `ARC2100` definite assignment (warning) |
+| `ARC3xxx` | Reserved | Not emitted yet. Held for the shared subset and ARC-hazard rules in `ROADMAP.md` section 7 (`ARC3001` unsupported construct, `ARC3100` possible strong cycle, `ARC3200` ARC/CLR difference, `ARC3300` threads). Do not allocate these for other errors. |
 
 Never renumber or reuse an existing code. A new kind of error gets a new code
 in the range for its stage. Binder diagnostics report column 0, and
@@ -359,6 +360,11 @@ Do not assume that these work. Each is unimplemented or deliberately limited:
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, and `WeakReference<T>`
 - Threads, which the non-atomic refcounts do not support
+
+A Roslyn analyser that flags this list, and possible strong cycles, from an
+ordinary `dotnet build` is planned in `ROADMAP.md` section 7. It does not
+replace compiler diagnostics. The compiler has to report the same rules,
+because the analyser is optional. `ARC3xxx` is reserved for that catalogue.
 
 See `ROADMAP.md` for the priority and the planned design of each item.
 

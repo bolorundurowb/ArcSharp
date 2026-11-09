@@ -160,18 +160,135 @@ unmarked items are still planned.
 
 ---
 
+## 7. Roslyn analyser — warnings inside an ordinary C# project
+
+### Decision
+
+Ship both, with one shared set of rules. A NuGet analyser is not a replacement
+for compiler diagnostics, and compiler diagnostics are not a replacement for
+the analyser.
+
+ArcSharp source is meant to stay valid C#, so the program people actually
+edit is built by Roslyn (`dotnet build`, Visual Studio, VS Code). That build
+accepts generics, `try`, `async`, lambdas, and a strong parent/child cycle,
+then produces a program ArcSharp will reject, ignore, or leak. The author
+finds out only later, by running `arcsharp`. An analyser referenced from the
+project reports the same problems as squiggles and `dotnet build` warnings,
+before anyone invokes the native compiler.
+
+The compiler still has to report them itself. The analyser is optional, it can
+be missing or older than the compiler, and only the compiler knows what this
+version will lower. Today the compiler is also the weaker of the two at this
+job: an unhandled statement becomes an empty block and an unhandled expression
+becomes an error value with no diagnostic (`AGENTS.md`). A strong cycle
+compiles cleanly and leaks, which `samples/cycle_strong.cs` records on
+purpose. Warning only in an analyser would leave `arcsharp` itself silent.
+
+So the rule catalogue lives in one place, and both tools emit it. The
+analyser package version matches the compiler it describes. When a feature in
+this roadmap is marked **[done]**, the matching rule is removed or downgraded
+in the same release. A stale analyser that warns about a feature the compiler
+now accepts is a bug.
+
+This does not change the cycle-collector plan in section 2. A warning tells
+the programmer about a cycle. `WeakReference<T>` breaks it. A collector would
+reclaim the ones nobody broke. Those are three different tools.
+
+### What each rule is for
+
+| Rule | Severity | Where it fires | Why |
+|---|---|---|---|
+| **Unsupported construct** | Error (`ARC3001` and following) | Compiler and analyser | Generics other than `WeakReference<T>`, `try`/`catch`/`finally`, `throw`, `using`, `async`/`await`, `yield`, lambdas, local functions, delegates, events, enums, indexers, records, pattern matching, LINQ, `lock`, `unsafe`, `stackalloc`, bitwise operators, `params`, optional and named arguments. The compiler must stop dropping these on the floor. |
+| **Possible strong cycle** | Warning (`ARC3100`) | Compiler and analyser | A set of classes whose strong fields reach each other can form a runtime cycle. ARC leaks it. `WeakReference<T>` and the legacy `weak` modifier are not edges in this graph. |
+| **ARC and CLR disagree** | Info (`ARC3200`) | Analyser first; compiler when cheap | `GC.Collect`, `GC.KeepAlive`, finalisers that assume a collector, and `TryGetTarget` used as if it waited for a GC. The code compiles on both, and the timing does not match. |
+| **Threads** | Warning (`ARC3300`) | Compiler and analyser | `Thread`, `Task`, `lock`, and other shared cross-thread use. Refcounts are non-atomic, so this is unsound rather than merely unimplemented. |
+
+`ARC3xxx` is reserved for this catalogue. Do not spend those codes on ordinary
+lexer, parser, or binder errors.
+
+Unsupported constructs are errors because the program cannot mean what it says
+under ArcSharp. A possible cycle is a warning because the program is legal and
+sometimes intentional: `cycle_strong` documents the leak, and the harness does
+not pass `-Werror`. A tree or a singly linked list is also legal and does not
+leak. The warning has to say so.
+
+### What a cycle warning can and cannot know
+
+The check looks at declared field types, including arrays of a class and
+static fields. It builds a graph of strong edges and warns once per strongly
+connected component. That is a statement about *types*, not about a particular
+object graph.
+
+It will warn on a real back-edge (`Parent.child` and `Child.owner` both
+strong), which is the leak in `cycle_strong`. It will also warn on a binary
+tree (`Node` with `left` and `right`) and on a singly linked list (`Node`
+with `next`), which do not leak unless some instance is later wired into a
+loop. Those are false positives. The message says that, and the suppression is
+a normal `#pragma warning disable ARC3100` or `[SuppressMessage]` on the type.
+There is no separate "tree" heuristic: a self-typed field is exactly how both
+a tree and a doubly linked list are written, and a doubly linked list does
+leak.
+
+It will miss a cycle that is only visible at run time: a field typed as
+`object` or as a base class, a collection that does not exist yet, or two
+objects assigned into each other through locals with no long-lived field. No
+static check proves that a cycle will happen, and no static check proves that
+one will not. The runtime accounting line remains the evidence.
+
+A suggested fix belongs in the message ("make the back-edge a
+`WeakReference<T>`"), not in an automatic rewrite. Changing a field to
+`WeakReference<T>` changes its type and every reader. A code fix can come
+after the diagnostic is trustworthy.
+
+### Package
+
+`analyzers/ArcSharp.Analyzers`, packaged as a Roslyn analyser. A consumer adds
+it with a `PackageReference` and an analyser asset, and keeps building with
+the normal SDK. It does not invoke the native toolchain and it does not change
+the program's semantics.
+
+The compiler project stays free of NuGet dependencies. The analyser project is
+separate and may reference the Roslyn analyser packages; that is the one
+planned exception, because an analyser cannot be loaded without them. Target
+`netstandard2.0` so Visual Studio and `dotnet build` can both load it.
+
+Prefer one shared descriptor assembly, also `netstandard2.0`, referenced by
+the analyser and by the compiler, so the id, severity, and message cannot
+drift. If that reference is awkward for the compiler, keep a second copy in
+one reviewed source file and treat a mismatch as a test failure. This section
+is the specification; the implementation should not grow a further copy of
+its own.
+
+### Concrete first steps
+
+1. Make the binder and the parser report `ARC3001` (and a distinct code per
+   construct once the messages settle) for syntax they currently drop. A
+   sample that must fail to compile belongs next to `tools/verify.ps1`; the
+   harness today only checks programs that run.
+2. Add `ARC3100` in the binder from the strong-field graph. `cycle_strong`
+   should warn; `cycle_weakref` and `cycle_weak` should not. Keep the warning
+   out of `-Werror` for those samples.
+3. Create `ArcSharp.Analyzers` with the unsupported-syntax rules and
+   `ARC3100`, plus unit tests that feed Roslyn a small compilation. This can
+   be the repository's first test project; it does not need clang.
+4. Publish the package only when its rule list is generated from the same
+   catalogue as the compiler.
+
+---
+
 ## Suggested execution order
 
 A pragmatic path from PoC to production:
 
 1. **Correctness foundation** — **[done]** definite assignment, `is`/`as`, array covariance. Null safety, xUnit test harness remain.
 2. **Language breadth** — **[partly done]** `ref`/`out`/`in`, properties, full numeric tower done. `using`/`IDisposable`, value types with reference fields remain.
-3. **Generics** — monomorphisation engine; re-implement collections once generics land.
-4. **ARC hardening** — atomic refcounts, borrow/ownership elision, weak table, cycle collector.
-5. **Backend upgrade** — LLVM C API, debug info, optimisations, multi-target.
-6. **BCL & threading** — corelib, `Span<T>`/`Memory<T>`, `Task<T>`, reflection.
-7. **Tooling** — multi-file projects, incremental build, diagnostics, LSP.
-8. **Async / closures** — state machines and closure lowering.
+3. **Authoring diagnostics** — stop dropping unsupported syntax, warn on possible strong cycles, then ship the Roslyn analyser that mirrors those rules (section 7).
+4. **Generics** — monomorphisation engine; re-implement collections once generics land.
+5. **ARC hardening** — atomic refcounts, borrow/ownership elision, weak table, cycle collector.
+6. **Backend upgrade** — LLVM C API, debug info, optimisations, multi-target.
+7. **BCL & threading** — corelib, `Span<T>`/`Memory<T>`, `Task<T>`, reflection.
+8. **Tooling** — multi-file projects, incremental build, diagnostics, LSP.
+9. **Async / closures** — state machines and closure lowering.
 
 ---
 
@@ -179,9 +296,10 @@ A pragmatic path from PoC to production:
 
 - `src/Lexing/Lexer.cs` — new tokens/literals.
 - `src/Syntax/Ast.cs`, `src/Syntax/Parser.cs` — new statement/expression/member nodes.
-- `src/Binding/Symbols.cs`, `src/Binding/BoundTree.cs`, `src/Binding/Binder.cs` — generics, nullability, definite assignment, `is`/`as`.
+- `src/Binding/Symbols.cs`, `src/Binding/BoundTree.cs`, `src/Binding/Binder.cs` — generics, nullability, definite assignment, `is`/`as`, unsupported-syntax errors, possible-cycle warnings.
 - `src/CodeGen/Emitter.cs` — new IR patterns, debug locations, borrow analysis.
 - `runtime/arc_runtime.c` — atomic ops, weak table, cycle collector, string/BCL helpers.
 - `corelib/` — new ArcSharp standard library.
 - `tests/` — conformance suite.
+- `analyzers/ArcSharp.Analyzers/` — Roslyn analyser for the supported subset and possible strong cycles (section 7).
 - `ArcSharp.Lsp/` — new language server.

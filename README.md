@@ -35,7 +35,7 @@ Most C# applications thrive on a tracing garbage collector. ArcSharp targets the
 
 ## Project Status
 ArcSharp is currently a **Proof of Concept**.
-- **Run-verified** on Windows x64: 17 samples, 9 November 2026 (`VERIFICATION.md`). The same pipeline can emit a Linux x64 triple; that host was not part of this run.
+- **Run-verified** on Windows x64: 18 samples, 9 November 2026 (`VERIFICATION.md`). The same pipeline can emit a Linux x64 triple; that host was not part of this run.
 - **Full pipeline** (Compile → LLVM → Link → Run → ARC Accounting) is operational.
 - **Diagnostics**: Stable codes (`ARC0001`…) and severities.
 - **Analysis**: Conservative definite-assignment analysis.
