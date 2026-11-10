@@ -2,7 +2,7 @@
  * ArcSharp runtime — Automatic Reference Counting support for the GC-less
  * executables produced by the ArcSharp compiler.
  *
- * Single-threaded; refcounts are non-atomic by design (see ARCHITECTURE.md).
+ * Single-threaded; refcounts are non-atomic by design (see docs/architecture.md).
  *
  * Object memory layout (all slots are 8 bytes; "uniform slot" model):
  *   offset  0 : intptr_t strong        reference count
