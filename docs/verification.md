@@ -1,8 +1,9 @@
 # ArcSharp — Verification Results
 
-Reproduce with: `powershell -ExecutionPolicy Bypass -File tools\verify.ps1`
-(requires the .NET 8 SDK + LLVM `clang` on `PATH`; `tools\env.ps1` sets the build
-environment, and `-Clang <path>` overrides the clang location).
+Reproduce with: `powershell -ExecutionPolicy Bypass -File tools\verify.ps1`.
+It requires the .NET 8 SDK and LLVM `clang`, by default at
+`C:/Program Files/LLVM/bin/clang.exe`; `-Clang <path>` overrides the location.
+See [Getting started](getting-started.md) for the prerequisites.
 
 The harness builds the compiler with the .NET 8 SDK selected by `global.json`,
 compiles each sample in `samples/` to LLVM IR, uses `clang` to lower the IR and
@@ -17,7 +18,7 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (18 samples, Windows x64, 9 November 2026)
+## Results (18 samples, Windows x64, 10 November 2026)
 
 `tools\verify.ps1` reported **18 passed, 0 failed** with the .NET 8.0.427 SDK.
 `live=0` means every object was reclaimed. `numerics` and `byref` allocate
@@ -65,7 +66,9 @@ cycle_weak:    public weak Parent owner;   ->  alloc=3 dead=3 live=0   (reclaime
 
 This is exactly the fundamental ARC trade-off made concrete: pure reference
 counting cannot reclaim a strong cycle (two objects leak), and the `weak`
-modifier breaks the cycle so deterministic reclamation succeeds. The leak in
+modifier breaks the cycle so deterministic reclamation succeeds.
+`cycle_weakref` shows the same result with standard `WeakReference<T>`
+(alloc=4 dead=4 live=0); its extra allocation is the `WeakReference<T>` object. The leak in
 `cycle_strong` is **expected and asserted** by the harness — it documents the
 limitation rather than hiding it.
 
@@ -73,39 +76,37 @@ limitation rather than hiding it.
 
 Because cycle-breaking uses the standard `System.WeakReference<T>` type rather
 than a custom keyword, ArcSharp source is also valid C# that the normal toolchain
-accepts. Both weak-reference samples compile clean with Roslyn:
+accepts. This was checked on 10 November 2026 with the .NET 8.0.427 SDK: each
+sample was copied into a new `net8.0` console project as `Program.cs` and run
+with `dotnet run`.
 
-```
-$ dotnet build           # Program.cs = samples/cycle_weakref.cs
-Build succeeded.
-$ dotnet build           # Program.cs = samples/weakref_get.cs
-Build succeeded.
-```
+| Sample | Roslyn build | Output under .NET | Output under ArcSharp |
+|---|---|---|---|
+| `cycle_weakref` | Succeeded | `done (WeakReference cycle)` | `done (WeakReference cycle)`, `live=0` |
+| `weakref_get` | Succeeded | `target v=99` | `TryGetTarget after death: false (PASS under ARC)` |
+| `interface` | Succeeded | `rect=12`, `circle=75` | `rect=12`, `circle=75` |
+| `inherit` | Failed (`CS1002`) | | |
 
-Run side by side, `cycle_weakref` prints the same line under the .NET CLR (GC) and
-under the ArcSharp native binary (ARC):
+`weakref_get` shows the intended behavioural difference. It calls
+`TryGetTarget` right after the target's last strong reference is dropped.
+ArcSharp returns `false` immediately, because destruction is deterministic.
+Under .NET the target is still in memory because no collection has run, so the
+call returns `true`. That divergence is the point of the project.
 
-```
-CLR (Roslyn-built):     done (WeakReference cycle)
-ArcSharp (GC-less .exe): done (WeakReference cycle)   + [arc] alloc=4 dead=4 live=0
-```
-
-The one intended behavioural difference is determinism: `weakref_get` calls
-`TryGetTarget` right after the target's last strong reference is dropped. ArcSharp
-returns `false` immediately (deterministic destruction); under the CLR the result
-depends on whether the GC has run yet. That divergence is the whole point of the
-project.
+`inherit` fails under Roslyn because it uses the legacy `weak` field modifier,
+which is not C#. `cycle_weak` and `weak_null` use it too. Those three samples
+are kept to test the legacy alias; new samples use `WeakReference<T>`.
 
 ## Windows x64 target check
 
+Every module the compiler writes with `--target windows` (the default) starts
+with:
+
 ```
-$ arcsharp samples/inherit.cs --target windows
-$ file inherit.obj
-inherit.obj: Intel amd64 COFF object file, ... 1st section name ".text"
-$ grep "target triple" inherit.ll
 target triple = "x86_64-pc-windows-msvc"
 ```
 
-The object links on Windows with
-`clang -target x86_64-pc-windows-msvc inherit.obj runtime/arc_runtime.c -o inherit.exe`
-(or `lld-link`/`link.exe` against a runtime `.obj`).
+`clang` replaces it with the exact MSVC version it finds, which is the source
+of the expected `-Woverride-module` warning. The harness builds every sample
+through that path, so each passing row in the results table is also a
+successful Windows x64 link and run.

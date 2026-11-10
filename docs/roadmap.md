@@ -14,9 +14,9 @@ native C# toolchain.
 
 ## Implementation progress
 
-Work is landing in phases. Each phase is run-verified locally with
-`tools\verify.ps1` (the sandbox used to author changes has no .NET SDK / `clang`,
-so building is done on a developer machine).
+Work is landing in phases. Each phase is run-verified on a Windows x64
+developer machine with `tools\verify.ps1`; there is no CI yet. The latest
+results are in [Verification](verification.md).
 
 **Phase 1 — correctness & tooling foundation (done):**
 
@@ -131,7 +131,8 @@ unmarked items are still planned.
 | **Array covariance**    | P0 **[done]** | Arrays store their element `TypeInfo` at offset 32 (offset 40 for elements). Every store to a reference-type array performs a runtime assignability check via `arc_array_store_check` that throws `ArrayTypeMismatchException` on mismatch. Value-type arrays are invariant. `S[]` → `T[]` binder conversion allowed when `S` is reference-compatible with `T`.     |
 | **Definite assignment** | P0 **[done]** | A conservative structured flow pass (`DefiniteAssignment.cs`) tracks whether each local is definitely assigned before use, with completes-normally tracking so `if`/loop joins don't false-positive. Currently reports `ARC2100` as a warning (promotable via `-Werror`); tightening to a hard error and extending to `out`-parameter exit paths is follow-up work. |
 | **Overflow checking**   | P1            | Support `checked`/`unchecked` contexts. Integer arithmetic in `checked` emits `llvm.sadd.with.overflow` / `smul.with.overflow` and branches to an overflow exception. `unchecked` uses plain LLVM integer ops.                                                                                                                                                      |
-| **Verification suite**  | P0            | Grow from 10 samples to a **thousands-of-tests conformance suite**. Adopt or write a test harness that runs ArcSharp output against expected output and ARC accounting. Target the C# spec incrementally; include negative tests (must-fail diagnostics).                                                                                                           |
+| **Known defects**       | P0            | Fix the defects recorded in [Known issues](language-reference.md#known-issues): ignored field initialisers, the `bool` argument mismatch between the IR (`i1`) and the runtime (`int`), abstract methods and static auto-properties that produce invalid IR, same-arity overloads, unchecked class casts, `WeakReference<T>` locals, reference equality for `string ==`, and `new` on an abstract class. Each fix lands with a sample that checks its output. |
+| **Verification suite**  | P0            | Grow from 18 samples to a **thousands-of-tests conformance suite**. Adopt or write a test harness that runs ArcSharp output against expected output and ARC accounting. Target the C# spec incrementally; include negative tests (must-fail diagnostics).                                                                                                           |
 
 ### Concrete first steps for correctness
 
@@ -180,7 +181,7 @@ The compiler still has to report them itself. The analyser is optional, it can
 be missing or older than the compiler, and only the compiler knows what this
 version will lower. Today the compiler is also the weaker of the two at this
 job: an unhandled statement becomes an empty block and an unhandled expression
-becomes an error value with no diagnostic (`AGENTS.md`). A strong cycle
+becomes an error value with no diagnostic ([`AGENTS.md`](../AGENTS.md)). A strong cycle
 compiles cleanly and leaks, which `samples/cycle_strong.cs` records on
 purpose. Warning only in an analyser would leave `arcsharp` itself silent.
 

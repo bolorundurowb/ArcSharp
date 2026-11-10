@@ -9,9 +9,14 @@ LangVersion 12).
 
 > Status: first pass / PoC. The goal is to prove the pipeline and the ARC memory
 > model end-to-end, not to be a conformant C# implementation. See
-> [Unsupported features](#features-arc-cannot-reasonably-support-first-pass),
-> [Open questions](#open-questions), and the production-readiness
-> **[ROADMAP.md](ROADMAP.md)**.
+> [Unsupported features](#7-features-arc-cannot-reasonably-support-first-pass),
+> [Open questions](#10-open-questions), and the production-readiness
+> **[Roadmap](roadmap.md)**.
+>
+> This document describes the compiler's internals. For the user-facing
+> description of the language and the memory model, read the
+> [Language reference](language-reference.md) and the
+> [Memory model](memory-model.md).
 
 ---
 
@@ -58,20 +63,28 @@ cannot reclaim **reference cycles**. ArcSharp addresses this with the standard
                                                 │ LLVM emitter  │ ───────┐
                                                 └───────────────┘        │
                                                                          ▼
-   arc_runtime.c ──(clang/gcc)──▶ runtime.o          llc ──▶ program.o ──┐
-                                       │                                 │
-                                       └──────────── linker ─────────────┴──▶ program.exe
+                    arc_runtime.c ──────────────▶ clang ◀──────── program.ll
+                                                    │
+                                                    ▼
+                                               program.exe
 ```
+
+`clang` compiles the IR and the runtime and links them in one step; this is
+the `--clang` path and the only one in the current verification. Without
+`--clang`, the driver runs `llc` to produce an object file. On Windows it then
+stops and prints the link command; with `--target host` it links the object and
+the runtime with `gcc`.
 
 Source layout:
 
 | Path                    | Responsibility                                                                                                            |
 |-------------------------|---------------------------------------------------------------------------------------------------------------------------|
-| `src/Lexing/`           | `Token`, `SyntaxKind`, `Lexer` — text → token stream                                                                      |
-| `src/Syntax/`           | AST node records + `Parser` (recursive descent)                                                                           |
-| `src/Binding/`          | `TypeSymbol`, `MethodSymbol`, `FieldSymbol`, `Binder` — name/type resolution, layout, vtables, type checking → bound tree |
+| `src/Lexing/`           | `Token`, `TokenKind`, `Diagnostic`, `Lexer` — text → token stream                                                         |
+| `src/Syntax/`           | AST node classes + `Parser` (recursive descent)                                                                           |
+| `src/Binding/`          | `TypeSymbol`, `MethodSymbol`, `FieldSymbol`, `Binder` — name/type resolution, layout, vtables, type checking → bound tree; `DefiniteAssignment` warnings |
 | `src/CodeGen/`          | `Emitter` — bound tree → LLVM IR, with ARC ops woven in                                                                   |
-| `src/Driver/`           | `Compilation`, CLI, invocation of `llc` + linker                                                                          |
+| `src/Driver/`           | `Compilation` — orchestrates the stages and invokes `clang`, or `llc` and a linker                                        |
+| `src/Program.cs`        | Command-line parsing                                                                                                      |
 | `runtime/arc_runtime.c` | Object header, retain/release, weak table, type info, strings, arrays, console                                            |
 | `samples/`              | Example `.cs` programs used as tests                                                                                      |
 
@@ -117,8 +130,12 @@ object. They never participate in ARC.
 - **Virtual / override calls** load the function pointer from
   `obj->type->vtable[slot]` and call indirectly. Slots are assigned by the
   binder so an override occupies the same slot as the base method.
-- **Interface calls** *(design)* search the type's interface-table for the
-  interface id, then index the method slot. See status in Section 8.
+- **Interface calls** load the function pointer from
+  `obj->type->itable[selector]`. The binder gives every interface method a
+  selector that is unique across the whole program, and each class's itable has
+  one slot per selector, with `null` for the selectors it does not implement.
+  This makes a call a single indexed load, at the cost of itables that grow with
+  the number of interface methods in the program.
 
 ---
 
@@ -137,6 +154,7 @@ arc_release(p)             → if p && --p->strong == 0:
                                  arc_weak_release(p)     // drop the implicit live-count
 arc_weak_retain(p)         → if p: ++p->weak
 arc_weak_release(p)        → if p && --p->weak == 0: free(p)
+arc_assign_take(slot,v)    → old=*slot; *slot=v; release old   // v is already +1
 arc_store_strong(slot,v)   → retain v; old=*slot; *slot=v; release old
 arc_store_weak(slot,v)     → weak_retain v; old=*slot; *slot=v; weak_release old
 arc_load_weak(slot)        → p=*slot; (p && p->strong>0) ? (retain p, p) : null
@@ -162,20 +180,23 @@ A +1 value is then *consumed* in exactly one of these ways, or released:
 | Passed as a call argument                | Borrowed by callee; caller releases it at **end of statement**                               |
 | Used as a call receiver / member target  | Borrowed; released at end of statement                                                       |
 | `return`ed                               | Becomes the caller's +1; not released                                                        |
-| Discarded (expression statement)         | Released immediately                                                                         |
+| Discarded (expression statement)         | Released at end of statement                                                                 |
 
 Two cleanup scopes guarantee balance:
 
 1. **Statement temporaries** — every +1 not consumed by a store/return is
    released at the end of the enclosing full statement.
 2. **Locals** — each reference-typed local is a stack slot initialised to null
-   and released on every path that leaves its scope (fall-through *and*
-   `return`).
+   and released at `func.exit`. Every `return` stores its value in `%retval`
+   and branches there, so locals are released once per call on every path.
+   A local declared in an inner block therefore lives until the method
+   returns, not until the block ends.
 
-Object teardown: the binder generates a `__deinit_<Type>` that releases each
-strong reference field (and, for arrays, each element); `arc_release` calls it
-when `strong` hits 0. This is what makes destruction recursive and
-deterministic.
+Object teardown: the emitter generates `<Type>__deinit` for every class. It
+releases each strong reference field and clears each weak field; the runtime
+releases each element when an array of references dies. `arc_release` calls
+the destructor when `strong` hits 0. This is what makes destruction recursive
+and deterministic.
 
 > This "retain every read to +1, release temporaries per statement, release
 > slots at scope exit" rule over-retains slightly versus an optimising ARC
@@ -190,7 +211,7 @@ deterministic.
 Pure ARC leaks strong reference cycles. Rather than invent syntax, ArcSharp
 recognises the **standard BCL type `System.WeakReference<T>`** and lowers it to a
 non-owning (weak) handle. This keeps ArcSharp source **idiomatic C# that also
-compiles unchanged with Roslyn** (verified in `VERIFICATION.md`).
+compiles unchanged with Roslyn** (see [Verification](verification.md)).
 
 ```csharp
 using System;
@@ -234,39 +255,34 @@ and is fully reclaimed once the back-edge is a `WeakReference<T>`.
 
 ## 6. Supported C# 12 subset (first pass)
 
-- **Types**: `int` (i32), `uint` (i32), `long` (i64), `ulong` (i64), `bool` (i1),
-  `void`, `string`, `char` (i32), `float` (f32), `double` (f64), `byte`/`sbyte`
-  (i8), `short`/`ushort` (i16); user `class`es; single-dimension arrays `T[]`.
-  `struct` declarations are parsed and bound; the emitter does not lower them yet.
-- **Classes**: instance fields (including `WeakReference<T>`), constructors,
-  instance methods, static methods and fields, single inheritance,
-  `virtual`/`override` dispatch, and auto-properties (a private backing field
-  plus a getter and a setter).
-- **Interfaces**: declaration and itable dispatch.
-- **Parameters**: `ref`, `out`, and `in`, lowered to managed references. A
-  reference-typed `ref` borrows the slot and does not transfer ownership.
-  Reassigning a reference-typed parameter is rejected.
-- **Type tests and arrays**: `is` and `as` walk the `TypeInfo` parent chain at
-  run time. A class downcast is checked; an interface downcast is accepted
-  without a runtime test. A store into a reference-element array checks
-  assignability. A mismatch prints `ArrayTypeMismatchException` and exits.
-  Value-type arrays stay invariant.
-- **`System.WeakReference<T>`**: `new`, `TryGetTarget(out ...)`, `SetTarget(...)` —
-  plus the `Name<T>` parsing and `out` arguments that those calls need.
-- **Statements**: blocks, local declarations with an initialiser, assignment,
-  `if`/`else`, `while`, `for`, `return`, expression statements.
-- **Expressions**: integer, unsigned, floating, `char`, `bool`, `string`, and
-  `null` literals; identifiers; `this`; field, property, and static member
-  access; method invocation (static, instance, virtual, interface); `new T(args)`;
-  `new T[n]`; array indexing (load and store); `+ - * / %`, `== != < <= > >=`,
-  `&& || !`, unary `-`; string `+` concatenation; explicit numeric casts;
-  `is` / `as`; parenthesisation; assignment as an expression.
-- **Built-ins**: `System.Console.Write` / `WriteLine` for `string`, `bool`, the
-  integer types, `float`, and `double`, plus `.Length` on arrays and strings.
-- **Compilation unit**: one or more `.cs` files. A `using` directive is skipped,
-  so a file may keep `using System;`. A `namespace` declaration is flattened and
-  its name is discarded. A trailing `?` on a type is accepted and ignored.
-- **Entry point**: `static void Main()` or `static int Main()`.
+The [Language reference](language-reference.md) is the authoritative list of
+what the compiler accepts, how it differs from .NET, and its known defects.
+This section records only how the subset is lowered.
+
+- **Value types** map to LLVM integers and floats: `bool` is `i1`, `byte` and
+  `sbyte` are `i8`, `short` and `ushort` are `i16`, `int`, `uint`, and `char`
+  are `i32`, `long` and `ulong` are `i64`, `float` is `float`, and `double` is
+  `double`. Every field and array element still occupies an 8-byte slot.
+- **Classes** get a `TypeInfo`, a vtable when they have virtual methods, an
+  itable when the program declares interface methods, and a generated
+  `__deinit`. Auto-properties lower to a backing field plus `get_` and `set_`
+  methods.
+- **`ref`, `out`, and `in`** lower to pointers to the slot. A reference-typed
+  `ref` borrows the slot and does not transfer ownership.
+- **`is` and `as`** call `arc_is_instance`, which walks the `TypeInfo` base
+  chain. An explicit cast `(T)x` is a `BoundConversion` with no runtime test,
+  for classes and interfaces alike.
+- **Array stores** into a reference-element array call
+  `arc_array_store_check`, which prints `ArrayTypeMismatchException` and exits
+  on a mismatch. Value-type arrays stay invariant.
+- **`System.WeakReference<T>`** is the only generic type. `Name<T>` is parsed in
+  field types and `new` expressions so that it can be recognised.
+- **`Console.Write` and `WriteLine`** and **`.Length`** are bound directly to
+  runtime functions; there is no library behind them.
+- **Compilation units** are merged: `using` directives are skipped, namespace
+  names are discarded, and a trailing `?` on a type is ignored.
+- **Field initialisers** are parsed and then discarded. This is a known defect,
+  not a design choice.
 
 ---
 
@@ -277,7 +293,7 @@ and *scope* (just not built yet).
 
 ### Fundamental tensions with ARC
 - **Uncollected reference cycles.** Pure ARC leaks any strong cycle. Mitigated,
-  not solved, by `weak`/`unowned`; the burden moves to the programmer. A real
+  not solved, by `WeakReference<T>`; the burden moves to the programmer. A real
   product would need a backup cycle collector (the hard problem GC solves for
   free).
 - **Multithreaded sharing.** Correct ARC across threads requires *atomic*
@@ -285,8 +301,8 @@ and *scope* (just not built yet).
   non-atomic, so shared mutable references across threads are unsound. Atomics
   are a known, measurable throughput cost.
 - **`GC.*` / finaliser semantics.** `GC.Collect`, `GC.KeepAlive`,
-  `WeakReference`, resurrection, and the two-phase finaliser queue assume a
-  tracing collector. ArcSharp offers deterministic destructors instead; the GC
+  resurrection, the two-phase finaliser queue, and the timing of
+  `WeakReference<T>.TryGetTarget` assume a tracing collector. ArcSharp offers deterministic destructors instead; the GC
   API surface cannot be honoured.
 - **`async`/`await` & iterator state machines.** Lifetimes that span suspension
   points must be threaded through a heap-allocated state machine; getting ARC
@@ -294,7 +310,7 @@ and *scope* (just not built yet).
   captured continuations) is a substantial design effort. Out of scope.
 - **Closures / lambda capture.** Captured variables become heap closure
   objects; capturing `this` readily forms cycles. Supportable in principle (with
-  the same `weak`-capture discipline Swift uses) but deferred.
+  the same weak-capture discipline Swift uses) but deferred.
 
 ### Out of scope for the first pass (no fundamental conflict)
 - **Generics.** Requires monomorphisation (or a uniform boxed representation).
@@ -328,14 +344,14 @@ and *scope* (just not built yet).
 | Type checking (core)                                   | Implemented (lightweight)             |
 | Virtual / override dispatch (vtables)                  | Implemented                           |
 | ARC: retain/release/deinit, statement & scope cleanup  | Implemented                           |
-| Weak fields + cycle reclamation                        | Implemented                           |
+| `WeakReference<T>` fields + cycle reclamation          | Implemented (fields only, not locals) |
 | Arrays (value & reference element types)               | Implemented                           |
 | Strings + `Console`                                    | Implemented                           |
 | Control flow (`if`/`while`/`for`/`return`)             | Implemented                           |
 | `float` / `double`                                     | Implemented                           |
 | `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
 | `ref` / `out` / `in` parameters                        | Implemented                           |
-| Auto-properties                                        | Implemented                           |
+| Auto-properties                                        | Implemented for instance properties; static ones produce invalid IR |
 | `is` / `as`                                            | Implemented                           |
 | Array covariance (runtime store check)                 | Implemented                           |
 | Structs (value types)                                  | Parsed and bound; code generation pending |
@@ -343,23 +359,33 @@ and *scope* (just not built yet).
 | Diagnostics with codes (`ARC0001`…) and severities     | Implemented                           |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
-| Generics, async, closures, exceptions, `using`         | Not implemented (Section 7 / ROADMAP) |
+| Field initialisers                                     | Parsed and discarded (defect)         |
+| Generics, async, closures, exceptions, `using`         | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 
-See `VERIFICATION.md` (generated by the test run) for the exact set of sample
-programs that compile and run, with ARC alloc/free accounting.
+See [Verification](verification.md) for the exact set of sample programs that
+compile and run, with ARC alloc/free accounting, and the
+[Known issues](language-reference.md#known-issues) for defects found outside the
+samples.
 
 ---
 
 ## 9. Targeting Windows x64 & portability
 
 The emitter writes `target triple = "x86_64-pc-windows-msvc"` and the matching
-`target datalayout` when invoked with `--target windows` (the default for
-producing a `.exe`). Because both Windows and the Linux CI host are x86-64 and
-the runtime is plain C, the *same IR* is validated on Linux
-(`x86_64-pc-linux-gnu`) during automated testing via `llc` + `gcc`; only the
-triple/datalayout and the C runtime's `printf` linpage differ. On Windows the
-runtime object is produced with `clang -target x86_64-pc-windows-msvc` (or
-MSVC's `cl`) and linked with `lld-link`/`link.exe`.
+`target datalayout` when invoked with `--target windows`, which is the default.
+With `--clang`, `clang` compiles that module together with
+`runtime/arc_runtime.c` and links the result with the Microsoft linker. This is
+the only path the [verification harness](verification.md) exercises.
+
+`--target host` writes `x86_64-pc-linux-gnu` instead, and the driver then runs
+`llc` and `gcc`. Both targets are x86-64 and the runtime is portable C, so the
+module differs only in its triple and data layout. The Linux path has no
+automated testing and is not part of the current verification; treat it as
+untested.
+
+The runtime must respect the data model of each target. Windows x64 is LLP64,
+so C `long` is 32 bits there; the runtime uses `intptr_t` and `long long` for
+every 64-bit value, and formats with `%lld`.
 
 ### Is LLVM IR platform-agnostic?
 
@@ -379,7 +405,7 @@ principle. But the IR it emits is **not** target-independent:
 
 What this buys today: the emitted IR is portable across targets that share an
 architecture and ABI family, so one module shape covers x86-64 Windows and
-x86-64 Linux. The latest recorded run is Windows x64 (`VERIFICATION.md`).
+x86-64 Linux. The latest recorded run is Windows x64 ([Verification](verification.md)).
 What it does **not** yet provide: 32-bit, ARM, or big-endian targets. Making those work is the **P1 "Multi-target"** roadmap item
 — parameterise the triple/data layout into a `TargetInfo`, lower ABIs per target,
 and drop the hard-coded 8-byte-slot assumption. In short: GC-less native C# via
@@ -391,7 +417,8 @@ LLVM, currently x86-64-scoped, portable in design.
 
 1. **Cycle policy.** *(Partly decided.)* A strong cycle still leaks, and the
    programmer breaks it with `WeakReference<T>`. The compiler and a Roslyn
-   analyser will warn when strong fields can form one (`ROADMAP.md` section 7).
+   analyser will warn when strong fields can form one
+   ([Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project)).
    Whether a backup cycle collector is also required stays open; that work is
    section 2 of the roadmap.
 2. **Threading.** Do we commit to atomic refcounts (and the throughput cost) or
@@ -402,7 +429,8 @@ LLVM, currently x86-64-scoped, portable in design.
 4. **`weak` surface.** *(Resolved.)* ArcSharp lowers the standard
    `System.WeakReference<T>` so source stays idiomatic and Roslyn-compatible; the
    old non-standard `weak` keyword is retained only as a legacy alias. Remaining
-   question: do we also want weak *locals* / an `unowned` (non-zeroing) variant?
+   question: do we also want an `unowned` (non-zeroing) variant? Separately,
+   `WeakReference<T>` locals are a parser defect to fix, not an open question.
 5. **Value types with reference fields.** Copying such a struct must retain its
    reference fields, and releasing a copy must release them. Structs are parsed
    and bound, and code generation is still pending. When that lands, do we

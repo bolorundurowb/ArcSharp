@@ -17,7 +17,7 @@ Windows x64 (`x86_64-pc-windows-msvc`).
 The project values a small, provably balanced ARC model over performance or
 breadth. When a change has to choose between "simple and correct" and "fast or
 clever", choose simple and correct, and record the optimisation in
-`ROADMAP.md`.
+`docs/roadmap.md`.
 
 ## Quick start
 
@@ -92,7 +92,8 @@ how `tools/verify.ps1` captures both streams.
 | `tools/verify.ps1` | End-to-end verification harness |
 | `tools/build-windows.ps1` | Convenience script: build and compile one file |
 | `tools/env.ps1` | Environment variables and LLVM on `PATH` |
-| `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `VERIFICATION.md` | Project documentation (see "Documentation" below) |
+| `README.md` | Landing page |
+| `docs/` | User guides, architecture, roadmap, verification results, and the logo (see "Documentation" below) |
 
 `ArcSharp.csproj` excludes `samples/**/*.cs` from compilation, so samples are
 never built as part of the compiler. Keep it that way.
@@ -129,8 +130,9 @@ A feature usually touches every stage. Work through this list in order:
    its matching `declare` line in `Emitter.EmitRuntimeDecls`.
 7. **Sample and harness**: add a sample and an `Invoke-Sample` line (see
    "Testing").
-8. **Documentation**: update the status in `ARCHITECTURE.md`, `ROADMAP.md`,
-   `README.md`, and `VERIFICATION.md`.
+8. **Documentation**: update `docs/language-reference.md`, the status in
+   `docs/architecture.md` and `docs/roadmap.md`, `docs/verification.md`, and
+   `README.md` (see "Documentation").
 
 **Unhandled nodes fail silently. This is the most important pitfall in the
 codebase.**
@@ -152,7 +154,7 @@ checks the program's observable output.
 ### ARC ownership rules
 
 These rules are what keep every sample at `live=0`. They are described in
-`ARCHITECTURE.md` section 4, and the emitter applies them as follows.
+`docs/architecture.md` section 4, and the emitter applies them as follows.
 
 - **Every evaluated reference expression yields an owned (+1) value.** `new`
   and reference-returning calls already return +1. Reading a local, parameter,
@@ -180,8 +182,8 @@ These rules are what keep every sample at `live=0`. They are described in
 
 Over-retaining is acceptable; an unbalanced retain or release is not. Do not
 remove or "optimise away" retain and release pairs. Borrow and ownership
-elision is planned as a separate, deliberate compiler pass (`ROADMAP.md`
-section 2).
+elision is planned as a separate, deliberate compiler pass
+(`docs/roadmap.md` section 2).
 
 ### Object layout
 
@@ -246,7 +248,7 @@ warnings fail it only with `-Werror`.
 | `ARC0xxx` | Lexer | `ARC0001` (default), `ARC0002` unterminated literal, `ARC0003` unsupported operator |
 | `ARC1xxx` | Parser | `ARC1001` (default) |
 | `ARC2xxx` | Binder | `ARC2001` (default), `ARC2002` unknown name, `ARC2010` conversion, `ARC2050` no entry point, `ARC2100` definite assignment (warning) |
-| `ARC3xxx` | Reserved | Not emitted yet. Held for the shared subset and ARC-hazard rules in `ROADMAP.md` section 7 (`ARC3001` unsupported construct, `ARC3100` possible strong cycle, `ARC3200` ARC/CLR difference, `ARC3300` threads). Do not allocate these for other errors. |
+| `ARC3xxx` | Reserved | Not emitted yet. Held for the shared subset and ARC-hazard rules in `docs/roadmap.md` section 7 (`ARC3001` unsupported construct, `ARC3100` possible strong cycle, `ARC3200` ARC/CLR difference, `ARC3300` threads). Do not allocate these for other errors. |
 
 Never renumber or reuse an existing code. A new kind of error gets a new code
 in the range for its stage. Binder diagnostics report column 0, and
@@ -279,7 +281,7 @@ and it documents that ARC cannot reclaim a strong cycle.
 
    For a multi-file sample, list every file, as `multifile` does.
 3. Run the harness, then copy the **actual** alloc, dead, and live counts and the
-   output into the table in `VERIFICATION.md`.
+   output into the table in `docs/verification.md`.
 
 ### Reading ARC accounting
 
@@ -298,7 +300,7 @@ is expected and harmless.
 
 Report only what was actually run. If the .NET 8 SDK or clang is not available
 in your environment, say that the harness could not be run. Never write
-accounting numbers or "passed" into `VERIFICATION.md` or a commit message
+accounting numbers or "passed" into `docs/verification.md` or a commit message
 without a real run. The Linux x64 path (`--target host` with `llc` and `gcc`)
 exists, but it is not part of the current verification; do not claim it was
 tested unless you tested it.
@@ -334,12 +336,27 @@ the code does.
 
 Keep the documentation accurate in the same change that alters behaviour.
 
+The documentation lives in `docs/`, with `docs/README.md` as its index.
+`README.md` at the root is the landing page, and this file stays at the root
+for tools that look for it there.
+
 | Document | Update it when |
 |---|---|
-| `README.md` | The feature summary, the status, the prerequisites, or the commands change |
-| `ARCHITECTURE.md` | The supported subset (section 6), the unsupported list (section 7), the status table (section 8), the object model, or the ARC rules change |
-| `ROADMAP.md` | A roadmap item is delivered (mark it **[done]**) or the plan changes |
-| `VERIFICATION.md` | Samples are added or changed, or the harness is re-run with different results |
+| `README.md` | The feature summary, the status, the prerequisites, or the quick-start commands change |
+| `docs/getting-started.md` | The prerequisites, the build steps, or the first-run output change |
+| `docs/language-reference.md` | A language feature is added, a difference from .NET changes, or a known issue is found or fixed |
+| `docs/memory-model.md` | The user-visible lifetime rules or `WeakReference<T>` support change |
+| `docs/cli-reference.md` | A command-line option, an output file, or an exit code changes |
+| `docs/diagnostics.md` | A diagnostic code or message is added or changed |
+| `docs/troubleshooting.md` | A new failure mode and its fix are known |
+| `docs/architecture.md` | The lowering of the subset (section 6), the unsupported list (section 7), the status table (section 8), the object model, or the ARC rules change |
+| `docs/roadmap.md` | A roadmap item is delivered (mark it **[done]**) or the plan changes |
+| `docs/verification.md` | Samples are added or changed, or the harness is re-run with different results |
+
+Every example program in the user guides must compile and run with the
+current compiler. When you change behaviour, re-run the affected examples and
+update the output shown on the page. When a known issue is fixed, remove it
+from `docs/language-reference.md` and from the roadmap's known-defects row.
 
 Write prose in UK English (for example "finalisation", "behaviour",
 "recognise"). Keep established identifiers and external API names as they are
@@ -362,11 +379,15 @@ Do not assume that these work. Each is unimplemented or deliberately limited:
 - Threads, which the non-atomic refcounts do not support
 
 A Roslyn analyser that flags this list, and possible strong cycles, from an
-ordinary `dotnet build` is planned in `ROADMAP.md` section 7. It does not
+ordinary `dotnet build` is planned in `docs/roadmap.md` section 7. It does not
 replace compiler diagnostics. The compiler has to report the same rules,
 because the analyser is optional. `ARC3xxx` is reserved for that catalogue.
 
-See `ROADMAP.md` for the priority and the planned design of each item.
+The defects found outside this list, such as ignored field initialisers and
+the `bool` argument mismatch, are recorded in the known-issues table of
+`docs/language-reference.md`.
+
+See `docs/roadmap.md` for the priority and the planned design of each item.
 
 ## Git workflow
 

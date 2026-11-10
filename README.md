@@ -1,84 +1,124 @@
-# ArcSharp
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="ArcSharp" width="420">
+</p>
 
-[![Licence: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+<p align="center">
+  <strong>Native C# without a garbage collector.</strong><br>
+  A proof-of-concept compiler from C# 12 to LLVM IR, with automatic reference counting.
+</p>
 
-A proof-of-concept compiler for a subset of **C# 12** that uses **ARC (Automatic Reference Counting)** instead of a garbage collector, emits **LLVM IR**, and produces native, GC-less executables.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="Licence: AGPL v3"></a>
+  <img src="https://img.shields.io/badge/status-proof_of_concept-orange.svg" alt="Status: proof of concept">
+  <img src="https://img.shields.io/badge/target-Windows_x64-512BD4.svg" alt="Target: Windows x64">
+</p>
 
-> **AI-led project** — this is a personal exploration of alternative C# runtime models beyond Native AOT, driven by curiosity about what compilers and memory management strategies the ecosystem could support.
+---
 
-## Table of Contents
-- [Rationale](#why-arcsharp--the-rationale)
-- [Key Features](#key-features)
-- [Project Status](#project-status)
-- [Getting Started](#getting-started)
-- [Project Structure](#project-structure)
-- [Documentation](#documentation)
-- [Portability](#portability)
+ArcSharp compiles a subset of C# 12 to a native Windows x64 executable. Instead
+of a tracing garbage collector, every object carries a reference count, and it
+is destroyed at the moment its last strong reference goes away. There are no
+collection pauses and no background threads, and memory is returned as soon as
+it is no longer used.
 
-## Why ArcSharp — the rationale
-Most C# applications thrive on a tracing garbage collector. ArcSharp targets the niches where a GC is undesirable: latency-sensitive workloads (audio, games, real-time control) and environments with tight memory budgets.
+The source you write is ordinary C#. It also builds with `dotnet build`, so you
+can compare the two runtimes side by side.
+
+## Why ARC instead of a garbage collector
+
+Most C# applications thrive on a tracing garbage collector. ArcSharp explores
+the niches where one is undesirable: latency-sensitive work such as audio,
+games, and real-time control, and environments with tight memory budgets.
 
 |                     | Tracing GC (.NET)            | ARC (ArcSharp)                            |
 |---------------------|------------------------------|-------------------------------------------|
 | **Reclamation**     | Deferred, at collection time | Immediate, at last release                |
 | **Pauses**          | Stop-the-world phases        | None (work is spread inline)              |
 | **Per-object cost** | Amortised                    | A counter field + retain/release traffic  |
-| **Cycles**          | Collected automatically      | Leaks unless broken by `WeakReference<T>` |
-| **Determinism**     | Nondeterministic finalisers  | Deterministic destructors                 |
+| **Cycles**          | Collected automatically      | Leak unless broken by `WeakReference<T>`  |
+| **Determinism**     | Nondeterministic finalisers  | Deterministic destruction                 |
 
-## Key Features
-- **Deterministic Finalisation**: Object destructors run the moment the last reference is dropped.
-- **No Runtime GC**: No background collection threads or stop-the-world pauses.
-- **Native Execution**: Compiles directly to LLVM IR and then to native machine code via `clang` or `llc`.
-- **C# 12 Subset**: Classes, inheritance, interfaces, virtual methods, arrays, strings, the integer and floating numeric types, `ref`/`out`/`in`, auto-properties, and `is`/`as`.
-- **Cycle Breaking**: Recognises standard `System.WeakReference<T>` to break reference cycles, maintaining Roslyn compatibility.
+## Quick start
 
-## Project Status
-ArcSharp is currently a **Proof of Concept**.
-- **Run-verified** on Windows x64: 18 samples, 9 November 2026 (`VERIFICATION.md`). The same pipeline can emit a Linux x64 triple; that host was not part of this run.
-- **Full pipeline** (Compile → LLVM → Link → Run → ARC Accounting) is operational.
-- **Diagnostics**: Stable codes (`ARC0001`…) and severities.
-- **Analysis**: Conservative definite-assignment analysis.
+You need Windows x64, the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0),
+[LLVM](https://github.com/llvm/llvm-project/releases) `clang`, and the
+Microsoft C++ build tools. [Getting started](docs/getting-started.md) has the
+details.
 
-## Getting Started
-
-### Prerequisites
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). `global.json` selects the newest installed 8.0 SDK and does not roll forward to .NET 9 or later.
-- [LLVM / Clang](https://llvm.org/) (`clang` on `PATH`, or pass `-Clang` to `tools\verify.ps1`)
-
-### 1. Build the Compiler
 ```powershell
 dotnet build -c Release
+
+dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit `
+    --clang "C:/Program Files/LLVM/bin/clang.exe" `
+    --runtime runtime/arc_runtime.c --run
 ```
 
-### 2. Compile and Run a Program
-You can use the compiler DLL directly or the helper script (Windows).
-
-**Using the DLL (One-shot compile & run):**
-```powershell
-dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs --target windows --run --runtime runtime/arc_runtime.c
+```text
+25
+sum=42
+[arc] alloc=5 dead=5 freed=5 live=0
 ```
 
-**Using the Helper Script:**
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/build-windows.ps1 samples/inherit.cs -Run
-```
+The last line is the runtime's accounting: `live=0` means every object was
+reclaimed.
 
-### 3. Run Verification Suite
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/verify.ps1
-```
+## What works
 
-## Project Structure
-- `src/` — Compiler source code (Lexing, Syntax, Binding, CodeGen, Driver).
-- `runtime/` — The C runtime (`arc_runtime.c`) providing the object model and ARC primitives.
-- `samples/` — Example C# programs and test cases.
-- `tools/` — Build and verification scripts.
+- Classes with single inheritance, interfaces, and `virtual`/`override` dispatch.
+- Constructors, instance and static methods and fields, and instance
+  auto-properties.
+- `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
+  `string`, plus single-dimensional arrays.
+- `ref`, `out`, and `in` parameters, and `is` and `as`.
+- `if`, `while`, `for`, and `return`.
+- Cycle breaking with the standard `System.WeakReference<T>`.
+- Several source files compiled into one program.
+- Diagnostics with stable codes, and a definite-assignment warning.
+
+Generics, exceptions, `foreach`, `switch`, `++`, lambdas, and the .NET class
+library are not supported yet. The [Language reference](docs/language-reference.md)
+has the full list, the differences from .NET, and the known issues.
+
+## Status
+
+ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
+executable, with ARC accounting) works, and 18 sample programs pass the test
+harness on Windows x64. The compiler can also emit IR for Linux x64, but that
+path is not tested. See [Verification](docs/verification.md) for the latest
+results and [Roadmap](docs/roadmap.md) for the plan.
 
 ## Documentation
-- **[ARCHITECTURE.md](ARCHITECTURE.md)**: Deep dive into the ARC model, object layout, and compiler pipeline.
-- **[ROADMAP.md](ROADMAP.md)**: The plan for production-readiness (Generics, Exceptions, Async, etc.).
-- **[VERIFICATION.md](VERIFICATION.md)**: Test results and ARC accounting verification.
 
-## Portability
-While ArcSharp uses LLVM IR for portability, the current implementation is scoped to **x86-64** (Windows/Linux) due to a fixed 8-byte slot assumption in the object model. Expanding to ARM and 32-bit targets is a P1 roadmap item.
+| Guide | |
+|---|---|
+| [Getting started](docs/getting-started.md) | Install, build, and run your first program |
+| [Language reference](docs/language-reference.md) | The supported subset, differences from .NET, and known issues |
+| [Memory model](docs/memory-model.md) | When objects die, why cycles leak, and `WeakReference<T>` |
+| [Command-line reference](docs/cli-reference.md) | Options, outputs, and exit codes |
+| [Diagnostics](docs/diagnostics.md) | Every error and warning code |
+| [Troubleshooting](docs/troubleshooting.md) | Build failures, crashes, and leaks |
+| [Architecture](docs/architecture.md) | Compiler internals, object layout, and the ARC rules |
+| [Roadmap](docs/roadmap.md) | The plan towards a usable toolchain |
+
+Contributors should read [`AGENTS.md`](AGENTS.md), which lists the invariants
+the compiler and runtime depend on.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `src/` | The compiler: lexing, syntax, binding, code generation, and the driver |
+| `runtime/` | `arc_runtime.c`, the object model and ARC primitives |
+| `samples/` | Test programs, each run by the harness |
+| `tools/` | Build and verification scripts |
+| `docs/` | Documentation and the logo |
+
+## About this project
+
+ArcSharp is an AI-led personal exploration of alternative C# runtime models
+beyond Native AOT, driven by curiosity about which compilers and memory
+management strategies the ecosystem could support.
+
+## Licence
+
+ArcSharp is licensed under the [GNU Affero General Public License v3.0](LICENSE).
