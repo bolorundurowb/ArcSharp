@@ -122,7 +122,9 @@ typedef struct TypeInfo {
 
 Value types (`int`, `bool`, `long`, structs) are **not** boxed and carry no
 header; they live in registers, on the stack, or inline inside a containing
-object. They never participate in ARC.
+object. They never participate in ARC themselves, but a struct can contain
+reference fields, and those are retained and released by the struct helpers
+described in Section 6.
 
 ### Dispatch
 - **Non-virtual / static calls** are emitted as direct `call`s to the mangled
@@ -267,6 +269,12 @@ This section records only how the subset is lowered.
   itable when the program declares interface methods, and a generated
   `__deinit`. Auto-properties lower to a backing field plus `get_` and `set_`
   methods.
+- **Structs** lower to an opaque `[HeapSize / 8 x i64]` value. Field `i` lives at
+  slot `i`, so nested structs keep their full size. Every struct gets
+  `<T>__copy` (value semantics: copy value fields, retain reference fields) and
+  `<T>__drop` (release reference fields); a class `__deinit` calls `__drop` for
+  each struct field. A struct local is zero-initialised and dropped at
+  `func.exit`, and a struct temporary is dropped at the end of its statement.
 - **`ref`, `out`, and `in`** lower to pointers to the slot. A reference-typed
   `ref` borrows the slot and does not transfer ownership.
 - **`is` and `as`** call `arc_is_instance`, which walks the `TypeInfo` base
@@ -336,9 +344,11 @@ and *scope* (just not built yet).
 - **Namespace identity.** Declarations from every file are flattened into one
   program, so two types with the same simple name collide.
 - **The BCL**, beyond a hard-coded `Console` shim.
-- **Struct code generation.** Structs are parsed and bound. The emitter skips
-  them, and copying a struct that contains a reference field is still an open
-  design question (Section 10).
+- **Struct features outside the current subset.** Arrays of structs, struct
+  return values, static struct fields, by-value struct parameters, properties
+  of struct type, printing a struct, `virtual`/`override` members on structs,
+  interfaces on structs, `using` a struct resource, and self-containing
+  structs are rejected as `ARC3001`.
 
 ---
 
@@ -361,10 +371,13 @@ and *scope* (just not built yet).
 | Auto-properties                                        | Implemented for instance properties; static ones produce invalid IR |
 | `is` / `as`                                            | Implemented                           |
 | Array covariance (runtime store check)                 | Implemented                           |
-| Structs (value types)                                  | Parsed and bound; code generation pending |
+| Structs (value types)                                  | Implemented with the restrictions in Section 7 |
 | `using` / `IDisposable` (deterministic `Dispose`)      | Implemented                           |
 | Interfaces (itable dispatch)                           | Implemented and verified              |
 | Diagnostics with codes (`ARC0001`…) and severities     | Implemented                           |
+| `ARC3001` unsupported-construct diagnostics            | Implemented (compiler and analyser)   |
+| `ARC3100` possible strong-cycle warning                 | Implemented (compiler and analyser)   |
+| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (62 xUnit cases)          |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Parsed and discarded (defect)         |
@@ -424,8 +437,8 @@ LLVM, currently x86-64-scoped, portable in design.
 ## 10. Open questions
 
 1. **Cycle policy.** *(Partly decided.)* A strong cycle still leaks, and the
-   programmer breaks it with `WeakReference<T>`. The compiler and a Roslyn
-   analyser will warn when strong fields can form one
+   programmer breaks it with `WeakReference<T>`. The compiler and the Roslyn
+   analyser warn with `ARC3100` when strong fields can form one
    ([Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project)).
    Whether a backup cycle collector is also required stays open; that work is
    section 2 of the roadmap.
@@ -439,10 +452,12 @@ LLVM, currently x86-64-scoped, portable in design.
    old non-standard `weak` keyword is retained only as a legacy alias. Remaining
    question: do we also want an `unowned` (non-zeroing) variant? Separately,
    `WeakReference<T>` locals are a parser defect to fix, not an open question.
-5. **Value types with reference fields.** Copying such a struct must retain its
-   reference fields, and releasing a copy must release them. Structs are parsed
-   and bound, and code generation is still pending. When that lands, do we
-   allow reference fields and accept the copy cost?
+5. **Value types with reference fields.** *(Resolved.)* Copying a struct
+   retains its reference fields, and dropping a copy releases them. The
+   remaining restrictions (arrays, returns, static fields, by-value parameters,
+   struct-typed properties, printing, `virtual`/`override`, interfaces, and
+   self-containment) are `ARC3001` and are tracked in the
+   [Roadmap](roadmap.md#1-language--close-the-feature-gap).
 6. **Exceptions vs. ARC unwinding.** If exceptions are in scope, every cleanup
    scope must also be a landing pad. Confirm exceptions are wanted before
    committing the emitter to DWARF/SEH unwinding.

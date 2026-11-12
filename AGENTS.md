@@ -86,9 +86,14 @@ how `tools/verify.ps1` captures both streams.
 | `src/Binding/Binder.cs` | Name and type resolution, layout, vtables, interface selectors, property expansion, conversions |
 | `src/Binding/BoundTree.cs` | Typed bound-tree nodes consumed by the emitter |
 | `src/Binding/DefiniteAssignment.cs` | Conservative read-before-assignment analysis (warning `ARC2100`) |
+| `src/Binding/CycleAnalysis.cs` | Strong-field graph and strongly connected components (warning `ARC3100`) |
 | `src/CodeGen/Emitter.cs` | Bound tree to LLVM IR, with every ARC operation woven in |
 | `runtime/arc_runtime.c` | Object header, retain and release, weak references, arrays, strings, type tests, console, accounting |
+| `analyzers/ArcSharp.Diagnostics/` | Shared `ARC3xxx` ids and messages, with no Roslyn dependency |
+| `analyzers/ArcSharp.Analyzers/` | Roslyn analyser for `ARC3001` and `ARC3100` |
+| `analyzers/ArcSharp.Analyzers.Tests/` | xUnit tests that run the analyser over in-memory compilations |
 | `samples/*.cs` | Test programs; each one is run by `tools/verify.ps1` |
+| `samples/negative/*.cs` | Programs that must be rejected with a specific diagnostic |
 | `tools/verify.ps1` | End-to-end verification harness |
 | `tools/build-windows.ps1` | Convenience script: build and compile one file |
 | `tools/env.ps1` | Environment variables and LLVM on `PATH` |
@@ -194,6 +199,7 @@ the symbols, and the runtime.
 |---|---|
 | Header (all heap objects) | `strong` at 0, `weak` at 8, `TypeInfo*` at 16 |
 | Class instance | Field `i` at `24 + 8 * i` (`FieldSymbol.ByteOffset`) |
+| Struct value | Field `i` at `8 * i`; size is `HeapSize` bytes (whole 8-byte slots) |
 | Array | Length at 24, element `TypeInfo*` at 32, elements at 40 in 8-byte slots |
 | String | Length at 24, UTF-8 bytes at 32, NUL-terminated |
 | `WeakReference<T>` | One weak slot at 24 |
@@ -248,7 +254,7 @@ warnings fail it only with `-Werror`.
 | `ARC0xxx` | Lexer | `ARC0001` (default), `ARC0002` unterminated literal, `ARC0003` unsupported operator |
 | `ARC1xxx` | Parser | `ARC1001` (default) |
 | `ARC2xxx` | Binder | `ARC2001` (default), `ARC2002` unknown name, `ARC2010` conversion, `ARC2011` invalid `using` resource, `ARC2050` no entry point, `ARC2100` definite assignment (warning) |
-| `ARC3xxx` | Reserved | Not emitted yet. Held for the shared subset and ARC-hazard rules in `docs/roadmap.md` section 7 (`ARC3001` unsupported construct, `ARC3100` possible strong cycle, `ARC3200` ARC/CLR difference, `ARC3300` threads). Do not allocate these for other errors. |
+| `ARC3xxx` | Shared catalogue | `ARC3001` unsupported construct (error), `ARC3100` possible strong cycle (warning). `ARC3200` and `ARC3300` are reserved in the catalogue for planned rules; do not allocate `ARC3xxx` for other errors. |
 
 Never renumber or reuse an existing code. A new kind of error gets a new code
 in the range for its stage. Binder diagnostics report column 0, and
@@ -257,16 +263,21 @@ because bound nodes do not carry source positions.
 
 ## Testing
 
-`tools/verify.ps1` is the only test gate. There is no unit test project and no
-CI yet. The harness builds the compiler and compiles every sample with clang.
-It runs each executable and checks two things:
+`tools/verify.ps1` is the only test gate. There is no CI yet. The harness builds
+the compiler and compiles every sample with clang. It runs each executable and
+checks two things:
 
 1. The program's stdout contains an expected substring.
 2. The `live=` count in the `[arc]` line equals the expected value.
 
+It also compiles the must-fail samples and checks the expected diagnostic code,
+checks that `ARC3100` appears for the leaking cycle samples and not for the
+broken ones, and runs the analyser's xUnit project with `dotnet test`.
+
 Run it after every change to the compiler or the runtime. All samples must
-pass. `cycle_strong` is expected to report `live=2`; that leak is deliberate,
-and it documents that ARC cannot reclaim a strong cycle.
+pass. `cycle_strong` and `cycle_struct` are expected to report `live=2`; those
+leaks are deliberate, and they document that ARC cannot reclaim a strong cycle,
+including one that runs through a struct field.
 
 ### Adding a sample
 
@@ -368,19 +379,23 @@ Do not assume that these work. Each is unimplemented or deliberately limited:
 
 - Generics (`Name<T>` is parsed only to recognise `WeakReference<T>`)
 - Exceptions (`try`, `catch`, `finally`)
-- Struct code generation (structs are parsed and bound only)
+- Struct arrays, struct return values, static struct fields, by-value struct
+  parameters, struct-typed properties, printing a struct, `virtual`/`override`
+  members on structs, interfaces on structs, and self-containing structs (all
+  `ARC3001`)
 - Enums, delegates, events, and indexers
 - Lambdas, closures, `async`, and `await`
-- Bitwise operators: a single `&` or `|` is lexer error `ARC0003`
+- Bitwise and shift operators: a single `&` or `|`, and `<<` or `>>`, are lexer
+  error `ARC0003`
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, and `WeakReference<T>`
 - Threads, which the non-atomic refcounts do not support
 
-A Roslyn analyser that flags this list, and possible strong cycles, from an
-ordinary `dotnet build` is planned in `docs/roadmap.md` section 7. It does not
-replace compiler diagnostics. The compiler has to report the same rules,
-because the analyser is optional. `ARC3xxx` is reserved for that catalogue.
+The Roslyn analyser in `analyzers/ArcSharp.Analyzers` flags the unsupported
+constructs and possible strong cycles from an ordinary `dotnet build`. It does
+not replace compiler diagnostics. The compiler has to report the same rules,
+because the analyser is optional. `ARC3xxx` is the shared catalogue.
 
 The defects found outside this list, such as ignored field initialisers and
 the `bool` argument mismatch, are recorded in the known-issues table of

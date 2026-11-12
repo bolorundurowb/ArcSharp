@@ -14,6 +14,12 @@ Objects of class types, strings, arrays, and `WeakReference<T>` objects live on
 the heap and are reference counted. Values of `int`, `bool`, `double`, and the
 other numeric types are not; they are copied, and they never affect a count.
 
+Structs are value types as well. A struct value lives inline in the local,
+field, or parameter that holds it, and copying it copies its fields. If a
+struct contains a reference field, the copy retains the target and the original
+value keeps its own reference. The struct itself has no reference count; only
+the objects its fields point at are counted.
+
 A **strong reference** keeps its target alive. Every reference-typed local,
 parameter, field, static field, and array element is a strong reference.
 
@@ -32,6 +38,10 @@ The runtime releases a strong reference in these situations:
 - **The owner dies.** When an object is destroyed, it releases every object its
   fields point at, and an array releases every element. Destruction therefore
   cascades through a tree of objects.
+- **A struct value is overwritten or goes out of scope.** Overwriting a struct
+  releases the reference fields of the old value before copying the new one. A
+  struct local is dropped when the method returns, and a struct temporary at the
+  end of its statement.
 - **A temporary is finished with.** An object created inside an expression and
   not stored anywhere, such as an intermediate string in `"a" + b + "c"`, is
   released at the end of the statement.
@@ -84,8 +94,9 @@ first object stays in memory until the garbage collector happens to run. Under
 ArcSharp the answer is the same every time.
 
 ArcSharp has no user-defined destructors or finalisers yet. The runtime
-generates a destructor for each class that releases its fields, and that is
-the only code that runs when an object dies.
+generates a destructor for each class that releases its reference fields and
+drops its struct fields, and that is the only code that runs when an object
+dies.
 
 ## Why cycles leak
 
@@ -246,8 +257,11 @@ Every program prints its accounting line when `Main` returns:
 2. Make the back-reference a `WeakReference<T>`.
 3. Run the program again and check that `live=0`.
 
-The compiler does not warn about possible cycles yet. A warning, `ARC3100`, is
-planned in [Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project).
+The compiler warns about possible cycles as `ARC3100` when a set of classes can
+reach each other through strong fields. The warning is about declared types,
+not a particular object graph, so a tree or a singly linked list warns too. See
+[Diagnostics](diagnostics.md#arc3100) and
+[Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project).
 
 Static fields are a special case. An object held by a static field is still
 alive when `Main` returns, so it counts towards `live`.

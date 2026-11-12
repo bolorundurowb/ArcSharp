@@ -30,7 +30,7 @@ Codes are never renumbered or reused. A new kind of problem gets a new code.
 | `ARC0xxx` | Lexer: reading characters into tokens |
 | `ARC1xxx` | Parser: reading tokens into declarations, statements, and expressions |
 | `ARC2xxx` | Binder: names, types, and conversions |
-| `ARC3xxx` | Reserved for the planned unsupported-construct and ARC-hazard rules |
+| `ARC3xxx` | Shared catalogue: unsupported constructs and ARC hazards (compiler and analyser) |
 
 ## Lexer
 
@@ -64,14 +64,14 @@ names what it expected and what it found:
 
 | Message | Common cause |
 |---|---|
-| `expected type declaration, found Identifier` | A top-level statement, or a type modifier such as `sealed`, `partial`, or `record` |
-| `expected type, found Assign` | An expression-bodied member (`=>`) |
-| `expected Identifier but found IntKw` (or another type keyword) | A member modifier such as `readonly` or `const` |
-| `unexpected token ... in expression` | An unsupported operator such as `++` or `?:`, a cast to `byte` or `short`, or a `foreach` loop |
+| `expected type declaration, found Identifier` | A top-level statement |
+| `unexpected token ... in expression` | An unsupported operator such as `++` or `?:`, or a cast to `byte` or `short` |
 | `expected Semicolon but found ...` | Often a follow-on error from one of the above |
 
 One mistake often produces several `ARC1001` errors in a row. Fix the first
-one and compile again.
+one and compile again. Unsupported statements, modifiers, and expression bodies
+are reported as `ARC3001` instead; a construct that still produces a confusing
+`ARC1001` is a gap in that coverage.
 
 ## Binder
 
@@ -113,10 +113,12 @@ problem. The most common messages are:
 **Error. Unknown name.** A local, parameter, field, or type name could not be
 found.
 
-This code also appears for unsupported statements that look like names. For
-example, `break;` is reported as `unknown name 'break'`, and a local of type
-`WeakReference<T>` is reported as `unknown name 'WeakReference'`. See
-[Known issues](language-reference.md#known-issues).
+This code also appears for an unsupported construct that the parser or binder
+has not recognised as one. If a construct from the
+[Language reference](language-reference.md#not-supported) reports `ARC2002`
+instead of `ARC3001`, that is a gap in the unsupported-construct coverage. A
+local of type `WeakReference<T>` is still reported this way; keep the weak
+reference in a field. See [Known issues](language-reference.md#known-issues).
 
 ### ARC2010
 
@@ -145,7 +147,7 @@ not meet the cleanup contract: the compiler needs a parameterless instance
 |---|---|
 | `type 'T' used in 'using' has no parameterless 'void Dispose()' method` | The resource type has no instance `Dispose()` method, or its `Dispose` is `static`. `IDisposable` is structural: implementing the interface is not required, but the method must exist. |
 | `interface 'I' has no parameterless 'Dispose' method` | The interface-typed resource does not declare `Dispose`. |
-| `type 'T' used in 'using' must be a reference type` | A value type cannot be a resource yet, because struct code generation is not implemented. |
+| `type 'T' used in 'using' must be a reference type` | A struct cannot be a `using` resource yet. |
 | `'using' resource must have an initializer` | `using (Foo x)` without `= ...`. |
 
 ### ARC2050
@@ -163,17 +165,59 @@ reading it. Give the local an initial value where you declare it.
 
 The line number is the line of the method that contains the read.
 
-## Reserved: ARC3xxx
+## Shared ARC3xxx catalogue
 
-These codes are reserved for rules that are planned but not yet reported. They
-are described in [Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project).
+These codes are shared by the compiler and the Roslyn analyser in
+`analyzers/ArcSharp.Analyzers`. The ids, titles, and cycle messages live in
+`analyzers/ArcSharp.Diagnostics`, which both reference, so the two tools cannot
+drift apart. The analyser is optional: the compiler reports every rule itself.
 
-| Code | Planned rule |
-|---|---|
-| `ARC3001` | Unsupported construct, such as generics, exceptions, or lambdas |
-| `ARC3100` | Classes whose strong fields can form a reference cycle |
-| `ARC3200` | Code whose behaviour differs between ARC and the .NET garbage collector |
-| `ARC3300` | Use of threads |
+### ARC3001
+
+**Error. Construct is not supported by ArcSharp.** The lexer, parser, or binder
+recognised valid C# that the compiler cannot lower, and reports it instead of
+silently dropping it. The message names the construct.
+
+The rule covers generics other than `WeakReference<T>`, `try`/`catch`/`finally`,
+`throw`, `lock`, `foreach`, `switch`, `break`, `continue`, `do`/`while`, `goto`,
+lambdas, local functions, `async`/`await`, `yield`, LINQ, pattern matching,
+interpolated strings, `default`, `checked`/`unchecked`, top-level statements,
+attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,
+`params`, optional and named arguments, `base.` access, and the struct
+restrictions listed in the [Language reference](language-reference.md#structs).
+Bitwise and shift operators are lexer error `ARC0003`.
+
+The negative samples under `samples/negative/` exercise this rule.
+`tools/verify.ps1` checks that each one fails with the expected code.
+
+### ARC3100
+
+**Warning. Possible strong reference cycle.** A set of classes can reach each
+other through strong fields, or one class has a strong field of its own type.
+ARC cannot reclaim such a cycle, so the instances leak unless a back-edge is
+changed to `WeakReference<T>` or the legacy `weak` modifier.
+
+The analysis looks at declared field types, not at an object graph. It includes
+arrays of a class, static fields, and class references reached through a struct
+field. It also warns on a binary tree or a singly linked list, which does not
+leak unless an instance is later wired into a loop: that is the documented
+false positive. Suppress it with `#pragma warning disable ARC3100` or
+`[SuppressMessage]` when the cycle is intentional or impossible.
+
+`cycle_strong` and `cycle_struct` warn; `cycle_weak` and `cycle_weakref` do not.
+
+### ARC3200 (reserved)
+
+**Info, planned.** Code whose behaviour differs between ARC and the .NET garbage
+collector: `GC.Collect`, `GC.KeepAlive`, finalisers that assume a collector, and
+`TryGetTarget` used as if it waited for a collection. The id is reserved in the
+shared catalogue but is not reported yet.
+
+### ARC3300 (reserved)
+
+**Warning, planned.** Threads and other cross-thread sharing. Reference counts
+are non-atomic, so such code is unsound rather than merely unimplemented. The
+id is reserved in the shared catalogue but is not reported yet.
 
 ## Errors from clang
 

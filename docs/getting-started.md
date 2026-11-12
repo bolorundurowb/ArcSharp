@@ -144,9 +144,11 @@ powershell -ExecutionPolicy Bypass -File tools\verify.ps1
 ```
 
 The harness builds the compiler, compiles every program in `samples/`, runs
-each one, and checks both its output and its `live=` count. It ends with a line
-such as `18 passed, 0 failed`. See [Verification](verification.md) for what
-each sample tests.
+each one, and checks both its output and its `live=` count. It also compiles
+the programs under `samples/negative/`, checks the `ARC3100` cycle warnings,
+and runs the analyser unit tests. It ends with a line such as
+`39 passed, 0 failed`. See [Verification](verification.md) for what each sample
+tests.
 
 ## Next steps
 

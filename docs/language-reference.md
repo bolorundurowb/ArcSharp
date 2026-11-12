@@ -57,8 +57,9 @@ Integer arithmetic wraps on overflow, as in an `unchecked` context. There are
 no `checked` contexts.
 
 Value types never live on the heap on their own and never take part in
-reference counting. `decimal`, `enum`, and nullable value types (`int?`) are not
-supported.
+reference counting. Struct values are stored inline in the local, field, or
+parameter that holds them. `decimal`, `enum`, and nullable value types
+(`int?`) are not supported.
 
 ### Reference types
 
@@ -75,8 +76,51 @@ Every reference-type variable, field, and array element starts as `null`.
 
 ### Structs
 
-`struct` declarations are parsed and type-checked, but no code is generated for
-them. Do not use structs yet.
+A struct is a value type you declare. Struct values are stored inline: in a
+local, in a field of a class or another struct, or behind a `ref`, `out`, or
+`in` parameter. Assigning a struct copies it, and the copy owns its own
+reference fields.
+
+```csharp
+struct Point
+{
+    public int x;
+    public int y;
+
+    public Point(int x, int y) { this.x = x; this.y = y; }
+    public int Sum() { return x + y; }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Point a = new Point(2, 3);
+        Point b = a;              // b is a copy
+        b.x = 10;                 // a.x is still 2
+        Console.WriteLine(a.Sum());
+    }
+}
+```
+
+Supported:
+
+- Instance fields of value, reference, struct, and `WeakReference<T>` type.
+- Constructors, instance methods, and `ref`/`out`/`in` parameters.
+- Struct locals, struct fields inside classes and other structs, and struct
+  assignment.
+- Copying a struct retains its reference fields; dropping a struct value
+  releases them.
+
+Not supported yet, each reported as `ARC3001`:
+
+- Arrays of structs, struct return values, static struct fields, and by-value
+  struct parameters.
+- Properties whose type is a struct, and printing a struct value with
+  `Console.Write` or `Console.WriteLine`.
+- `virtual` or `override` members on a struct, and interfaces on a struct.
+- A struct that contains itself, directly or through another struct.
+- `using` a struct resource.
 
 ## Classes, interfaces, and members
 
@@ -281,19 +325,19 @@ and priority for each one.
 
 - Generics, except `WeakReference<T>`.
 - Exceptions: `try`, `catch`, `finally`, and `throw`.
-- Struct code generation.
 - Enums, delegates, events, indexers, and records.
 - Lambdas, closures, local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
   counts are not atomic.
 - Reflection, `dynamic`, attributes, `unsafe` code, and pointers.
+- The struct restrictions listed under [Structs](#structs).
 
-The compiler does not always report an unsupported feature clearly. Some
-constructs produce a confusing parse error, such as `unknown name 'break'` or
-`expected type declaration, found Identifier` for `sealed class`. Dedicated
-diagnostics for unsupported constructs are planned as `ARC3001`
-([Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project)).
+Unsupported constructs are reported as `ARC3001` by the compiler, with a
+message that names the construct. The same rule is available in an ordinary
+`dotnet build` through the Roslyn analyser in `analyzers/ArcSharp.Analyzers`.
+A construct that is still reported as an ordinary parse or name error is a
+bug; see [Diagnostics](diagnostics.md).
 
 ## Differences from .NET
 

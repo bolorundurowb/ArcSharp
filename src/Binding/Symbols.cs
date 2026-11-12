@@ -33,6 +33,7 @@ public sealed class TypeSymbol
     public StructDecl? StructSyntax;
     public InterfaceDecl? InterfaceSyntax;
     public bool LayoutDone;
+    public bool LayoutInProgress;
 
     // array
     public TypeSymbol? ElementType;
@@ -59,7 +60,12 @@ public sealed class TypeSymbol
             _ => "i32"
         },
         TypeKind.Void => "void",
-        TypeKind.Struct => "%struct." + Name,
+        // A struct value is an opaque blob of one 8-byte slot per field, so
+        // every field sits at a known 8*i byte offset without declaring an
+        // LLVM struct type (whose packing LLVM would choose for us). The size
+        // comes from the binder's layout because a nested struct field spans
+        // more than one slot.
+        TypeKind.Struct => $"[{HeapSize / 8} x i64]",
         _ => "i8*" // all reference types are opaque pointers
     };
 
@@ -68,8 +74,13 @@ public sealed class TypeSymbol
     public bool IsInteger => IsSignedInteger || IsUnsignedInteger || Name == "char";
     public bool IsFloat => Kind == TypeKind.Primitive && Name is "float" or "double";
 
-    // size of one storage slot for this type, in bytes (uniform 8-byte model)
-    public int SlotSize => Kind == TypeKind.Struct ? InstanceFields.Count * 8 : 8;
+    // size of one storage slot for this type, in bytes (uniform 8-byte model);
+    // a struct value occupies as many slots as its laid-out size
+    public int SlotSize => Kind == TypeKind.Struct ? HeapSize : 8;
+
+    // total heap size of a class instance (24-byte header + field slots), or
+    // the byte size of a struct value; computed by the binder's layout
+    public int HeapSize;
 
     public bool IsSubclassOf(TypeSymbol other)
     {
@@ -117,8 +128,9 @@ public sealed class FieldSymbol
 
     public string MangledStatic => $"@{Owner.Name}__sf__{Name}";
 
-    // byte offset of this field within an instance (after the 24-byte header)
-    public int ByteOffset => 24 + Index * 8;
+    // byte offset within the owner, set by the binder's layout: 24 + running
+    // total for class instances (after the header), 8 * i for struct values
+    public int ByteOffset;
 }
 
 public sealed class ParamSymbol

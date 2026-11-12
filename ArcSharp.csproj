@@ -15,6 +15,12 @@
   <ItemGroup>
     <Compile Remove="samples/**/*.cs" />
     <None Include="samples/**/*.cs" />
+    <Compile Remove="analyzers/**/*.cs" />
+    <None Include="analyzers/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="analyzers/ArcSharp.Diagnostics/ArcSharp.Diagnostics.csproj" />
   </ItemGroup>
 
 </Project>

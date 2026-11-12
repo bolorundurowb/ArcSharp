@@ -162,6 +162,13 @@ public static class DefiniteAssignment
                     {
                         assigned.Add(tl.Symbol.Id);
                     }
+                    else if (a.Target is BoundFieldAccess { Receiver: BoundLocal rl2, Receiver.Type.Kind: TypeKind.Struct })
+                    {
+                        // Writing a field of a struct value assigns the whole
+                        // value: the storage starts zeroed, so later reads of
+                        // it are safe and must not warn.
+                        assigned.Add(rl2.Symbol.Id);
+                    }
                     else
                     {
                         VisitExpr(a.Target, assigned);

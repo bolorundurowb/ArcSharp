@@ -1,3 +1,5 @@
+using ArcSharp.Diagnostics;
+
 namespace ArcSharp.Lexing;
 
 public enum TokenKind
@@ -57,6 +59,10 @@ public enum TokenKind
     UIntKw,
     ULongKw,
     VarKw,
+    SealedKw,
+    PartialKw,
+    ReadonlyKw,
+    ConstKw,
 
     // punctuation
     OpenBrace,
@@ -87,6 +93,7 @@ public enum TokenKind
     Bang,
     AmpAmp,
     PipePipe,
+    FatArrow,
     PlusEquals,
     MinusEquals,
     IsKw,
@@ -159,6 +166,10 @@ public sealed class Lexer(string text)
         ["as"] = TokenKind.AsKw,
         ["using"] = TokenKind.UsingKw,
         ["namespace"] = TokenKind.NamespaceKw,
+        ["sealed"] = TokenKind.SealedKw,
+        ["partial"] = TokenKind.PartialKw,
+        ["readonly"] = TokenKind.ReadonlyKw,
+        ["const"] = TokenKind.ConstKw,
         ["void"] = TokenKind.VoidKw,
         ["int"] = TokenKind.IntKw,
         ["long"] = TokenKind.LongKw,
@@ -492,6 +503,16 @@ public sealed class Lexer(string text)
                     kind = TokenKind.EqualsEquals;
                     len = 2;
                 }
+                else if (n == '>')
+                {
+                    // A lambda body. Without this token the source parses as an
+                    // assignment of a comparison and compiles into a wrong
+                    // program with no diagnostic at all.
+                    Report(line, col, "lambdas ('=>') are not supported", DiagnosticCatalog.UnsupportedConstructId);
+                    Advance();
+                    Advance();
+                    return new Token(TokenKind.Bad, "=>", start, line, col);
+                }
                 else
                 {
                     kind = TokenKind.Assign;
@@ -511,6 +532,14 @@ public sealed class Lexer(string text)
 
                 break;
             case '<':
+                if (n == '<')
+                {
+                    Report(line, col, "shift operator '<<' not supported", "ARC0003");
+                    Advance();
+                    Advance();
+                    return new Token(TokenKind.Bad, "<<", start, line, col);
+                }
+
                 if (n == '=')
                 {
                     kind = TokenKind.LessEquals;
@@ -523,6 +552,14 @@ public sealed class Lexer(string text)
 
                 break;
             case '>':
+                if (n == '>')
+                {
+                    Report(line, col, "shift operator '>>' not supported", "ARC0003");
+                    Advance();
+                    Advance();
+                    return new Token(TokenKind.Bad, ">>", start, line, col);
+                }
+
                 if (n == '=')
                 {
                     kind = TokenKind.GreaterEquals;

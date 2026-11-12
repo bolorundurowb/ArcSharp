@@ -1,3 +1,4 @@
+using ArcSharp.Diagnostics;
 using ArcSharp.Lexing;
 
 namespace ArcSharp.Syntax;
@@ -148,6 +149,15 @@ public sealed class Parser(List<Token> tokens)
         Expect(TokenKind.CloseBrace);
     }
 
+    // Constructs recognised at type-declaration or member position.
+    private static readonly Dictionary<string, string> UnsupportedTypeWords = new()
+    {
+        ["enum"] = "enums are not supported: use named constants or plain 'int' fields",
+        ["delegate"] = "delegates are not supported",
+        ["event"] = "events are not supported",
+        ["record"] = "records are not supported",
+    };
+
     // ---- Type declarations -------------------------------------------------
     private TypeDecl? ParseTypeDecl()
     {
@@ -166,6 +176,18 @@ public sealed class Parser(List<Token> tokens)
                 isAbstract = true;
                 Advance();
                 continue;
+            }
+
+            if (At(TokenKind.SealedKw) || At(TokenKind.PartialKw) || At(TokenKind.ReadonlyKw))
+            {
+                Report($"'{Current.Text}' is not supported as a type modifier", DiagnosticCatalog.UnsupportedConstructId);
+                Advance();
+                continue;
+            }
+
+            if (Current.Kind == TokenKind.Identifier && UnsupportedTypeWords.ContainsKey(Current.Text))
+            {
+                Report(UnsupportedTypeWords[Current.Text], DiagnosticCatalog.UnsupportedConstructId);
             }
 
             break;
@@ -225,6 +247,7 @@ public sealed class Parser(List<Token> tokens)
         {
             do
             {
+                Report("interfaces are not supported on structs", DiagnosticCatalog.UnsupportedConstructId);
                 Expect(TokenKind.Identifier);
             } while (Accept(TokenKind.Comma));
         }
@@ -321,6 +344,22 @@ public sealed class Parser(List<Token> tokens)
                 continue;
             }
 
+            if (At(TokenKind.SealedKw) || At(TokenKind.PartialKw) || At(TokenKind.ReadonlyKw) || At(TokenKind.ConstKw))
+            {
+                Report(
+                    At(TokenKind.ConstKw)
+                        ? "constants are not supported: use a 'static' field"
+                        : $"'{Current.Text}' is not supported as a member modifier",
+                    DiagnosticCatalog.UnsupportedConstructId);
+                Advance();
+                continue;
+            }
+
+            if (Current.Kind == TokenKind.Identifier && UnsupportedTypeWords.ContainsKey(Current.Text))
+            {
+                Report(UnsupportedTypeWords[Current.Text], DiagnosticCatalog.UnsupportedConstructId);
+            }
+
             break;
         }
 
@@ -353,6 +392,18 @@ public sealed class Parser(List<Token> tokens)
 
         var type = ParseType();
         var name = Expect(TokenKind.Identifier).Text;
+
+        if (At(TokenKind.FatArrow))
+        {
+            Report("expression-bodied members are not supported: use a block body", DiagnosticCatalog.UnsupportedConstructId);
+            while (!At(TokenKind.Semicolon) && !At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
+            {
+                Advance();
+            }
+
+            Accept(TokenKind.Semicolon);
+            return;
+        }
 
         if (At(TokenKind.OpenParen))
         {
@@ -425,12 +476,24 @@ public sealed class Parser(List<Token> tokens)
         {
             do
             {
+                if (At(TokenKind.Identifier) && Current.Text == "params")
+                {
+                    Report("parameter arrays are not supported", DiagnosticCatalog.UnsupportedConstructId);
+                    Advance();
+                }
+
                 RefKind rk = RefKind.None;
                 if (Accept(TokenKind.RefKw)) rk = RefKind.Ref;
                 else if (Accept(TokenKind.OutKw)) rk = RefKind.Out;
                 else if (Accept(TokenKind.InKw)) rk = RefKind.In;
                 var t = ParseType();
                 var n = Expect(TokenKind.Identifier).Text;
+                if (Accept(TokenKind.Assign))
+                {
+                    Report("optional parameters are not supported", DiagnosticCatalog.UnsupportedConstructId);
+                    ParseExpression(); // consume the default value for recovery
+                }
+
                 into.Add(new ParameterSyntax { RefKind = rk, Type = t, Name = n, Line = t.Line });
             } while (Accept(TokenKind.Comma));
         }
@@ -516,8 +579,53 @@ public sealed class Parser(List<Token> tokens)
         return block;
     }
 
+    // Constructs that are valid C# but not part of the supported subset. They
+    // are recognised by their keyword spelling at statement position, which is
+    // where they otherwise fall into the expression parser and produce a
+    // confusing cascade (or, worse, are dropped silently).
+    private static readonly Dictionary<string, string> UnsupportedStatementWords = new()
+    {
+        ["break"] = "'break' is not supported: end a loop by making its condition false",
+        ["continue"] = "'continue' is not supported: restructure the loop with an 'if'",
+        ["goto"] = "'goto' is not supported",
+        ["do"] = "'do'/'while' loops are not supported: use 'while'",
+        ["foreach"] = "'foreach' is not supported: use a 'for' loop with an index",
+        ["switch"] = "'switch' is not supported: use 'if'/'else'",
+        ["try"] = "exceptions are not supported: 'try'/'catch'/'finally'",
+        ["catch"] = "exceptions are not supported: 'try'/'catch'/'finally'",
+        ["finally"] = "exceptions are not supported: 'try'/'catch'/'finally'",
+        ["throw"] = "'throw' is not supported: exceptions are not implemented",
+        ["lock"] = "'lock' is not supported: there are no threads",
+        ["yield"] = "'yield' is not supported: iterators are not implemented",
+        ["checked"] = "'checked' is not supported: arithmetic is always unchecked",
+        ["unchecked"] = "'unchecked' is not supported: arithmetic is always unchecked",
+        ["unsafe"] = "'unsafe' is not supported",
+        ["fixed"] = "'fixed' is not supported",
+        ["stackalloc"] = "'stackalloc' is not supported",
+    };
+
+    private static bool IsTypeStart(Token t) => t.Kind is TokenKind.IntKw or TokenKind.LongKw or TokenKind.BoolKw
+        or TokenKind.StringKw or TokenKind.CharKw or TokenKind.FloatKw or TokenKind.DoubleKw
+        or TokenKind.ByteKw or TokenKind.SByteKw or TokenKind.ShortKw or TokenKind.UShortKw
+        or TokenKind.UIntKw or TokenKind.ULongKw or TokenKind.VoidKw or TokenKind.Identifier;
+
     private Stmt ParseStatement()
     {
+        if (Current.Kind == TokenKind.Identifier &&
+            UnsupportedStatementWords.TryGetValue(Current.Text, out var msg))
+        {
+            Report(msg, DiagnosticCatalog.UnsupportedConstructId);
+        }
+        else if (Current.Kind == TokenKind.Identifier && Peek(1).Kind == TokenKind.Less)
+        {
+            Report("generics are not supported: only WeakReference<T> is recognised", DiagnosticCatalog.UnsupportedConstructId);
+        }
+        else if (IsTypeStart(Current) && Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.OpenParen)
+        {
+            // 'int F() { ... }' inside a method body is a local function
+            Report("local functions are not supported", DiagnosticCatalog.UnsupportedConstructId);
+        }
+
         return Current.Kind switch
         {
             TokenKind.OpenBrace => ParseBlock(),
@@ -930,6 +1038,13 @@ private List<Expr> ParseArgumentList()
             return new ByRefArgExpr { Kind = rk.Value, Target = tgt, Line = line };
         }
 
+        if (At(TokenKind.Identifier) && Peek(1).Kind == TokenKind.Colon)
+        {
+            Report("named arguments are not supported", DiagnosticCatalog.UnsupportedConstructId);
+            Advance(); // name
+            Advance(); // ':'
+        }
+
         return ParseExpression();
     }
 
@@ -1001,6 +1116,10 @@ private Expr ParsePrimary()
         case TokenKind.ThisKw:
             Advance();
             return new ThisExpr { Line = line };
+        case TokenKind.BaseKw:
+            Report("'base' member access is not supported: inherited members are called by name", DiagnosticCatalog.UnsupportedConstructId);
+            Advance();
+            return new LiteralExpr { Kind = LiteralKind.Null, Line = line };
         case TokenKind.Identifier:
         {
             var t = Advance();

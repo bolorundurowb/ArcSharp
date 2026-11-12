@@ -67,6 +67,8 @@ reclaimed.
 - Classes with single inheritance, interfaces, and `virtual`/`override` dispatch.
 - Constructors, instance and static methods and fields, and instance
   auto-properties.
+- Structs with value semantics, including reference fields, nested structs,
+  and structs inside classes.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
   `string`, plus single-dimensional arrays.
 - `ref`, `out`, and `in` parameters, and `is` and `as`.
@@ -75,7 +77,10 @@ reclaimed.
   (`IDisposable` is structural: any type with a `Dispose()` method qualifies).
 - Cycle breaking with the standard `System.WeakReference<T>`.
 - Several source files compiled into one program.
-- Diagnostics with stable codes, and a definite-assignment warning.
+- Diagnostics with stable codes, a definite-assignment warning, `ARC3001` for
+  unsupported constructs, and `ARC3100` for possible strong cycles.
+- A Roslyn analyser in `analyzers/ArcSharp.Analyzers` that reports the same
+  `ARC3001` and `ARC3100` rules inside an ordinary `dotnet build`.
 
 Generics, exceptions, `foreach`, `switch`, `++`, lambdas, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
@@ -84,10 +89,11 @@ has the full list, the differences from .NET, and the known issues.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 19 sample programs pass the test
-harness on Windows x64. The compiler can also emit IR for Linux x64, but that
-path is not tested. See [Verification](docs/verification.md) for the latest
-results and [Roadmap](docs/roadmap.md) for the plan.
+executable, with ARC accounting) works, and 21 sample programs pass the test
+harness on Windows x64. The harness also runs 13 must-fail diagnostics, four
+cycle checks, and 62 analyser unit tests. The compiler can also emit IR for
+Linux x64, but that path is not tested. See [Verification](docs/verification.md)
+for the latest results and [Roadmap](docs/roadmap.md) for the plan.
 
 ## Documentation
 
@@ -112,6 +118,7 @@ the compiler and runtime depend on.
 | `src/` | The compiler: lexing, syntax, binding, code generation, and the driver |
 | `runtime/` | `arc_runtime.c`, the object model and ARC primitives |
 | `samples/` | Test programs, each run by the harness |
+| `analyzers/` | The Roslyn analyser, the shared `ARC3xxx` catalogue, and their xUnit tests |
 | `tools/` | Build and verification scripts |
 | `docs/` | Documentation and the logo |
 

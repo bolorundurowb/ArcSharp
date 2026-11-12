@@ -18,7 +18,9 @@ stay installed alongside it.
 
 Read the first error; later ones are often caused by it. Each code is explained
 in [Diagnostics](diagnostics.md). A long run of `ARC1001` errors usually comes
-from one unsupported construct, such as `++`, `foreach`, `=>`, or `$"..."`.
+from one unsupported construct. Constructs the compiler recognises are reported
+as `ARC3001` instead, so look for that code first when the feature is listed in
+the [Language reference](language-reference.md#not-supported).
 
 ### `Unhandled exception. System.ComponentModel.Win32Exception ... 'llc'`
 

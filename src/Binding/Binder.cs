@@ -1,3 +1,4 @@
+using ArcSharp.Diagnostics;
 using ArcSharp.Lexing;
 using ArcSharp.Syntax;
 
@@ -190,6 +191,9 @@ public sealed class Binder
         // definite-assignment flow analysis (conservative; reports as warnings)
         DefiniteAssignment.Analyze(program, (line, msg) => Report(line, msg, "ARC2100", DiagnosticSeverity.Warning));
 
+        // possible-strong-cycle analysis over strong class fields (warning ARC3100)
+        CycleAnalysis.Analyze(program, (line, msg) => Report(line, msg, DiagnosticCatalog.PossibleStrongCycleId, DiagnosticSeverity.Warning));
+
         program.Entry = FindEntry(program.Types);
         program.Diagnostics.AddRange(Diagnostics);
         return program;
@@ -219,6 +223,11 @@ public sealed class Binder
         foreach (var pd in decl.Members.OfType<PropertyDecl>().ToList())
         {
             var propType = ResolveType(pd.Type);
+            if (propType.Kind == TypeKind.Struct)
+            {
+                Report(pd.Line, "auto-properties of struct type are not supported yet: use a public field", DiagnosticCatalog.UnsupportedConstructId);
+            }
+
             var propSym = new PropertySymbol
             {
                 Name = pd.Name, Type = propType, Owner = t, IsStatic = pd.IsStatic,
@@ -302,7 +311,15 @@ public sealed class Binder
             return;
         }
 
-        t.LayoutDone = true;
+        if (t.LayoutInProgress)
+        {
+            // A struct that (transitively) contains itself by value can never
+            // have a finite size.
+            Report(t.StructSyntax?.Line ?? 0, $"struct '{t.Name}' contains itself", DiagnosticCatalog.UnsupportedConstructId);
+            return;
+        }
+
+        t.LayoutInProgress = true;
 
         var decl = (TypeDecl?)t.ClassSyntax ?? (TypeDecl?)t.StructSyntax ?? t.InterfaceSyntax!;
 
@@ -314,7 +331,17 @@ public sealed class Binder
             t.Vtable.AddRange(t.BaseType.Vtable);
         }
 
+        // A struct-typed field needs the field type's layout for its slot size.
+        foreach (var ts in decl.Members.OfType<FieldDecl>().Select(fd => fd.Type))
+        {
+            if (_types.TryGetValue(ts.Name, out var found) && found.Kind == TypeKind.Struct)
+            {
+                LayoutType(found);
+            }
+        }
+
         // fields
+        var offset = t.BaseType != null ? t.BaseType.HeapSize : t.Kind == TypeKind.Struct ? 0 : 24;
         foreach (var fd in decl.Members.OfType<FieldDecl>())
         {
             var ft = ResolveType(fd.Type);
@@ -325,6 +352,11 @@ public sealed class Binder
                 Report(fd.Line, "'weak' may only be applied to reference-typed fields");
             }
 
+            if (fs.IsStatic && ft.Kind == TypeKind.Struct)
+            {
+                Report(fd.Line, "static struct fields are not supported", DiagnosticCatalog.UnsupportedConstructId);
+            }
+
             if (fs.IsStatic)
             {
                 t.StaticFields.Add(fs);
@@ -332,13 +364,24 @@ public sealed class Binder
             else
             {
                 fs.Index = t.InstanceFields.Count;
+                fs.ByteOffset = offset;
+                offset += ft.SlotSize;
                 t.InstanceFields.Add(fs);
             }
         }
 
+        t.HeapSize = offset;
+        t.LayoutInProgress = false;
+        t.LayoutDone = true;
+
         // methods
         foreach (var md in decl.Members.OfType<MethodDecl>())
         {
+            if (t.Kind == TypeKind.Struct && (md.IsVirtual || md.IsOverride))
+            {
+                Report(md.Line, "virtual members are not supported on structs", DiagnosticCatalog.UnsupportedConstructId);
+            }
+
             var m = new MethodSymbol
             {
                 Name = md.IsConstructor ? "<ctor>" : md.Name,
@@ -354,7 +397,19 @@ public sealed class Binder
             var pi = 0;
             foreach (var p in md.Parameters)
             {
-                m.Parameters.Add(new ParamSymbol { Name = p.Name, Type = ResolveType(p.Type), RefKind = p.RefKind, Index = pi++ });
+                var pt = ResolveType(p.Type);
+                if (pt.Kind == TypeKind.Struct && p.RefKind == RefKind.None)
+                {
+                    Report(md.Line,
+                        $"parameter '{p.Name}' of struct type '{pt}' must be passed with 'ref', 'out', or 'in'", DiagnosticCatalog.UnsupportedConstructId);
+                }
+
+                m.Parameters.Add(new ParamSymbol { Name = p.Name, Type = pt, RefKind = p.RefKind, Index = pi++ });
+            }
+
+            if (!md.IsConstructor && m.ReturnType.Kind == TypeKind.Struct)
+            {
+                Report(md.Line, "struct return values are not supported yet: write through an 'out' parameter or a field instead", DiagnosticCatalog.UnsupportedConstructId);
             }
 
             t.Methods.Add(m);
@@ -496,6 +551,12 @@ public sealed class Binder
             }
 
             return GetWeakRefType(elem);
+        }
+
+        if (ts.TypeArgs.Count > 0)
+        {
+            Report(ts.Line, $"generic type '{ts.Name}<{string.Join(", ", ts.TypeArgs)}>' is not supported: only WeakReference<T> is recognised", DiagnosticCatalog.UnsupportedConstructId);
+            return _error;
         }
 
         TypeSymbol baseT;
@@ -1216,7 +1277,13 @@ public sealed class Binder
             Report(line, "Console.Write/WriteLine takes 0 or 1 argument");
         }
 
-        return new BoundConsoleCall { Which = which, Argument = args[0], Type = _void };
+        if (args.Count > 0 && args[0].Type.Kind == TypeKind.Struct)
+        {
+            Report(line, "struct values cannot be printed: print their fields", DiagnosticCatalog.UnsupportedConstructId);
+            return Err();
+        }
+
+        return new BoundConsoleCall { Which = which, Argument = args.Count > 0 ? args[0] : null, Type = _void };
     }
 
     private BoundExpr BindNewObject(NewObjectExpr no)
@@ -1233,6 +1300,12 @@ public sealed class Binder
 
             var target = Convert(BindExpr(no.Arguments[0]), elem, no.Line);
             return new BoundWeakRefNew { Target = target, Type = wr };
+        }
+
+        if (no.TypeArgs.Count > 0 && no.TypeName != "WeakReference")
+        {
+            Report(no.Line, $"generic type '{no.TypeName}<{string.Join(", ", no.TypeArgs)}>' is not supported: only WeakReference<T> is recognised", DiagnosticCatalog.UnsupportedConstructId);
+            return Err();
         }
 
         if (!_types.TryGetValue(no.TypeName, out var t) || t.Kind is not (TypeKind.Class or TypeKind.Struct))
@@ -1261,6 +1334,10 @@ public sealed class Binder
     private BoundExpr BindNewArray(NewArrayExpr na)
     {
         var elem = ResolveType(na.ElementType);
+        if (elem.Kind == TypeKind.Struct)
+        {
+            Report(na.Line, "arrays of struct element type are not supported", DiagnosticCatalog.UnsupportedConstructId);
+        }
         var key = elem.Name + "[]";
         if (!_arrayCache.TryGetValue(key, out var arr))
         {

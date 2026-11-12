@@ -30,6 +30,7 @@ before you rely on it for anything beyond experiments.
 | [Architecture](architecture.md) | The compiler pipeline, the object layout, the ARC ownership rules, and open design questions |
 | [Roadmap](roadmap.md) | The plan from proof of concept to a usable toolchain, with priorities |
 | [Verification](verification.md) | The test harness and the results of the latest recorded run |
+| [`analyzers/`](../analyzers/) | The Roslyn analyser, the shared `ARC3xxx` catalogue, and their xUnit tests |
 | [`AGENTS.md`](../AGENTS.md) | Contributor guide: the invariants you must preserve and the change checklist |
 
 ## Logo

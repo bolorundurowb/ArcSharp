@@ -17,6 +17,8 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
     private List<string> _entry = [];
     private List<string> _body = [];
     private readonly List<string> _stmtTemps = [];
+    // Struct temporaries live in allocas and need __drop, not arc_release.
+    private readonly List<(TypeSymbol Type, string Addr)> _stmtStructTemps = [];
     private readonly List<BoundUsing> _usingScopes = []; // open using statements, innermost last
     private int _tmp, _lbl, _strId;
     private bool _terminated;
@@ -65,6 +67,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     public string Emit()
     {
+        _genTmp = 0;
         _mod.AppendLine("; ArcSharp generated module");
         _mod.AppendLine($"target triple = \"{_triple}\"");
         _mod.AppendLine();
@@ -80,6 +83,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             if (t.Kind == TypeKind.Class)
             {
                 EmitTypeInfo(t, fns);
+            }
+            else if (t.Kind == TypeKind.Struct)
+            {
+                EmitStructHelpers(t, fns);
             }
         }
 
@@ -147,7 +154,9 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
     }
 
-    private static string ZeroOf(TypeSymbol t) => t.IsReferenceType ? "null" : (IsFloatType(t) ? "0.0" : "0");
+    private static string ZeroOf(TypeSymbol t) =>
+        t.Kind == TypeKind.Struct ? "zeroinitializer" : t.IsReferenceType ? "null" : IsFloatType(t) ? "0.0" : "0";
+
     private static bool IsFloatType(TypeSymbol t) => t.LlvmType is "float" or "double";
 
     private void EmitTypeInfo(TypeSymbol t, StringBuilder fns)
@@ -181,7 +190,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             _mod.AppendLine($"@{t.Name}__itable = private constant [{s} x i8*] [ {string.Join(", ", entries)} ]");
         }
 
-        var size = 24 + t.InstanceFields.Count * 8;
+        var size = t.HeapSize;
         var vtExpr = k > 0
             ? $"i8** getelementptr ([{k} x i8*], [{k} x i8*]* @{t.Name}__vtable, i64 0, i64 0)"
             : "i8** null";
@@ -201,27 +210,148 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         fns.AppendLine("entry:");
         foreach (var f in t.InstanceFields)
         {
-            if (!f.Type.IsReferenceType)
-            {
-                continue;
-            }
+            EmitFieldTeardown(fns, $"%self", f);
+        }
 
-            fns.AppendLine($"  %p{f.Index} = getelementptr i8, i8* %self, i64 {f.ByteOffset}");
-            fns.AppendLine($"  %pp{f.Index} = bitcast i8* %p{f.Index} to i8**");
-            if (f.IsWeak)
+        fns.AppendLine("  ret void");
+        fns.AppendLine("}");
+        fns.AppendLine();
+    }
+
+    // Teardown of one field inside a generated function: reference fields are
+    // released, weak fields zeroed, struct fields dropped recursively.
+    private void EmitFieldTeardown(StringBuilder into, string selfPtr, FieldSymbol f)
+    {
+        var slot = FieldAddrFromBytes(into, selfPtr, f);
+        if (f.Type.Kind == TypeKind.Struct)
+        {
+            into.AppendLine($"  call void @{f.Type.Name}__drop({f.Type.LlvmType}* {slot})");
+            return;
+        }
+
+        if (!f.Type.IsReferenceType)
+        {
+            return;
+        }
+
+        if (f.IsWeak)
+        {
+            into.AppendLine($"  call void @arc_store_weak(i8** {slot}, i8* null)");
+            return;
+        }
+
+        var n = NextGen();
+        into.AppendLine($"  %v{n} = load i8*, i8** {slot}");
+        into.AppendLine($"  call void @arc_release(i8* %v{n})");
+    }
+
+    // Unique names for generated (non-_body) code, which bypasses Inst.
+    private int _genTmp;
+    private int NextGen() => ++_genTmp;
+
+    // Byte-offset field address in generated (non-_body) code. Classes address
+    // fields by byte offset; structs are blobs of one 8-byte slot per field.
+    // Every access is emitted as its own instruction so that the result is a
+    // plain local value, usable as any pointer operand.
+    private string FieldAddrFromBytes(StringBuilder into, string basePtr, FieldSymbol f)
+    {
+        var n = NextGen();
+        if (f.Owner.Kind == TypeKind.Struct)
+        {
+            into.AppendLine($"  %gp{n} = getelementptr {f.Owner.LlvmType}, {f.Owner.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+            into.AppendLine($"  %fp{n} = bitcast i64* %gp{n} to {f.Type.LlvmType}*");
+            return $"%fp{n}";
+        }
+
+        into.AppendLine($"  %gp{n} = getelementptr i8, i8* {basePtr}, i64 {f.ByteOffset}");
+        into.AppendLine($"  %fp{n} = bitcast i8* %gp{n} to {f.Type.LlvmType}*");
+        return $"%fp{n}";
+    }
+
+    // Per-struct helpers. __copy gives value semantics: value fields are
+    // copied byte-wise, each strong reference field is stored with
+    // arc_store_strong (retains the new value, releases the old one), weak
+    // fields with arc_store_weak, and nested struct fields copy recursively.
+    // __drop releases the reference fields of a struct value whose storage is
+    // about to be reused or abandoned. Neither ever frees the struct itself:
+    // structs are inline values in locals, fields, or parameters.
+    private void EmitStructHelpers(TypeSymbol t, StringBuilder fns)
+    {
+        var ty = t.LlvmType;
+
+        fns.AppendLine($"define void @{t.Name}__copy({ty}* %dst, {ty}* %src) {{");
+        foreach (var f in t.InstanceFields)
+        {
+            var dst = FieldAddrFromGep(fns, "%dst", t, f);
+            var src = FieldAddrFromGep(fns, "%src", t, f);
+            var n = NextGen();
+            switch (f.Type.Kind)
             {
-                fns.AppendLine($"  call void @arc_store_weak(i8** %pp{f.Index}, i8* null)");
-            }
-            else
-            {
-                fns.AppendLine($"  %v{f.Index} = load i8*, i8** %pp{f.Index}");
-                fns.AppendLine($"  call void @arc_release(i8* %v{f.Index})");
+                case TypeKind.Struct:
+                    fns.AppendLine($"  call void @{f.Type.Name}__copy({f.Type.LlvmType}* {dst}, {f.Type.LlvmType}* {src})");
+                    break;
+                case TypeKind.Primitive when !f.IsWeak:
+                {
+                    fns.AppendLine($"  %v{n} = load {f.Type.LlvmType}, {f.Type.LlvmType}* {src}");
+                    fns.AppendLine($"  store {f.Type.LlvmType} %v{n}, {f.Type.LlvmType}* {dst}");
+                    break;
+                }
+                default:
+                {
+                    fns.AppendLine($"  %v{n} = load i8*, i8** {src}");
+                    if (f.IsWeak)
+                    {
+                        // A legacy `weak` field slot copies weakly.
+                        fns.AppendLine($"  call void @arc_store_weak(i8** {dst}, i8* %v{n})");
+                    }
+                    else
+                    {
+                        // Strong reference field (including WeakReference<T>
+                        // fields: the copy owns the weak-ref object itself).
+                        fns.AppendLine($"  call void @arc_store_strong(i8** {dst}, i8* %v{n})");
+                    }
+
+                    break;
+                }
             }
         }
 
         fns.AppendLine("  ret void");
         fns.AppendLine("}");
         fns.AppendLine();
+
+        fns.AppendLine($"define void @{t.Name}__drop({ty}* %p) {{");
+        foreach (var f in t.InstanceFields)
+        {
+            var slot = FieldAddrFromGep(fns, "%p", t, f);
+            if (f.Type.Kind == TypeKind.Struct)
+            {
+                fns.AppendLine($"  call void @{f.Type.Name}__drop({f.Type.LlvmType}* {slot})");
+            }
+            else if (f.IsWeak)
+            {
+                fns.AppendLine($"  call void @arc_store_weak(i8** {slot}, i8* null)");
+            }
+            else if (f.Type.IsReferenceType)
+            {
+                var n = NextGen();
+                fns.AppendLine($"  %v{n} = load i8*, i8** {slot}");
+                fns.AppendLine($"  call void @arc_release(i8* %v{n})");
+            }
+        }
+
+        fns.AppendLine("  ret void");
+        fns.AppendLine("}");
+        fns.AppendLine();
+    }
+
+    // Field address inside a generated struct helper: typed GEP on the blob.
+    private string FieldAddrFromGep(StringBuilder fns, string basePtr, TypeSymbol owner, FieldSymbol f)
+    {
+        var n = NextGen();
+        fns.AppendLine($"  %gp{n} = getelementptr {owner.LlvmType}, {owner.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+        fns.AppendLine($"  %fp{n} = bitcast i64* %gp{n} to {f.Type.LlvmType}*");
+        return $"%fp{n}";
     }
 
     private static string FnPtrType(MethodSymbol m)
@@ -241,6 +371,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         _entry = [];
         _body = [];
         _stmtTemps.Clear();
+        _stmtStructTemps.Clear();
         _usingScopes.Clear();
         _localSlot.Clear();
         _tmp = 0;
@@ -251,7 +382,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var ps = new List<string>();
         if (!m.IsStatic)
         {
-            ps.Add("i8* %this");
+            ps.Add(m.Owner.Kind == TypeKind.Struct ? $"{m.Owner.LlvmType}* %this" : "i8* %this");
         }
 
         foreach (var p in m.Parameters)
@@ -262,8 +393,19 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
         if (!m.IsStatic)
         {
-            _entry.Add("  %this.addr = alloca i8*");
-            _entry.Add("  store i8* %this, i8** %this.addr");
+            if (m.Owner.Kind == TypeKind.Struct)
+            {
+                // Struct methods borrow their instance; this is a pointer to
+                // the caller's storage, never a +1 reference.
+                var ty = m.Owner.LlvmType;
+                _entry.Add($"  %this.addr = alloca {ty}*");
+                _entry.Add($"  store {ty}* %this, {ty}** %this.addr");
+            }
+            else
+            {
+                _entry.Add("  %this.addr = alloca i8*");
+                _entry.Add("  store i8* %this, i8** %this.addr");
+            }
         }
 
         foreach (var p in m.Parameters)
@@ -285,7 +427,13 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             var slot = $"%loc{loc.Id}";
             _localSlot[loc.Id] = slot;
             _entry.Add($"  {slot} = alloca {loc.Type.LlvmType}");
-            if (loc.Type.IsReferenceType)
+            if (loc.Type.Kind == TypeKind.Struct && loc.Type.InstanceFields.Count > 0)
+            {
+                // Struct storage must start zeroed so a first drop sees null
+                // reference fields; re-declaration drops the previous value.
+                _entry.Add($"  store {loc.Type.LlvmType} zeroinitializer, {loc.Type.LlvmType}* {slot}");
+            }
+            else if (loc.Type.IsReferenceType)
             {
                 _entry.Add($"  store i8* null, i8** {slot}");
             }
@@ -321,6 +469,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 var v = Inst($"load i8*, i8** %loc{loc.Id}");
                 Do($"call void @arc_release(i8* {v})");
             }
+            else if (loc.Type.Kind == TypeKind.Struct)
+            {
+                Do($"call void @{loc.Type.Name}__drop({loc.Type.LlvmType}* %loc{loc.Id})");
+            }
         }
 
         if (isVoid)
@@ -349,7 +501,8 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         fns.AppendLine();
     }
 
-    private static string DefaultVal(TypeSymbol t) => t.IsReferenceType ? "null" : (IsFloatType(t) ? "0.0" : "0");
+    private static string DefaultVal(TypeSymbol t) =>
+        t.Kind == TypeKind.Struct ? "zeroinitializer" : t.IsReferenceType ? "null" : IsFloatType(t) ? "0.0" : "0";
 
     private static string FormatFloatConstant(string s)
     {
@@ -387,6 +540,12 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     private void EmitLocalDecl(BoundLocalDecl d)
     {
+        if (d.Symbol.Type.Kind == TypeKind.Struct)
+        {
+            EmitStructLocalDecl(d);
+            return;
+        }
+
         if (d.Initializer == null)
         {
             return;
@@ -407,9 +566,75 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         ReleaseTemps(mark);
     }
 
+    private void EmitStructLocalDecl(BoundLocalDecl d)
+    {
+        var ty = d.Symbol.Type.LlvmType;
+        var slot = _localSlot[d.Symbol.Id];
+        var fresh = d.Initializer is BoundNewObject;
+
+        // Re-declaration inside a loop must drop the previous value before
+        // the storage is reused; the first drop sees the zeroed storage.
+        if (d.Symbol.Type.InstanceFields.Count > 0)
+        {
+            Do($"call void @{d.Symbol.Type.Name}__drop({ty}* {slot})");
+            Do($"store {ty} zeroinitializer, {ty}* {slot}");
+        }
+
+        if (!fresh)
+        {
+            if (d.Initializer == null)
+            {
+                return;
+            }
+
+            var mark = _stmtTemps.Count;
+            var smark = _stmtStructTemps.Count;
+            var src = EmitR(d.Initializer);
+            Do($"call void @{d.Symbol.Type.Name}__copy({ty}* {slot}, {ty}* {src})");
+            ReleaseTemps(mark);
+            ReleaseStructTemps(smark);
+            return;
+        }
+
+        // Construct directly into the slot: no temporary struct, no copy.
+        var n = (BoundNewObject)d.Initializer!;
+        var cmark = _stmtTemps.Count;
+        if (n.Ctor != null)
+        {
+            var argVals = new List<string>();
+            foreach (var a in n.Arguments)
+            {
+                var v = EmitR(a);
+                if (a.Type.IsReferenceType)
+                {
+                    _stmtTemps.Add(v);
+                }
+
+                argVals.Add($"{a.Type.LlvmType} {v}");
+            }
+
+            var args = string.Join(", ", new[] { $"{ty}* {slot}" }.Concat(argVals));
+            Do($"call void @{n.Ctor.MangledName}({args})");
+        }
+
+        ReleaseTemps(cmark);
+    }
+
     private void EmitExprStmt(BoundExprStmt e)
     {
         var mark = _stmtTemps.Count;
+        var smark = _stmtStructTemps.Count;
+        if (e.Expression.Type.Kind == TypeKind.Struct)
+        {
+            // A discarded struct expression can still have effects: a
+            // constructor runs, an assignment writes through a field or ref
+            // parameter. Emit it, then drop any temporary it created.
+            EmitR(e.Expression);
+            ReleaseTemps(mark);
+            ReleaseStructTemps(smark);
+            return;
+        }
+
         var v = EmitR(e.Expression);
         if (e.Expression.Type.IsReferenceType)
         {
@@ -417,13 +642,16 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
 
         ReleaseTemps(mark);
+        ReleaseStructTemps(smark);
     }
 
     private void EmitIf(BoundIf s)
     {
         var mark = _stmtTemps.Count;
+        var smark = _stmtStructTemps.Count;
         var c = EmitR(s.Condition);
         ReleaseTemps(mark);
+        ReleaseStructTemps(smark);
         string thenL = L("then"), endL = L("endif");
         var elseL = s.Else != null ? L("else") : endL;
         Term($"br i1 {c}, label %{thenL}, label %{elseL}");
@@ -453,8 +681,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         Term($"br label %{condL}");
         Lbl(condL);
         var mark = _stmtTemps.Count;
+        var smark = _stmtStructTemps.Count;
         var c = EmitR(s.Condition);
         ReleaseTemps(mark);
+        ReleaseStructTemps(smark);
         Term($"br i1 {c}, label %{bodyL}, label %{endL}");
         Lbl(bodyL);
         EmitStmt(s.Body);
@@ -479,8 +709,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         if (s.Condition != null)
         {
             var mark = _stmtTemps.Count;
+            var smark = _stmtStructTemps.Count;
             var c = EmitR(s.Condition);
             ReleaseTemps(mark);
+            ReleaseStructTemps(smark);
             Term($"br i1 {c}, label %{bodyL}, label %{endL}");
         }
         else
@@ -499,8 +731,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         if (s.Update != null)
         {
             var mark = _stmtTemps.Count;
+            var smark = _stmtStructTemps.Count;
             EmitR(s.Update);
             ReleaseTemps(mark);
+            ReleaseStructTemps(smark);
         }
 
         Term($"br label %{condL}");
@@ -510,15 +744,18 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
     private void EmitReturn(BoundReturn r)
     {
         var mark = _stmtTemps.Count;
+        var smark = _stmtStructTemps.Count;
         if (r.Value != null)
         {
             var v = EmitR(r.Value);
             ReleaseTemps(mark);
+            ReleaseStructTemps(smark);
             StoreRet(v, _curMethod.ReturnType);
         }
         else
         {
             ReleaseTemps(mark);
+            ReleaseStructTemps(smark);
         }
 
         // using scopes still open run their cleanup on the way out, innermost
@@ -538,6 +775,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         if (u.ResourceInit != null)
         {
             var mark = _stmtTemps.Count;
+            var smark = _stmtStructTemps.Count;
             var v = EmitR(u.ResourceInit);
             var slot = _localSlot[u.Resource.Id];
             if (u.Resource.Type.IsReferenceType)
@@ -550,6 +788,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             }
 
             ReleaseTemps(mark);
+            ReleaseStructTemps(smark);
         }
 
         // 2. body; a return inside it runs the cleanup on the way out
@@ -611,19 +850,44 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         _stmtTemps.RemoveRange(mark, _stmtTemps.Count - mark);
     }
 
+    private void ReleaseStructTemps(int mark)
+    {
+        for (var i = _stmtStructTemps.Count - 1; i >= mark; i--)
+        {
+            var (type, addr) = _stmtStructTemps[i];
+            Do($"call void @{type.Name}__drop({type.LlvmType}* {addr})");
+        }
+
+        _stmtStructTemps.RemoveRange(mark, _stmtStructTemps.Count - mark);
+    }
+
     private string EmitR(BoundExpr e)
     {
         switch (e)
         {
             case BoundLiteral l: return EmitLiteral(l);
-            case BoundLocal lo: return EmitLoadSlot(_localSlot[lo.Symbol.Id], lo.Type);
+            case BoundLocal lo:
+                // A struct local is its own storage: it evaluates to the
+                // address of its blob, never a loaded value.
+                if (lo.Type.Kind == TypeKind.Struct)
+                {
+                    return _localSlot[lo.Symbol.Id];
+                }
+
+                return EmitLoadSlot(_localSlot[lo.Symbol.Id], lo.Type);
             case BoundParam p: return EmitLoadParam(p);
             case BoundThis:
             {
+                if (_curMethod.Owner.Kind == TypeKind.Struct)
+                {
+                    var ty = _curMethod.Owner.LlvmType;
+                    return Inst($"load {ty}*, {ty}** %this.addr");
+                }
+
                 Do("call void @arc_retain(i8* %this)");
                 return Inst("load i8*, i8** %this.addr");
             }
-            case BoundFieldAccess fa: return EmitFieldRead(fa);
+            case BoundFieldAccess fa: return EmitFieldAccess(fa);
             case BoundLength len: return EmitLength(len);
             case BoundCall c: return EmitCall(c);
             case BoundNewObject n: return EmitNewObject(n);
@@ -703,6 +967,19 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     private string EmitLoadParam(BoundParam p)
     {
+        if (p.Type.Kind == TypeKind.Struct)
+        {
+            // A struct parameter is storage, not a loadable scalar: evaluate
+            // it to the address of the value (the caller's storage when it is
+            // passed by reference).
+            if (!p.ByRef)
+            {
+                return $"%arg{p.Symbol.Index}";
+            }
+
+            return Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}");
+        }
+
         if (!p.ByRef)
         {
             return EmitLoadSlot($"%arg{p.Symbol.Index}", p.Type);
@@ -733,9 +1010,14 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 return $"%arg{p.Symbol.Index}";
             case BoundFieldAccess fa:
             {
-                var recv = EmitR(fa.Receiver!);
-                _stmtTemps.Add(recv);
-                return FieldAddr(recv, fa.Field);
+                var receiver = fa.Receiver!;
+                var recv = EmitR(receiver);
+                if (receiver.Type.IsReferenceType)
+                {
+                    _stmtTemps.Add(recv);
+                }
+
+                return FieldAddr(recv, receiver.Type, fa.Field);
             }
             case BoundIndex ix:
             {
@@ -749,10 +1031,43 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         return "null";
     }
 
-    private string FieldAddr(string basePtr, FieldSymbol f)
+    private string FieldAddr(string basePtr, TypeSymbol recvType, FieldSymbol f)
     {
+        if (recvType.Kind == TypeKind.Struct)
+        {
+            // Struct storage is an opaque blob of 8-byte slots: address the
+            // field by its slot index, then cast to the field's type.
+            var sp = Inst($"getelementptr {recvType.LlvmType}, {recvType.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+            return Inst($"bitcast i64* {sp} to {f.Type.LlvmType}*");
+        }
+
         var p = Inst($"getelementptr i8, i8* {basePtr}, i64 {f.ByteOffset}");
         return Inst($"bitcast i8* {p} to {f.Type.LlvmType}*");
+    }
+
+    private string EmitFieldAccess(BoundFieldAccess fa)
+    {
+        // A struct-typed field is addressed, not loaded: its value lives
+        // inline in the owner.
+        if (fa.Type.Kind == TypeKind.Struct)
+        {
+            return EmitStructFieldAddress(fa);
+        }
+
+        return EmitFieldRead(fa);
+    }
+
+    private string EmitStructFieldAddress(BoundFieldAccess fa)
+    {
+        // static struct fields are rejected by the binder
+        var receiver = fa.Receiver!;
+        var recv = EmitR(receiver);
+        if (receiver.Type.IsReferenceType)
+        {
+            _stmtTemps.Add(recv);
+        }
+
+        return FieldAddr(recv, receiver.Type, fa.Field);
     }
 
     private string EmitFieldRead(BoundFieldAccess fa)
@@ -774,9 +1089,14 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             return v;
         }
 
-        var recv = EmitR(fa.Receiver!);
-        _stmtTemps.Add(recv);
-        var addr = FieldAddr(recv, fa.Field);
+        var receiver = fa.Receiver!;
+        var recv = EmitR(receiver);
+        if (receiver.Type.IsReferenceType)
+        {
+            _stmtTemps.Add(recv);
+        }
+
+        var addr = FieldAddr(recv, receiver.Type, fa.Field);
         if (fa.Field.IsWeak)
         {
             var pp = Inst($"bitcast {fa.Field.Type.LlvmType}* {addr} to i8**");
@@ -806,7 +1126,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         if (c.Receiver != null)
         {
             recv = EmitR(c.Receiver);
-            _stmtTemps.Add(recv);
+            if (c.Receiver.Type.IsReferenceType)
+            {
+                _stmtTemps.Add(recv);
+            }
         }
 
         var argVals = new List<string>();
@@ -860,7 +1183,9 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var parts = new List<string>();
         if (!m.IsStatic)
         {
-            parts.Add($"i8* {recv}");
+            parts.Add(m.Owner.Kind == TypeKind.Struct
+                ? $"{m.Owner.LlvmType}* {recv}"
+                : $"i8* {recv}");
         }
 
         parts.AddRange(argVals);
@@ -876,6 +1201,11 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     private string EmitNewObject(BoundNewObject n)
     {
+        if (n.Type.Kind == TypeKind.Struct)
+        {
+            return EmitNewObjectValue(n);
+        }
+
         var obj = Inst($"call i8* @arc_alloc(%TypeInfo* @{n.Type.Name}__ti)");
         if (n.Ctor != null)
         {
@@ -896,6 +1226,40 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
 
         return obj;
+    }
+
+    // Construct a struct into a fresh temporary blob and return its address.
+    // The temporary is tracked so the enclosing statement drops its reference
+    // fields once the value has been consumed.
+    private string EmitNewObjectValue(BoundNewObject n)
+    {
+        var ty = n.Type.LlvmType;
+        var temp = Inst($"alloca {ty}");
+        _stmtStructTemps.Add((n.Type, temp));
+        if (n.Type.InstanceFields.Count > 0)
+        {
+            Do($"store {ty} zeroinitializer, {ty}* {temp}");
+        }
+
+        if (n.Ctor != null)
+        {
+            var argVals = new List<string>();
+            foreach (var a in n.Arguments)
+            {
+                var v = EmitR(a);
+                if (a.Type.IsReferenceType)
+                {
+                    _stmtTemps.Add(v);
+                }
+
+                argVals.Add($"{a.Type.LlvmType} {v}");
+            }
+
+            var args = string.Join(", ", new[] { $"{ty}* {temp}" }.Concat(argVals));
+            Do($"call void @{n.Ctor.MangledName}({args})");
+        }
+
+        return temp;
     }
 
     private string EmitNewArray(BoundNewArray a)
@@ -1112,6 +1476,11 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     private string EmitAssign(BoundAssign a)
     {
+        if (a.Type.Kind == TypeKind.Struct)
+        {
+            return EmitStructAssign(a);
+        }
+
         var value = EmitR(a.Value);
         switch (a.Target)
         {
@@ -1181,6 +1550,26 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         return value;
     }
 
+    // Struct assignment gives value semantics: copy into the target's storage.
+    // The source is a borrow (a local, field, parameter) or a fresh temporary
+    // tracked in _stmtStructTemps, which the enclosing statement drops.
+    private string EmitStructAssign(BoundAssign a)
+    {
+        var ty = a.Type.LlvmType;
+        var src = EmitR(a.Value);
+        var dst = a.Target switch
+        {
+            BoundLocal lo => _localSlot[lo.Symbol.Id],
+            BoundParam p => p.ByRef
+                ? Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}")
+                : $"%arg{p.Symbol.Index}",
+            BoundFieldAccess fa => EmitStructFieldAddress(fa),
+            _ => "null"
+        };
+        Do($"call void @{a.Type.Name}__copy({ty}* {dst}, {ty}* {src})");
+        return src;
+    }
+
     private string EmitFieldStore(BoundFieldAccess fa, string value)
     {
         string addr;
@@ -1190,9 +1579,20 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
         else
         {
-            var recv = EmitR(fa.Receiver!);
-            _stmtTemps.Add(recv);
-            addr = FieldAddr(recv, fa.Field);
+            var receiver = fa.Receiver!;
+            var recv = EmitR(receiver);
+            if (receiver.Type.IsReferenceType)
+            {
+                _stmtTemps.Add(recv);
+            }
+
+            addr = FieldAddr(recv, receiver.Type, fa.Field);
+        }
+
+        if (fa.Field.Type.Kind == TypeKind.Struct)
+        {
+            Do($"call void @{fa.Field.Type.Name}__copy({addr}, {value})");
+            return value;
         }
 
         var ty = fa.Field.Type.LlvmType;
@@ -1343,9 +1743,14 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 }
                 else
                 {
-                    var recv = EmitR(fa.Receiver!);
-                    _stmtTemps.Add(recv);
-                    addr = FieldAddr(recv, fa.Field);
+                    var receiver = fa.Receiver!;
+                    var recv = EmitR(receiver);
+                    if (receiver.Type.IsReferenceType)
+                    {
+                        _stmtTemps.Add(recv);
+                    }
+
+                    addr = FieldAddr(recv, receiver.Type, fa.Field);
                 }
 
                 var pp = Inst($"bitcast {fa.Field.Type.LlvmType}* {addr} to i8**");
