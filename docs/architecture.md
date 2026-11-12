@@ -295,7 +295,9 @@ This section records only how the subset is lowered.
 - **`Console.Write` and `WriteLine`** and **`.Length`** are bound directly to
   runtime functions; there is no library behind them. A `bool` passed to the
   runtime, including one concatenated into a string, is zero-extended from
-  `i1` to `i32` so that it matches the C `int` parameter.
+  `i1` to `i32` so that it matches the C `int` parameter. A `char` is written
+  as its UTF-8 character, and the same encoding is used when a `char` is
+  concatenated into a string.
 - **Compilation units** are merged: `using` directives are skipped, namespace
   names are discarded, and a trailing `?` on a type is ignored.
 - **Field initialisers** are parsed and then discarded. This is a known defect,
@@ -370,7 +372,7 @@ and *scope* (just not built yet).
 | `float` / `double`                                     | Implemented                           |
 | `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
 | `ref` / `out` / `in` parameters                        | Implemented                           |
-| Auto-properties                                        | Implemented for instance properties; static ones produce invalid IR |
+| Auto-properties                                        | Implemented for instance and static properties with both accessors |
 | `is` / `as`                                            | Implemented                           |
 | Array covariance (runtime store check)                 | Implemented                           |
 | Structs (value types)                                  | Implemented with the restrictions in Section 7 |

@@ -45,7 +45,7 @@ can be used from another.
 | C# type | Size | Notes |
 |---|---|---|
 | `bool` | 1 bit in registers, 8 bytes in fields | Prints as `True` or `False` |
-| `char` | 32 bits | Prints as a number; see [Known issues](#known-issues) |
+| `char` | 32 bits | Prints as the character |
 | `byte`, `sbyte` | 8 bits | Declaration and arithmetic only; casts and arrays are not supported |
 | `short`, `ushort` | 16 bits | Declaration and arithmetic only; casts and arrays are not supported |
 | `int`, `uint` | 32 bits | |
@@ -152,9 +152,8 @@ Supported:
 - `virtual` and `override` methods, dispatched through a virtual table.
 - The modifiers `public`, `private`, `protected`, `internal`, `static`, and
   `abstract` on a class, and `new` on a member.
-- Instance auto-properties with both accessors:
-  `public string Name { get; set; }`. Static auto-properties do not build yet;
-  see [Known issues](#known-issues).
+- Instance and static auto-properties with both accessors:
+  `public string Name { get; set; }` and `public static int Count { get; set; }`.
 
 Not supported: `sealed`, `readonly`, `const`, `partial`, static constructors,
 nested types, finalisers (`~T()`), expression-bodied members (`=> expr`),
@@ -177,12 +176,15 @@ interface list is ignored.
 
 ### Methods and overloading
 
-Methods are identified by their name and their number of parameters. Two
-methods with the same name and a different number of parameters work. Two
-methods with the same name and the same number of parameters, such as
-`Print(int)` and `Print(string)`, do not: every call binds to the first one
-declared, and `clang` then rejects the duplicate symbol. See
-[Known issues](#known-issues).
+A type may declare several methods with the same name. The call binds to the
+method whose parameters accept the arguments. When more than one method is
+applicable, the one with more parameters of exactly the argument's type is
+chosen. If two methods still match equally, the compiler reports that the call
+is ambiguous.
+
+Constructors follow the same rule, so `new Box(1)` and `new Box("a")` can both
+exist. Two declarations with the same name and the same parameter types are an
+error.
 
 ### Parameters
 
@@ -310,7 +312,7 @@ directly:
 
 | Member | Notes |
 |---|---|
-| `Console.Write(x)`, `Console.WriteLine(x)` | `x` is a `string`, `bool`, integer, `float`, or `double`. `Console.WriteLine()` with no argument prints an empty line. |
+| `Console.Write(x)`, `Console.WriteLine(x)` | `x` is a `string`, `bool`, `char`, integer, `float`, or `double`. A `char` prints as the character. `Console.WriteLine()` with no argument prints an empty line. |
 | `array.Length` | Number of elements |
 | `str.Length` | Number of **bytes** in the UTF-8 encoding |
 | `new WeakReference<T>(target)` | |
@@ -354,7 +356,6 @@ deliberate consequences of ARC.
 | `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false` |
 | String `==` | Compares contents | Compares references; see [Known issues](#known-issues) |
 | `string.Length` | UTF-16 code units | UTF-8 bytes. `"héllo".Length` is 6, not 5. |
-| `char` in `WriteLine` and concatenation | Prints the character | Prints the character code |
 | Formatting a `double` or `float` | Shortest round-trippable form, such as `0.3333333333333333` | Six significant digits, such as `0.333333` |
 | Null dereference | `NullReferenceException` | The process crashes with an access violation |
 | Integer division by zero | `DivideByZeroException` | The process crashes |
@@ -371,13 +372,9 @@ workaround.
 | **Field initialisers are ignored.** `public int count = 5;` compiles, but the field starts as `0`. | Assign the value in the constructor. |
 | **String `==` compares references.** Two equal strings built separately are not `==`. | Avoid comparing strings for equality. There is no content comparison yet. |
 | **Abstract methods fail to link.** Calling an `abstract` method through the base type compiles to IR that `clang` rejects with `use of undefined value`. | Declare the method `virtual` with a default body, and `override` it. |
-| **Overloads with the same number of parameters do not work.** With `Print(int)` and `Print(string)`, a call to the second reports `ARC2010`, and even when every call matches the first, `clang` reports `invalid redefinition of function`. | Give the methods different names. |
-| **Abstract classes can be instantiated.** `new Shape()` compiles when `Shape` is `abstract`. | Do not rely on the compiler to catch it. |
 | **Get-only auto-properties cannot be assigned.** `public int Id { get; }` cannot be set, even in a constructor. | Declare `{ get; set; }`. |
-| **Static auto-properties fail to build.** `public static int Count { get; set; }` produces a backing-field symbol that `clang` rejects with `expected '=' in global variable`. | Use a `public static` field. |
 | **`WeakReference<T>` works only as a field type.** A local such as `WeakReference<Node> w = ...;` is parsed as a comparison and reported as `unknown name 'WeakReference'`. | Keep the weak reference in a field of an object. |
 | **Class casts are unchecked.** `(Dog)animal` succeeds even when `animal` is a `Cat`. | Use `animal as Dog` and test for `null`. |
-| **`char` prints as a number.** `Console.WriteLine('A')` prints `65`. | Use a one-character string. |
 | **Small integer casts are rejected.** `(byte)x` and `new byte[n]` do not compile. | Use `int` or `long`. |
 
 If you find another difference, check it against `dotnet run` first, then

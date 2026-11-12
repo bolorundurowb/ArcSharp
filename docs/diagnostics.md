@@ -144,11 +144,6 @@ and no implicit conversion exists. For example,
 To turn a number into a string, concatenate it: `"" + n`. To narrow a number,
 use an explicit cast such as `(int)x`.
 
-This error also appears when you call one of two overloads that have the same
-number of parameters. The binder chooses the first one declared, so
-`Show("a")` with `Show(int)` declared first reports
-`cannot convert 'string' to 'int'`.
-
 The message `cannot convert '<null>' to 'T'` or `'<error>'` is usually a
 follow-on error. Fix the errors reported before it.
 
@@ -164,6 +159,11 @@ not meet the cleanup contract: the compiler needs a parameterless instance
 | `interface 'I' has no parameterless 'Dispose' method` | The interface-typed resource does not declare `Dispose`. |
 | `type 'T' used in 'using' must be a reference type` | A struct cannot be a `using` resource yet. |
 | `'using' resource must have an initializer` | `using (Foo x)` without `= ...`. |
+
+### ARC2012
+
+**Error. Abstract class instantiated.** `new Shape()` where `Shape` is
+`abstract`. Create an instance of a concrete derived class instead.
 
 ### ARC2050
 
@@ -243,8 +243,5 @@ the executable. They appear as `clang` errors followed by
 | `clang` message | Cause |
 |---|---|
 | `use of undefined value` | Calling an `abstract` method |
-| `invalid redefinition of function` | Two overloads with the same number of parameters, when every call happens to match the first one |
-| `expected '=' in global variable` | A static auto-property |
 
-Each one is listed with a workaround in
-[Known issues](language-reference.md#known-issues).
+This is a known defect. See [Known issues](language-reference.md#known-issues).

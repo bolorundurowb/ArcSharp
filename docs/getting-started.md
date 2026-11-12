@@ -148,7 +148,7 @@ each one, and checks both its output and its `live=` count. It also compiles
 the programs under `samples/negative/`, checks that a bad command line is
 reported instead of crashing the compiler, checks the `ARC3100` cycle
 warnings, and runs the analyser unit tests. It ends with a line such as
-`45 passed, 0 failed`. See [Verification](verification.md) for what each sample
+`49 passed, 0 failed`. See [Verification](verification.md) for what each sample
 tests.
 
 ## Next steps

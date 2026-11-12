@@ -51,11 +51,11 @@ compiler writes an object file and prints how to link it.
 `--runtime` defaults to `runtime/arc_runtime.c` relative to the **current
 directory**. Run the compiler from the repository root, or pass the full path.
 
-### `clang` reports `use of undefined value`, `invalid redefinition of function`, or `expected '=' in global variable`
+### `clang` reports `use of undefined value`
 
-The source compiled, but the generated IR is invalid. These come from an
-abstract method, two overloads with the same number of parameters, and a static
-auto-property respectively. See [Errors from clang](diagnostics.md#errors-from-clang).
+The source compiled, but the generated IR calls an `abstract` method, which has
+no body. Declare the method `virtual` with a default body, and `override` it.
+See [Errors from clang](diagnostics.md#errors-from-clang).
 
 ### `clang` reports that it cannot find `link.exe` or the C runtime libraries
 
@@ -118,15 +118,6 @@ value in the constructor.
 ### Two strings that look equal are not `==`
 
 String `==` compares references, not contents.
-
-### A `bool` prints the wrong value
-
-Printing a `bool` directly can be wrong because of a known calling-convention
-mismatch. Test it with `if` and print a string from each branch.
-
-### A character prints as a number
-
-`char` values print as their character code. Use a one-character string.
 
 ### A number prints with fewer digits than under .NET
 
