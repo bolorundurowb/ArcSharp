@@ -19,11 +19,12 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (21 samples, Windows x64, 12 November 2026)
+## Results (23 samples, Windows x64, 12 November 2026)
 
-`tools\verify.ps1` reported **39 passed, 0 failed** with the .NET 8.0.427 SDK:
-21 sample programs, 13 must-fail diagnostics, 4 cycle checks, and one run of
-the analyser unit tests (62 cases). `live=0` means every object was reclaimed.
+`tools\verify.ps1` reported **45 passed, 0 failed** with the .NET 8.0.428 SDK:
+23 sample programs, 14 must-fail diagnostics, 3 command-line checks, 4 cycle
+checks, and one run of the analyser unit tests (62 cases). `live=0` means every
+object was reclaimed.
 `numerics` and `byref` allocate nothing because they use only value types.
 `cycle_strong` and `cycle_struct` are the leaks the harness asserts on purpose.
 
@@ -50,6 +51,8 @@ the analyser unit tests (62 cases). `live=0` means every object was reclaimed.
 | `longconcat` | `long` and `uint` values converted to strings by concatenation; regression test for the 32-bit `long` truncation on Windows | alloc=7 dead=7 **live=0** | `concat=20000000000 uint=3000000000` |
 | `using_stmt` | `using`/`IDisposable`: declaration and expression forms, virtual and itable dispatch of `Dispose`, a `null` resource (cleanup skipped), and cleanup on the `return` path | alloc=25 dead=25 **live=0** | `dispose a`, `tmp delete`, `db closed`, `disposals=3` |
 | `structs` | struct code generation: value semantics, reference fields, `ref`/`out`, structs inside classes, nested structs, and a temporary struct method call | alloc=66 dead=66 **live=0** | `a.sum=5`, `card=card copy tags=1,2`, `temp=42` |
+| `boolprint` | `Console.WriteLine` of a false comparison, and concatenation of `bool` values | alloc=9 dead=9 **live=0** | `cmp=False/True direct=False` |
+| `unicode` | `\u` and `\U` escapes in a string and a character literal | alloc=9 dead=9 **live=0** | `A`, `letter=A match=True bytes=4` |
 
 ## Diagnostics
 
@@ -59,9 +62,11 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 13 programs that must fail (`samples/negative/`) and
+The harness also compiles 14 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, `ARC0003` for
-shift operators, and `ARC2011` for an invalid `using` resource. It checks
+shift operators, `ARC0004` for an invalid Unicode escape, and `ARC2011` for an
+invalid `using` resource. It checks that `-o` with no value, and a missing
+`clang` or `llc`, are reported as errors and exit with code 2. It checks
 `ARC3100` in both directions: `cycle_strong` and `cycle_struct` warn, while
 `cycle_weak` and `cycle_weakref` stay clean.
 

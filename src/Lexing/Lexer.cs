@@ -415,18 +415,7 @@ public sealed class Lexer(string text)
             if (Current == '\\')
             {
                 Advance();
-                sb.Append(Current switch
-                {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '0' => '\0',
-                    '"' => '"',
-                    '\\' => '\\',
-                    '\'' => '\'',
-                    _ => Current
-                });
-                Advance();
+                AppendStringEscape(sb, line, col);
             }
             else
             {
@@ -450,21 +439,7 @@ public sealed class Lexer(string text)
     private Token LexChar(int start, int line, int col)
     {
         Advance(); // opening quote
-        char value;
-        if (Current == '\\')
-        {
-            Advance();
-            value = Current switch
-            {
-                'n' => '\n', 't' => '\t', 'r' => '\r', '0' => '\0', '\'' => '\'', '\\' => '\\', _ => Current
-            };
-            Advance();
-        }
-        else
-        {
-            value = Current;
-            Advance();
-        }
+        var value = Current == '\\' ? ReadCharEscape(line, col) : ReadOne();
 
         if (Current == '\'')
         {
@@ -476,6 +451,128 @@ public sealed class Lexer(string text)
         }
 
         return new Token(TokenKind.CharLiteral, ((int)value).ToString(), start, line, col);
+    }
+
+    private void AppendStringEscape(System.Text.StringBuilder sb, int line, int col)
+    {
+        if (Current is 'u' or 'U')
+        {
+            if (TryReadUnicodeEscape(line, col, out var codePoint))
+            {
+                AppendCodePoint(sb, codePoint);
+            }
+
+            return;
+        }
+
+        sb.Append(ReadSimpleEscape());
+    }
+
+    private char ReadCharEscape(int line, int col)
+    {
+        Advance(); // backslash
+        if (Current is 'u' or 'U')
+        {
+            if (!TryReadUnicodeEscape(line, col, out var codePoint))
+            {
+                return '\0';
+            }
+
+            if (codePoint > 0xFFFF)
+            {
+                Report(line, col, "Unicode escape does not fit in a character literal", "ARC0004");
+                return '\0';
+            }
+
+            return (char)codePoint;
+        }
+
+        return ReadSimpleEscape();
+    }
+
+    private char ReadOne()
+    {
+        var value = Current;
+        Advance();
+        return value;
+    }
+
+    private char ReadSimpleEscape()
+    {
+        var value = Current switch
+        {
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '0' => '\0',
+            '"' => '"',
+            '\\' => '\\',
+            '\'' => '\'',
+            _ => Current
+        };
+        Advance();
+        return value;
+    }
+
+    private bool TryReadUnicodeEscape(int line, int col, out int codePoint)
+    {
+        var digits = Current == 'U' ? 8 : 4;
+        Advance();
+        uint value = 0;
+        for (var n = 0; n < digits; n++)
+        {
+            var hex = HexValue(Current);
+            if (hex < 0)
+            {
+                Report(line, col, "invalid Unicode escape", "ARC0004");
+                codePoint = 0;
+                return false;
+            }
+
+            value = (value << 4) | (uint)hex;
+            Advance();
+        }
+
+        if (value > 0x10FFFF)
+        {
+            Report(line, col, "Unicode escape is outside the Unicode range", "ARC0004");
+            codePoint = 0;
+            return false;
+        }
+
+        codePoint = (int)value;
+        return true;
+    }
+
+    private static int HexValue(char c)
+    {
+        if (c is >= '0' and <= '9')
+        {
+            return c - '0';
+        }
+
+        if (c is >= 'a' and <= 'f')
+        {
+            return c - 'a' + 10;
+        }
+
+        if (c is >= 'A' and <= 'F')
+        {
+            return c - 'A' + 10;
+        }
+
+        return -1;
+    }
+
+    private static void AppendCodePoint(System.Text.StringBuilder sb, int codePoint)
+    {
+        if (codePoint <= 0xFFFF)
+        {
+            sb.Append((char)codePoint);
+            return;
+        }
+
+        sb.Append(char.ConvertFromUtf32(codePoint));
     }
 
     private Token LexPunctuation(int start, int line, int col)

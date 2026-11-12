@@ -24,14 +24,14 @@ dotnet bin/Release/net8.0/arcsharp.dll <input.cs> [more.cs ...] [options]
 | `--cc <name>` | `gcc` | The C compiler and linker for `--target host` when `--clang` is not given. |
 | `-h`, `--help` | | Print a one-line usage summary. |
 
-Every option that takes a value needs that value. The compiler does not check
-for a missing value, so `-o` as the last argument crashes it with an
-`IndexOutOfRangeException`.
+Every option that takes a value needs that value. If it is missing, the
+compiler reports `error: option <name> requires a value` and exits with code
+`2`. This covers `-o`, `--target`, `--runtime`, `--llc`, `--cc`, and `--clang`.
 
-The compiler also does not check that external tools exist. If `clang`, `llc`,
-or the `--cc` compiler cannot be started, it stops with an unhandled
-`Win32Exception` rather than a diagnostic. Without `--clang`, it needs `llc`
-on `PATH`; `. tools\env.ps1` adds the default LLVM folder.
+If `clang`, `llc`, the `--cc` compiler, or the program started by `--run`
+cannot be started, the compiler reports `error: could not run '<tool>': ...`
+and exits with code `2`. Without `--clang`, it needs `llc` on `PATH`;
+`. tools\env.ps1` adds the default LLVM folder.
 
 ## What the compiler writes
 
@@ -59,8 +59,8 @@ capture both streams from PowerShell.
 |---|---|
 | `0` | Success. With `--run`, the program also exited with `0`. |
 | `1` | Compilation failed because of errors, or because of warnings with `-Werror`. |
-| `2` | A usage error: no input file, an input file that does not exist, or an unknown option. |
-| `-532462766` (`0xE0434352`) | The compiler crashed with an unhandled .NET exception, such as a missing option value or a missing tool. |
+| `2` | A usage error: no input file, an input file that does not exist, an unknown option, or an option with no value. Also a tool or program that could not be started (`clang`, `llc`, the `--cc` compiler, or `--run`). |
+| `-532462766` (`0xE0434352`) | The compiler crashed with an unhandled .NET exception. |
 | Other | With `--clang`, `clang`'s exit code if the build failed. With `--run`, the program's own exit code. |
 
 When the program is run, its exit codes include:

@@ -22,17 +22,24 @@ from one unsupported construct. Constructs the compiler recognises are reported
 as `ARC3001` instead, so look for that code first when the feature is listed in
 the [Language reference](language-reference.md#not-supported).
 
-### `Unhandled exception. System.ComponentModel.Win32Exception ... 'llc'`
+### `error: could not run 'llc'`
 
-You did not pass `--clang`, so the compiler tried to run `llc`, and `llc` is not
-on `PATH`. Pass `--clang "C:/Program Files/LLVM/bin/clang.exe"`, which is the
-supported path on Windows. The same exception names `clang` when the path given
-to `--clang` is wrong.
+The compiler could not start `llc`, `clang`, the `--cc` compiler, or the
+program named by `--run`. The rest of the message is the operating-system
+reason, usually that the file was not found. That line is followed by
+`error: llc failed` or `error: clang build failed`. The compiler exits with
+code `2`.
 
-### `Unhandled exception. System.IndexOutOfRangeException` at `Program.cs`
+Pass `--clang "C:/Program Files/LLVM/bin/clang.exe"`, which is the supported
+path on Windows. Without `--clang`, `llc` must be on `PATH`. `. tools\env.ps1`
+adds the default LLVM folder. A wrong `--clang`, `--llc`, or `--cc` path
+produces the same error.
 
-An option that takes a value, such as `-o`, `--clang`, or `--runtime`, was the
-last argument. Add the value.
+### `error: option -o requires a value`
+
+An option that takes a value was not followed by one. This covers `-o`,
+`--target`, `--runtime`, `--llc`, `--cc`, and `--clang`. Add the value. The
+compiler exits with code `2`.
 
 ### `--run` did nothing
 

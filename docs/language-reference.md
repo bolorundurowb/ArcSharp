@@ -289,14 +289,17 @@ Explicit casts `(T)x` are accepted when `T` is `int`, `long`, `bool`, `string`,
 |---|---|
 | Integer | `42`, `42L`, `42U`, `42UL` |
 | Floating point | `3.5` (a `double`), `3.5d`, `3.5f` |
-| Character | `'a'`, `'\n'` |
-| String | `"hello"`, `"tab\there"` |
+| Character | `'a'`, `'\n'`, `'\u0041'` |
+| String | `"hello"`, `"tab\there"`, `"\u0041"` |
 | Boolean and null | `true`, `false`, `null` |
 
-The escape sequences `\n`, `\t`, `\r`, `\0`, `\"`, `\'`, and `\\` work in
-character and string literals. Hexadecimal and binary literals, digit
-separators (`1_000`), exponents (`1e6`), Unicode escapes (`\u0041`), verbatim
-strings (`@"..."`), raw strings, and interpolated strings are not supported.
+The escape sequences `\n`, `\t`, `\r`, `\0`, `\"`, `\'`, `\\`, `\u` followed by
+four hex digits, and `\U` followed by eight hex digits work in character and
+string literals. `"\u0041"` is `A`. A `\u` or `\U` sequence that is not valid
+hex, or a code point above U+10FFFF, is error `ARC0004`. A character literal
+cannot hold a code point above U+FFFF. Hexadecimal and binary literals, digit
+separators (`1_000`), exponents (`1e6`), verbatim strings (`@"..."`), raw
+strings, and interpolated strings are not supported.
 
 Comments use `//` and `/* ... */`.
 
@@ -367,7 +370,6 @@ workaround.
 |---|---|
 | **Field initialisers are ignored.** `public int count = 5;` compiles, but the field starts as `0`. | Assign the value in the constructor. |
 | **String `==` compares references.** Two equal strings built separately are not `==`. | Avoid comparing strings for equality. There is no content comparison yet. |
-| **Printing a `bool` can be wrong.** `Console.WriteLine(a == b)` has been seen to print `True` when the comparison was false. An `if` on the same expression behaves correctly. The cause is a mismatch between the IR and the C runtime in how a `bool` argument is passed. | Branch on the value with `if`, and print a string from each branch. |
 | **Abstract methods fail to link.** Calling an `abstract` method through the base type compiles to IR that `clang` rejects with `use of undefined value`. | Declare the method `virtual` with a default body, and `override` it. |
 | **Overloads with the same number of parameters do not work.** With `Print(int)` and `Print(string)`, a call to the second reports `ARC2010`, and even when every call matches the first, `clang` reports `invalid redefinition of function`. | Give the methods different names. |
 | **Abstract classes can be instantiated.** `new Shape()` compiles when `Shape` is `abstract`. | Do not rely on the compiler to catch it. |
@@ -376,7 +378,6 @@ workaround.
 | **`WeakReference<T>` works only as a field type.** A local such as `WeakReference<Node> w = ...;` is parsed as a comparison and reported as `unknown name 'WeakReference'`. | Keep the weak reference in a field of an object. |
 | **Class casts are unchecked.** `(Dog)animal` succeeds even when `animal` is a `Cat`. | Use `animal as Dog` and test for `null`. |
 | **`char` prints as a number.** `Console.WriteLine('A')` prints `65`. | Use a one-character string. |
-| **Unicode escapes are not decoded.** `"\u0041"` does not produce `A`. | Write the character directly in the UTF-8 source file. |
 | **Small integer casts are rejected.** `(byte)x` and `new byte[n]` do not compile. | Use `int` or `long`. |
 
 If you find another difference, check it against `dotnet run` first, then

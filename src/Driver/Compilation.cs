@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using ArcSharp.Lexing;
 using ArcSharp.Syntax;
@@ -161,8 +162,22 @@ public static class Compilation
             psi.ArgumentList.Add(a);
         }
 
-        using var p = Process.Start(psi)!;
-        p.WaitForExit();
-        return p.ExitCode;
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                Console.Error.WriteLine($"error: could not run '{file}'");
+                return 2;
+            }
+
+            process.WaitForExit();
+            return process.ExitCode;
+        }
+        catch (Win32Exception ex)
+        {
+            Console.Error.WriteLine($"error: could not run '{file}': {ex.Message}");
+            return 2;
+        }
     }
 }

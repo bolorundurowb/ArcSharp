@@ -397,9 +397,8 @@ constructs and possible strong cycles from an ordinary `dotnet build`. It does
 not replace compiler diagnostics. The compiler has to report the same rules,
 because the analyser is optional. `ARC3xxx` is the shared catalogue.
 
-The defects found outside this list, such as ignored field initialisers and
-the `bool` argument mismatch, are recorded in the known-issues table of
-`docs/language-reference.md`.
+The defects found outside this list, such as ignored field initialisers, are
+recorded in the known-issues table of `docs/language-reference.md`.
 
 See `docs/roadmap.md` for the priority and the planned design of each item.
 

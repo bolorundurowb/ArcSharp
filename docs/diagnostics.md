@@ -55,6 +55,21 @@ adds several `ARC1001` errors at the last line. Fix the `ARC0002` first.
 logical operators are not implemented. Use `&&` or `||` for logic. There is no
 replacement for bitwise operations yet.
 
+Shift operators (`<<`, `>>`) use this code as well.
+
+### ARC0004
+
+**Error. Invalid Unicode escape.** A `\u` escape needs four hexadecimal digits
+and a `\U` escape needs eight. The code point must be at most U+10FFFF. A
+character literal cannot hold a code point above U+FFFF; write that character
+in a string instead.
+
+| Message | Meaning |
+|---|---|
+| `invalid Unicode escape` | A digit is missing or is not hexadecimal. |
+| `Unicode escape is outside the Unicode range` | The code point is above U+10FFFF. |
+| `Unicode escape does not fit in a character literal` | A character literal uses a code point above U+FFFF. |
+
 ## Parser
 
 ### ARC1001

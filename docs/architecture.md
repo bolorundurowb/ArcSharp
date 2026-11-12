@@ -293,7 +293,9 @@ This section records only how the subset is lowered.
   the body runs the same cleanup, innermost first for nested `using`
   statements, before branching to `func.exit`.
 - **`Console.Write` and `WriteLine`** and **`.Length`** are bound directly to
-  runtime functions; there is no library behind them.
+  runtime functions; there is no library behind them. A `bool` passed to the
+  runtime, including one concatenated into a string, is zero-extended from
+  `i1` to `i32` so that it matches the C `int` parameter.
 - **Compilation units** are merged: `using` directives are skipped, namespace
   names are discarded, and a trailing `?` on a type is ignored.
 - **Field initialisers** are parsed and then discarded. This is a known defect,

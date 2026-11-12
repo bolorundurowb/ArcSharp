@@ -107,6 +107,26 @@ try {
         }
     }
 
+    # A command line that must be rejected without crashing the compiler.
+    function Invoke-Usage {
+        param(
+            [string]   $Name,
+            [string]   $Want,
+            [string[]] $Arguments
+        )
+        $run = Invoke-Captured (@($dll) + $Arguments)
+        $text = $run.Out + $run.Err
+        $ok = ($run.ExitCode -eq 2) -and ($text -match [regex]::Escape($Want))
+        if ($ok) {
+            Write-Host "PASS  usage/$Name  ($Want)"
+            $script:pass++
+        }
+        else {
+            Write-Host "FAIL  usage/$Name  want='$Want' exit=$($run.ExitCode) output='$text'"
+            $script:fail++
+        }
+    }
+
     # A program that compiles, with a diagnostic either present or absent.
     function Invoke-Warns {
         param(
@@ -171,8 +191,10 @@ try {
     Invoke-Sample longconcat      0 "concat=20000000000 uint=3000000000" @("longconcat") # long and uint to string; C long is 32-bit on Windows
     Invoke-Sample using_stmt     0 "disposals=3"                @("using_stmt")           # using/IDisposable: declaration, expression, virtual, interface, null, return
     Invoke-Sample structs        0 "card=card copy tags=1,2"    @("structs")              # struct codegen: value semantics, reference fields, ref/out, nesting
+    Invoke-Sample boolprint      0 "cmp=False/True direct=False" @("boolprint")       # false comparison printed with WriteLine, and bool concatenation
+    Invoke-Sample unicode        0 "letter=A match=True bytes=4" @("unicode")         # \u and \U escapes
 
-    Write-Host "--- unsupported constructs must be rejected (ARC3001 / ARC0003 / ARC2011) ---"
+    Write-Host "--- unsupported constructs must be rejected (ARC3001 / ARC0003 / ARC0004 / ARC2011) ---"
     Invoke-MustFail break           "ARC3001" @("break")
     Invoke-MustFail try             "ARC3001" @("try")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
@@ -186,6 +208,22 @@ try {
     Invoke-MustFail struct_self     "ARC3001" @("struct_self")
     Invoke-MustFail struct_return   "ARC3001" @("struct_return")
     Invoke-MustFail using_bad       "ARC2011" @("using_bad")
+    Invoke-MustFail bad_escape      "ARC0004" @("bad_escape")
+
+    Write-Host "--- command line must report an error instead of crashing ---"
+    Invoke-Usage missing_option "requires a value" @((Join-Path $root "samples/fib.cs"), "-o")
+    $missingTool = Join-Path $build "no-such-tool.exe"
+    Invoke-Usage missing_clang "could not run" @(
+        (Join-Path $root "samples/fib.cs"),
+        "-o", (Join-Path $build "out/missing_clang"),
+        "--target", "windows",
+        "--clang", $missingTool,
+        "--runtime", $runtime)
+    Invoke-Usage missing_llc "could not run" @(
+        (Join-Path $root "samples/fib.cs"),
+        "-o", (Join-Path $build "out/missing_llc"),
+        "--target", "windows",
+        "--llc", $missingTool)
 
     Write-Host "--- cycle analysis (ARC3100) ---"
     Invoke-Warns cycle_strong  "ARC3100" $true  @("cycle_strong")

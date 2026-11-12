@@ -137,12 +137,12 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                      "declare i64 @arc_str_length(i8*)",
                      "declare i8* @arc_str_concat(i8*, i8*)",
                      "declare i8* @arc_str_from_int(i64)",
-                     "declare i8* @arc_str_from_bool(i1)",
+                     "declare i8* @arc_str_from_bool(i32)",
                      "declare i8* @arc_str_from_float(float)",
                      "declare i8* @arc_str_from_double(double)",
                      "declare void @arc_console_write(i8*, i32)",
                      "declare void @arc_console_write_int(i64, i32)",
-                     "declare void @arc_console_write_bool(i1, i32)",
+                     "declare void @arc_console_write_bool(i32, i32)",
                      "declare void @arc_console_write_float(float, i32)",
                      "declare void @arc_console_write_double(double, i32)",
             "declare void @arc_console_newline()",
@@ -1420,7 +1420,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var v = EmitR(e);
         if (e.Type.LlvmType == "i1")
         {
-            return Inst($"call i8* @arc_str_from_bool(i1 {v})");
+            return Inst($"call i8* @arc_str_from_bool(i32 {ZeroExtendBool(v)})");
         }
 
         if (e.Type.LlvmType == "i64")
@@ -1770,6 +1770,11 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
     }
 
+    // The runtime takes a C int. Passing the i1 itself leaves the rest of the
+    // argument register undefined, so a false value can arrive non-zero and
+    // print as True.
+    private string ZeroExtendBool(string value) => Inst($"zext i1 {value} to i32");
+
     private string EmitConsole(BoundConsoleCall c)
     {
         var nl = c.Which == ConsoleKind.WriteLine ? 1 : 0;
@@ -1791,7 +1796,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         if (t.LlvmType == "i1")
         {
             var v = EmitR(c.Argument);
-            Do($"call void @arc_console_write_bool(i1 {v}, i32 {nl})");
+            Do($"call void @arc_console_write_bool(i32 {ZeroExtendBool(v)}, i32 {nl})");
             return "";
         }
 
