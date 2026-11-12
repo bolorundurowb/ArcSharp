@@ -17,6 +17,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
     private List<string> _entry = [];
     private List<string> _body = [];
     private readonly List<string> _stmtTemps = [];
+    private readonly List<BoundUsing> _usingScopes = []; // open using statements, innermost last
     private int _tmp, _lbl, _strId;
     private bool _terminated;
     private MethodSymbol _curMethod = null!;
@@ -240,6 +241,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         _entry = [];
         _body = [];
         _stmtTemps.Clear();
+        _usingScopes.Clear();
         _localSlot.Clear();
         _tmp = 0;
         _lbl = 0;
@@ -379,6 +381,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             case BoundWhile w: EmitWhile(w); break;
             case BoundFor f: EmitFor(f); break;
             case BoundReturn r: EmitReturn(r); break;
+            case BoundUsing u: EmitUsing(u); break;
         }
     }
 
@@ -518,7 +521,84 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             ReleaseTemps(mark);
         }
 
+        // using scopes still open run their cleanup on the way out, innermost
+        // first, mirroring how C# finally blocks run before control leaves
+        for (var i = _usingScopes.Count - 1; i >= 0; i--)
+        {
+            EmitUsingCleanup(_usingScopes[i]);
+        }
+
         Term("br label %func.exit");
+    }
+
+    private void EmitUsing(BoundUsing u)
+    {
+        // 1. initialise the resource slot; the initializer yields an owned (+1)
+        //    value that is transferred into the slot like any local declaration
+        if (u.ResourceInit != null)
+        {
+            var mark = _stmtTemps.Count;
+            var v = EmitR(u.ResourceInit);
+            var slot = _localSlot[u.Resource.Id];
+            if (u.Resource.Type.IsReferenceType)
+            {
+                Do($"call void @arc_assign_take(i8** {slot}, i8* {v})");
+            }
+            else
+            {
+                Do($"store {u.Resource.Type.LlvmType} {v}, {u.Resource.Type.LlvmType}* {slot}");
+            }
+
+            ReleaseTemps(mark);
+        }
+
+        // 2. body; a return inside it runs the cleanup on the way out
+        _usingScopes.Add(u);
+        EmitStmt(u.Body);
+        _usingScopes.RemoveAt(_usingScopes.Count - 1);
+
+        // 3. cleanup on the normal path (a terminated body has already run it)
+        if (!_terminated)
+        {
+            EmitUsingCleanup(u);
+        }
+    }
+
+    private void EmitUsingCleanup(BoundUsing u)
+    {
+        var slot = _localSlot[u.Resource.Id];
+        if (u.Dispose != null)
+        {
+            // Dispose is skipped for a null resource, as C# skips Dispose when
+            // the resource is null. The receiver is read (+1) for the call and
+            // released again as a temporary, so the read is balanced; the
+            // slot's own +1 is released below.
+            var cur = Inst($"load i8*, i8** {slot}");
+            var notNull = Inst($"icmp ne i8* {cur}, null");
+            string callL = L("using.call"), endL = L("using.end");
+            Term($"br i1 {notNull}, label %{callL}, label %{endL}");
+            Lbl(callL);
+            var mark = _stmtTemps.Count;
+            EmitCall(new BoundCall
+            {
+                Receiver = new BoundLocal { Symbol = u.Resource, Type = u.Resource.Type },
+                Method = u.Dispose,
+                Arguments = [],
+                Type = u.Dispose.ReturnType,
+                Virtual = u.DisposeVirtual,
+                Interface = u.DisposeInterface,
+                Selector = u.DisposeSelector
+            });
+            ReleaseTemps(mark);
+            Term($"br label %{endL}");
+            Lbl(endL);
+        }
+
+        // release the resource and clear the slot, so the func.exit release of
+        // this local becomes a no-op on paths that reach here
+        var v = Inst($"load i8*, i8** {slot}");
+        Do($"call void @arc_release(i8* {v})");
+        Do($"store i8* null, i8** {slot}");
     }
 
     private void ReleaseTemps(int mark)

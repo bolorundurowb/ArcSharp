@@ -18,9 +18,9 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (18 samples, Windows x64, 10 November 2026)
+## Results (19 samples, Windows x64, 11 November 2026)
 
-`tools\verify.ps1` reported **18 passed, 0 failed** with the .NET 8.0.427 SDK.
+`tools\verify.ps1` reported **19 passed, 0 failed** with the .NET 8.0.427 SDK.
 `live=0` means every object was reclaimed. `numerics` and `byref` allocate
 nothing because they use only value types. `cycle_strong` is the leak the
 harness asserts on purpose.
@@ -45,6 +45,7 @@ harness asserts on purpose.
 | `isas` | `is` and `as` runtime type checks | alloc=5 dead=5 **live=0** | `as Cat: null` |
 | `covariance` | covariant store of a compatible reference element | alloc=3 dead=3 **live=0** | `stored Dog` |
 | `longconcat` | `long` and `uint` values converted to strings by concatenation; regression test for the 32-bit `long` truncation on Windows | alloc=7 dead=7 **live=0** | `concat=20000000000 uint=3000000000` |
+| `using_stmt` | `using`/`IDisposable`: declaration and expression forms, virtual and itable dispatch of `Dispose`, a `null` resource (cleanup skipped), and cleanup on the `return` path | alloc=25 dead=25 **live=0** | `dispose a`, `tmp delete`, `db closed`, `disposals=3` |
 
 ## Diagnostics
 

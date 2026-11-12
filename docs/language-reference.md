@@ -159,12 +159,45 @@ declared, and `clang` then rejects the duplicate symbol. See
 | `if` and `else`, including `else if` | The condition must be `bool`. |
 | `while` | |
 | `for` | Each of the three clauses is optional. |
+| `using` | `using (var x = expr) { ... }` or `using (expr) { ... }`. See below. |
 | `return` | With or without a value. |
 
 Not supported: `do`/`while`, `foreach`, `switch`, `break`, `continue`, `goto`,
-`try`/`catch`/`finally`, `throw`, `using` statements, `lock`, `yield`, `checked`,
+`try`/`catch`/`finally`, `throw`, `lock`, `yield`, `checked`,
 `unchecked`, `unsafe`, `fixed`, and local functions. Because `break` and
 `continue` are missing, end a loop by making its condition false.
+
+### `using` and `IDisposable`
+
+`using` maps a resource to deterministic ARC cleanup. When the statement's
+block is left, the compiler calls the resource's `Dispose()` method and then
+releases it, so the object is destroyed at the same point a garbage-collected
+run would only have scheduled it. Both forms are supported, one resource per
+statement:
+
+```csharp
+using (Logger log = new Logger("a")) { ... }   // declaration form
+using (var log = new Logger("a")) { ... }      // with 'var'
+using (log) { ... }                            // expression form
+```
+
+`IDisposable` is structural: no interface needs to be declared or implemented.
+Any type with a parameterless instance `void Dispose()` method can be a
+resource. When the resource's static type is an interface, `Dispose` is
+dispatched through the itable; otherwise a `virtual` `Dispose` dispatches
+through the vtable. The resource type must be a reference type, and the
+resource must have an initialiser. The binder reports
+[`ARC2011`](diagnostics.md#arc2011) when the resource is not disposable.
+
+Differences from .NET:
+
+- There is no exception unwinding yet, so the cleanup runs on normal paths
+  only: block completion and `return` inside the body. A runtime abort, such as
+  an index-out-of-range exit, skips it.
+- A `null` resource does nothing at scope exit, where .NET throws
+  `NullReferenceException` from the `Dispose` call.
+- `using var x = ...;` declarations without a block, and multiple resources in
+  one statement (`using (a = ..., b = ...)`), are not supported.
 
 ## Expressions and operators
 
@@ -248,7 +281,6 @@ and priority for each one.
 
 - Generics, except `WeakReference<T>`.
 - Exceptions: `try`, `catch`, `finally`, and `throw`.
-- `using` statements and `IDisposable`.
 - Struct code generation.
 - Enums, delegates, events, indexers, and records.
 - Lambdas, closures, local functions, `async`, `await`, and iterators.

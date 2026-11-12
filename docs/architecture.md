@@ -277,6 +277,13 @@ This section records only how the subset is lowered.
   on a mismatch. Value-type arrays stay invariant.
 - **`System.WeakReference<T>`** is the only generic type. `Name<T>` is parsed in
   field types and `new` expressions so that it can be recognised.
+- **`using`** owns the resource value in a scoped local (`arc_assign_take`),
+  calls its `Dispose()` method at scope exit — guarded against `null`,
+  dispatched through the vtable or itable when the method is `virtual` or the
+  resource is interface-typed — and then releases the resource and nulls the
+  slot, so the `func.exit` release of that local sees `null`. A `return` inside
+  the body runs the same cleanup, innermost first for nested `using`
+  statements, before branching to `func.exit`.
 - **`Console.Write` and `WriteLine`** and **`.Length`** are bound directly to
   runtime functions; there is no library behind them.
 - **Compilation units** are merged: `using` directives are skipped, namespace
@@ -321,10 +328,10 @@ and *scope* (just not built yet).
   live locals. The cleanup model anticipates that, and the emitter does not yet
   emit landing pads.
 - **Still absent from the language subset**: `decimal`, `enum`, nullable value
-  types, indexers, events, delegates, pattern matching, LINQ, `using`
-  statements / `IDisposable`, operator overloading, partial classes, extension
-  methods, `params`, optional and named arguments, and bitwise operators
-  (`&`, `|`, `^`, shifts). A single `&` or `|` is a lexer error (`ARC0003`).
+  types, indexers, events, delegates, pattern matching, LINQ, operator
+  overloading, partial classes, extension methods, `params`, optional and named
+  arguments, and bitwise operators (`&`, `|`, `^`, shifts). A single `&` or `|`
+  is a lexer error (`ARC0003`).
 - **Null safety.** A trailing `?` is parsed and then ignored.
 - **Namespace identity.** Declarations from every file are flattened into one
   program, so two types with the same simple name collide.
@@ -355,12 +362,13 @@ and *scope* (just not built yet).
 | `is` / `as`                                            | Implemented                           |
 | Array covariance (runtime store check)                 | Implemented                           |
 | Structs (value types)                                  | Parsed and bound; code generation pending |
+| `using` / `IDisposable` (deterministic `Dispose`)      | Implemented                           |
 | Interfaces (itable dispatch)                           | Implemented and verified              |
 | Diagnostics with codes (`ARC0001`…) and severities     | Implemented                           |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Parsed and discarded (defect)         |
-| Generics, async, closures, exceptions, `using`         | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
+| Generics, async, closures, exceptions                  | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 
 See [Verification](verification.md) for the exact set of sample programs that
 compile and run, with ARC alloc/free accounting, and the

@@ -139,6 +139,16 @@ public sealed class ReturnStmt : Stmt
     public Expr? Value;
 }
 
+// 'using (resource) body': the resource is disposed and released when the
+// statement leaves scope. Either a resource declaration ('using (var x = e)')
+// or a resource expression ('using (e)') is supported, one resource only.
+public sealed class UsingStmt : Stmt
+{
+    public LocalDeclStmt? Resource; // declaration form
+    public Expr? ResourceExpr; // expression form
+    public required Stmt Body;
+}
+
 // ---- Expressions -----------------------------------------------------------
 public abstract class Expr : Node
 {

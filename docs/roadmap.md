@@ -28,9 +28,15 @@ results are in [Verification](verification.md).
 - **Definite-assignment analysis** (§5) — a conservative structured flow pass
   warns on locals read before assignment (promotable to errors via `-Werror`).
 
-**Next phases (sequenced, not yet implemented):** `using`/`IDisposable` →
-generics (monomorphisation) → ARC hardening (atomics, borrow elision) → backend
-  upgrade (LLVM C API, debug info, optimisation, multi-target) → BCL & threading.
+**Phase 2 — language breadth (in progress):**
+
+- **`using` / `IDisposable`** (§1) — `using` statements lower to deterministic
+  ARC cleanup: the resource is owned by a scoped local, `Dispose()` runs at
+  scope exit on normal completion and on `return`, and the resource is released.
+
+**Next phases (sequenced, not yet implemented):** generics (monomorphisation) →
+ARC hardening (atomics, borrow elision) → backend upgrade (LLVM C API, debug
+info, optimisation, multi-target) → BCL & threading.
 Per-item design and "concrete first steps" are in the sections below.
 
 Status key in the section tables below: **[done]** shipped in a phase above;
@@ -48,7 +54,7 @@ unmarked items are still planned.
 | **`async`/`await`**                                | P1               | Lower to a **state machine class** (like Roslyn). The compiler generates `IAsyncStateMachine`-like machinery manually. ARC retain/release must be threaded across suspension points: every captured local/reference field in the state machine is managed, and the state machine itself is ARC-owned. Initially target single-threaded continuations; thread-pool dispatch is P2.                                                                 |
 | **Value types with reference fields**              | P0               | Lift the current "value-only struct fields" restriction. Copying a struct copies its value fields and **retains** its reference fields; assignment/ teardown **release** them. Struct methods receive `this` by managed reference. This is required for idiomatic C# (`struct Node { string name; }`).                                                                                                                                            |
 | **Properties, indexers, events, delegates, enums** | P0/P1            | **Properties** (P0) **[done]** lower to backing field + getter/setter method calls; auto-properties are implemented. **Indexers** (P1) are instance properties with parameters. **Events** (P1) are multicast delegate fields with `add`/`remove` accessors. **Delegates** (P1) are single/multicast function objects carrying a target reference and function pointer. **Enums** (P1) are integer-typed with named constants.                    |
-| **`using` / `IDisposable`**                        | P0               | Map `using` to deterministic ARC cleanup. A `using (var x = ...)` statement expands to try/finally (Section 1) where the finally block calls `x.Dispose()` and then releases `x`. `IDisposable` is an interface recognised by the compiler; any type implementing `Dispose()` can be used.                                                                                                                                                        |
+| **`using` / `IDisposable`**                        | P0 **[done]**    | Lowered to deterministic ARC cleanup without full `try`/`finally`: the resource value is owned by a scoped local, `Dispose()` runs at scope exit (block completion and `return`, innermost first when nested) guarded against `null`, then the resource is released. `IDisposable` is structural — any type with a parameterless instance `void Dispose()` method can be a resource; an interface-typed resource dispatches through the itable. When exception handling lands, unwinding will adopt the same cleanup paths (Section 1). |
 | **`ref` / `out` / `in` parameters**                | P0 **[done]**    | Generalised to **managed references** (`T&`) in the bound tree and LLVM IR. `ref` allows read/write aliasing of variables/fields/elements; `in` is read-only `ref`; `out` supports both existing-lvalue and declaration-via-inference (`out var` in `WeakReference<T>.TryGetTarget`). Reference-typed `ref` parameters do not change ownership — they borrow the slot.                                                                            |
 | **Full numeric tower**                             | P0/P1 **[done]** | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong` added. `float`/`double` already present. Integer conversions (`trunc`/`sext`/`zext`) and signed/unsigned arithmetic/comparisons operational. `decimal` remains emulated (omitted until BCL). Overflow-checked arithmetic (`checked`/`unchecked`, Section 5) is follow-up work.                                                                                                                     |
 
@@ -57,7 +63,9 @@ unmarked items are still planned.
 1. **Add `byte`, `short`, `float`, `double` literals and operators** — **[done]** lexer, binder, emitter, runtime formatters.
 2. **Generalise `out` to `ref`/`in`** — **[done]** introduced `ByRefArgExpr`/`BoundByRefArg`, by-ref parameter emission via `T*` / `T&`.
 3. **Properties** — **[done]** added `PropertyDecl` to AST/binder; lowered auto-properties to private backing field + `get_Prop`/`set_Prop` methods.
-4. **`using`** — add `UsingStmt` to the parser and lower to `try { ... } finally { x.Dispose(); }`.
+4. **`using`** — **[done]** added `UsingStmt` to the parser; lowered to
+   scoped-ownership cleanup: dispose at scope exit and on `return`, then
+   release (`ARC2011` when the resource is not disposable).
 5. **Generics** — add generic parameter lists to type/method declarations, build a substitution map, and instantiate closed types during binding.
 
 ---
@@ -282,7 +290,9 @@ its own.
 A pragmatic path from PoC to production:
 
 1. **Correctness foundation** — **[done]** definite assignment, `is`/`as`, array covariance. Null safety, xUnit test harness remain.
-2. **Language breadth** — **[partly done]** `ref`/`out`/`in`, properties, full numeric tower done. `using`/`IDisposable`, value types with reference fields remain.
+2. **Language breadth** — **[partly done]** `ref`/`out`/`in`, properties, the
+   full numeric tower, and `using`/`IDisposable` done. Value types with
+   reference fields remain.
 3. **Authoring diagnostics** — stop dropping unsupported syntax, warn on possible strong cycles, then ship the Roslyn analyser that mirrors those rules (section 7).
 4. **Generics** — monomorphisation engine; re-implement collections once generics land.
 5. **ARC hardening** — atomic refcounts, borrow/ownership elision, weak table, cycle collector.

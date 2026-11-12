@@ -119,6 +119,15 @@ public static class DefiniteAssignment
 
                     return false;
 
+                case BoundUsing u:
+                    if (u.ResourceInit != null)
+                    {
+                        VisitExpr(u.ResourceInit, assigned);
+                    }
+
+                    assigned.Add(u.Resource.Id);
+                    return VisitStmt(u.Body, assigned);
+
                 default:
                     return true;
             }

@@ -102,6 +102,7 @@ try {
     Invoke-Sample isas          0 "as Cat: null"               @("isas")                 # is/as runtime type checks
     Invoke-Sample covariance      0 "stored Dog"                 @("covariance")           # array covariance runtime check
     Invoke-Sample longconcat      0 "concat=20000000000 uint=3000000000" @("longconcat") # long and uint to string; C long is 32-bit on Windows
+    Invoke-Sample using_stmt     0 "disposals=3"                @("using_stmt")           # using/IDisposable: declaration, expression, virtual, interface, null, return
 
     Write-Host "=== $($script:pass) passed, $($script:fail) failed ==="
     if ($script:fail -ne 0) { exit 1 }

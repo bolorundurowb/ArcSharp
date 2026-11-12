@@ -524,9 +524,31 @@ public sealed class Parser(List<Token> tokens)
             TokenKind.IfKw => ParseIf(),
             TokenKind.WhileKw => ParseWhile(),
             TokenKind.ForKw => ParseFor(),
+            TokenKind.UsingKw => ParseUsing(),
             TokenKind.ReturnKw => ParseReturn(),
             _ => ParseSimpleStatement(requireSemicolon: true),
         };
+    }
+
+    private Stmt ParseUsing()
+    {
+        var line = Current.Line;
+        Expect(TokenKind.UsingKw);
+        Expect(TokenKind.OpenParen);
+        LocalDeclStmt? resource = null;
+        Expr? resourceExpr = null;
+        if (LooksLikeLocalDecl())
+        {
+            resource = (LocalDeclStmt)ParseSimpleStatement(requireSemicolon: false);
+        }
+        else
+        {
+            resourceExpr = ParseExpression();
+        }
+
+        Expect(TokenKind.CloseParen);
+        var body = ParseStatement();
+        return new UsingStmt { Resource = resource, ResourceExpr = resourceExpr, Body = body, Line = line };
     }
 
     private Stmt ParseSimpleStatement(bool requireSemicolon)

@@ -135,6 +135,19 @@ number of parameters. The binder chooses the first one declared, so
 The message `cannot convert '<null>' to 'T'` or `'<error>'` is usually a
 follow-on error. Fix the errors reported before it.
 
+### ARC2011
+
+**Error. Invalid `using` resource.** The resource of a `using` statement does
+not meet the cleanup contract: the compiler needs a parameterless instance
+`void Dispose()` method to call at scope exit. The messages are:
+
+| Message | Cause |
+|---|---|
+| `type 'T' used in 'using' has no parameterless 'void Dispose()' method` | The resource type has no instance `Dispose()` method, or its `Dispose` is `static`. `IDisposable` is structural: implementing the interface is not required, but the method must exist. |
+| `interface 'I' has no parameterless 'Dispose' method` | The interface-typed resource does not declare `Dispose`. |
+| `type 'T' used in 'using' must be a reference type` | A value type cannot be a resource yet, because struct code generation is not implemented. |
+| `'using' resource must have an initializer` | `using (Foo x)` without `= ...`. |
+
 ### ARC2050
 
 **Error. No entry point.** No class declares `static void Main()` or

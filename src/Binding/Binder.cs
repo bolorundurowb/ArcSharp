@@ -32,6 +32,7 @@ public sealed class Binder
     private Dictionary<string, ParamSymbol> _params = [];
     private List<LocalSymbol> _methodLocals = [];
     private int _localId;
+    private int _usingId; // disambiguates hidden using-resource locals
 
     public Binder()
     {
@@ -646,6 +647,7 @@ public sealed class Binder
         },
         WhileStmt w => new BoundWhile { Condition = BindToBool(w.Condition), Body = BindStatement(w.Body) },
         ForStmt f => BindFor(f),
+        UsingStmt u => BindUsing(u),
         ReturnStmt r => BindReturn(r),
         _ => new BoundBlock()
     };
@@ -689,6 +691,115 @@ public sealed class Binder
         var body = BindStatement(f.Body);
         PopScope();
         return new BoundFor { Init = init, Condition = cond, Update = upd, Body = body };
+    }
+
+    private BoundStmt BindUsing(UsingStmt u)
+    {
+        // The resource local is scoped to the using statement: the emitter
+        // disposes and releases it at scope exit, then nulls the slot so the
+        // func.exit release below sees null. This keeps every resource at
+        // exactly one release on every normal path.
+        PushScope();
+        BoundExpr? init = null;
+        TypeSymbol type;
+        string name;
+        int line;
+        if (u.Resource != null)
+        {
+            line = u.Resource.Line;
+            name = u.Resource.Name;
+            init = u.Resource.Initializer == null ? null : BindExpr(u.Resource.Initializer);
+            if (u.Resource.Type.Name == "var")
+            {
+                if (init == null)
+                {
+                    Report(line, "'var' requires an initializer");
+                    type = _error;
+                }
+                else
+                {
+                    type = init.Type == _null ? _error : init.Type;
+                }
+            }
+            else
+            {
+                type = ResolveType(u.Resource.Type);
+            }
+
+            if (init != null)
+            {
+                init = Convert(init, type, line);
+            }
+
+            if (init == null)
+            {
+                Report(line, "'using' resource must have an initializer", "ARC2011");
+            }
+        }
+        else
+        {
+            line = u.ResourceExpr!.Line;
+            init = BindExpr(u.ResourceExpr);
+            type = init.Type;
+            // Hidden local: '#' cannot appear in a source identifier, so the
+            // name can never collide with user code.
+            name = "#using" + _usingId++;
+        }
+
+        var res = DeclareLocal(name, type, line);
+
+        // IDisposable is structural: any type with a parameterless instance
+        // 'void Dispose()' method can be a resource. An interface-typed
+        // resource dispatches through the itable like any interface call.
+        MethodSymbol? dispose = null;
+        var iface = false;
+        var virt = false;
+        var sel = -1;
+        if (type != _error && type != _null && init != null)
+        {
+            if (!type.IsReferenceType)
+            {
+                Report(line, $"type '{type}' used in 'using' must be a reference type", "ARC2011");
+            }
+            else if (type.Kind == TypeKind.Interface)
+            {
+                if (_selectors.TryGetValue($"{type.Name}::Dispose/0", out sel))
+                {
+                    dispose = FindInterfaceMethod(type, "Dispose", 0);
+                    iface = true;
+                }
+                else
+                {
+                    Report(line, $"interface '{type}' has no parameterless 'Dispose' method", "ARC2011");
+                }
+            }
+            else
+            {
+                dispose = FindMethod(type, "Dispose", 0);
+                if (dispose == null || dispose.IsStatic || dispose.ReturnType.Kind != TypeKind.Void)
+                {
+                    Report(line, $"type '{type}' used in 'using' has no parameterless 'void Dispose()' method", "ARC2011");
+                    dispose = null;
+                }
+                else
+                {
+                    virt = dispose.IsVirtual || dispose.IsOverride;
+                }
+            }
+        }
+
+        var body = BindStatement(u.Body);
+        PopScope();
+        return new BoundUsing
+        {
+            Resource = res,
+            ResourceInit = init,
+            Body = body,
+            Dispose = dispose,
+            DisposeInterface = iface,
+            DisposeVirtual = virt,
+            DisposeSelector = sel
+        };
     }
 
     private BoundStmt BindReturn(ReturnStmt r)

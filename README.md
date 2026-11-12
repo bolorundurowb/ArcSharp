@@ -71,6 +71,8 @@ reclaimed.
   `string`, plus single-dimensional arrays.
 - `ref`, `out`, and `in` parameters, and `is` and `as`.
 - `if`, `while`, `for`, and `return`.
+- `using` statements with deterministic `Dispose()` at scope exit
+  (`IDisposable` is structural: any type with a `Dispose()` method qualifies).
 - Cycle breaking with the standard `System.WeakReference<T>`.
 - Several source files compiled into one program.
 - Diagnostics with stable codes, and a definite-assignment warning.
@@ -82,7 +84,7 @@ has the full list, the differences from .NET, and the known issues.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 18 sample programs pass the test
+executable, with ARC accounting) works, and 19 sample programs pass the test
 harness on Windows x64. The compiler can also emit IR for Linux x64, but that
 path is not tested. See [Verification](docs/verification.md) for the latest
 results and [Roadmap](docs/roadmap.md) for the plan.

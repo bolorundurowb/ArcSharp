@@ -210,6 +210,21 @@ public sealed class BoundReturn : BoundStmt
     public BoundExpr? Value;
 }
 
+// 'using' statement: the resource local holds the owned (+1) resource for the
+// body, and is disposed and released at scope exit. Dispose is null when the
+// resource has no parameterless 'void Dispose()' method (an error was already
+// reported, or the resource is always null).
+public sealed class BoundUsing : BoundStmt
+{
+    public required LocalSymbol Resource;
+    public BoundExpr? ResourceInit;
+    public required BoundStmt Body;
+    public MethodSymbol? Dispose;
+    public bool DisposeInterface;
+    public bool DisposeVirtual;
+    public int DisposeSelector = -1;
+}
+
 public sealed class BoundMethodBody
 {
     public required MethodSymbol Method;
