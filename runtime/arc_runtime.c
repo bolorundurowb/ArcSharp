@@ -196,6 +196,32 @@ void* arc_str_from_int(intptr_t v) {
     int n = snprintf(tmp, sizeof tmp, "%lld", (long long)v);
     return arc_str_new(tmp, n);
 }
+/* A C# char is one UTF-16 code unit. Encode a scalar in the BMP; a surrogate
+   has no character of its own. */
+static int arc_utf8_unit(unsigned int u, unsigned char* out) {
+    if (u <= 0x7F) {
+        out[0] = (unsigned char)u;
+        return 1;
+    }
+    if (u <= 0x7FF) {
+        out[0] = (unsigned char)(0xC0 | (u >> 6));
+        out[1] = (unsigned char)(0x80 | (u & 0x3F));
+        return 2;
+    }
+    if (u <= 0xFFFF && (u < 0xD800 || u > 0xDFFF)) {
+        out[0] = (unsigned char)(0xE0 | (u >> 12));
+        out[1] = (unsigned char)(0x80 | ((u >> 6) & 0x3F));
+        out[2] = (unsigned char)(0x80 | (u & 0x3F));
+        return 3;
+    }
+    out[0] = '?';
+    return 1;
+}
+void* arc_str_from_char(int c) {
+    unsigned char tmp[3];
+    int n = arc_utf8_unit((unsigned int)c, tmp);
+    return arc_str_new((const char*)tmp, n);
+}
 void* arc_str_from_bool(int v) {
     return v ? arc_str_new("True", 4) : arc_str_new("False", 5);
 }
@@ -253,6 +279,12 @@ void arc_console_write(void* s, int nl) {
 }
 void arc_console_write_int(long long v, int nl) {
     printf("%lld", v);
+    if (nl) putchar('\n');
+}
+void arc_console_write_char(int c, int nl) {
+    unsigned char tmp[3];
+    int n = arc_utf8_unit((unsigned int)c, tmp);
+    fwrite(tmp, 1, (size_t)n, stdout);
     if (nl) putchar('\n');
 }
 void arc_console_write_bool(int v, int nl) {

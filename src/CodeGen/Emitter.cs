@@ -137,11 +137,13 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                      "declare i64 @arc_str_length(i8*)",
                      "declare i8* @arc_str_concat(i8*, i8*)",
                      "declare i8* @arc_str_from_int(i64)",
+                     "declare i8* @arc_str_from_char(i32)",
                      "declare i8* @arc_str_from_bool(i32)",
                      "declare i8* @arc_str_from_float(float)",
                      "declare i8* @arc_str_from_double(double)",
                      "declare void @arc_console_write(i8*, i32)",
                      "declare void @arc_console_write_int(i64, i32)",
+                     "declare void @arc_console_write_char(i32, i32)",
                      "declare void @arc_console_write_bool(i32, i32)",
                      "declare void @arc_console_write_float(float, i32)",
                      "declare void @arc_console_write_double(double, i32)",
@@ -1423,6 +1425,11 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             return Inst($"call i8* @arc_str_from_bool(i32 {ZeroExtendBool(v)})");
         }
 
+        if (e.Type.Name == "char")
+        {
+            return Inst($"call i8* @arc_str_from_char(i32 {v})");
+        }
+
         if (e.Type.LlvmType == "i64")
         {
             return Inst($"call i8* @arc_str_from_int(i64 {v})");
@@ -1797,6 +1804,13 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         {
             var v = EmitR(c.Argument);
             Do($"call void @arc_console_write_bool(i32 {ZeroExtendBool(v)}, i32 {nl})");
+            return "";
+        }
+
+        if (t.Name == "char")
+        {
+            var v = EmitR(c.Argument);
+            Do($"call void @arc_console_write_char(i32 {v}, i32 {nl})");
             return "";
         }
 
