@@ -334,16 +334,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeProperty(SyntaxNodeAnalysisContext context)
     {
         var p = (PropertyDeclarationSyntax)context.Node;
-        if (p.Modifiers.Any(t => t.IsKind(SyntaxKind.StaticKeyword)))
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, p.Identifier.GetLocation(),
-                "static auto-properties are not supported: use a public static field"));
-            return;
-        }
-
         var hasSetter = p.AccessorList?.Accessors.Any(a =>
-            a.IsKind(SyntaxKind.SetAccessorDeclaration) || a.IsKind(SyntaxKind.InitAccessorDeclaration)) ?? false;
+            a.IsKind(SyntaxKind.SetAccessorDeclaration) || a.IsKind(SyntaxKind.InitAccessorDeclaration)) == true;
         if (!hasSetter)
         {
             context.ReportDiagnostic(Diagnostic.Create(

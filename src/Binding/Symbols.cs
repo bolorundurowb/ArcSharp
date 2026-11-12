@@ -126,7 +126,9 @@ public sealed class FieldSymbol
     public bool IsWeak;
     public int Index; // slot index among instance fields (0-based)
 
-    public string MangledStatic => $"@{Owner.Name}__sf__{Name}";
+    // The generated auto-property backing name contains '<' and '>', which are
+    // not legal in an unquoted LLVM identifier.
+    public string MangledStatic => "@" + LlvmNames.Ident($"{Owner.Name}__sf__{Name}");
 
     // byte offset within the owner, set by the binder's layout: 24 + running
     // total for class instances (after the header), 8 * i for struct values

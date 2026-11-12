@@ -44,7 +44,6 @@ public sealed class UnsupportedConstructTests
         { "multi-dimensional array", "class C { static void Main() { int[,] xs = new int[1, 1]; } }" },
         { "sealed class", "sealed class C { }" },
         { "partial class", "partial class C { }" },
-        { "static auto-property", "class C { public static int P { get; set; } }" },
         { "get-only property", "class C { public int P { get; } }" },
         { "top-level statements", "System.Console.WriteLine(\"x\");" },
         { "tuple", "class C { static void Main() { (int a, int b) t = (1, 2); } }" },
@@ -92,6 +91,10 @@ public sealed class UnsupportedConstructTests
         {
             "static field",
             "class Program { public static int Count; static void Main() { Count = 2; System.Console.WriteLine(Count); } }"
+        },
+        {
+            "static auto-property",
+            "class Program { public static int Count { get; set; } static void Main() { Count = 2; System.Console.WriteLine(Count); } }"
         },
         {
             "while and if",
