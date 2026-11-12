@@ -193,8 +193,11 @@ try {
     Invoke-Sample structs        0 "card=card copy tags=1,2"    @("structs")              # struct codegen: value semantics, reference fields, ref/out, nesting
     Invoke-Sample boolprint      0 "cmp=False/True direct=False" @("boolprint")       # false comparison printed with WriteLine, and bool concatenation
     Invoke-Sample unicode        0 "letter=A match=True bytes=4" @("unicode")         # \u and \U escapes
+    Invoke-Sample overloads      0 "int=7 str=ok 4 4"           @("overloads")        # same-arity overloads, static and instance
+    Invoke-Sample charprint      0 "concat=B direct=A"          @("charprint")        # char prints as a character
+    Invoke-Sample staticprop     0 "count=4"                    @("staticprop")       # static auto-property
 
-    Write-Host "--- unsupported constructs must be rejected (ARC3001 / ARC0003 / ARC0004 / ARC2011) ---"
+    Write-Host "--- unsupported constructs must be rejected (ARC3001 / ARC0003 / ARC0004 / ARC2011 / ARC2012) ---"
     Invoke-MustFail break           "ARC3001" @("break")
     Invoke-MustFail try             "ARC3001" @("try")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
@@ -209,6 +212,7 @@ try {
     Invoke-MustFail struct_return   "ARC3001" @("struct_return")
     Invoke-MustFail using_bad       "ARC2011" @("using_bad")
     Invoke-MustFail bad_escape      "ARC0004" @("bad_escape")
+    Invoke-MustFail abstract_new    "ARC2012" @("abstract_new")
 
     Write-Host "--- command line must report an error instead of crashing ---"
     Invoke-Usage missing_option "requires a value" @((Join-Path $root "samples/fib.cs"), "-o")
