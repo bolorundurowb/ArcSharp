@@ -175,16 +175,67 @@ public sealed class MethodSymbol
     public int VtableSlot = -1;
     public MethodDecl? Syntax;
 
+    public string SignatureId
+    {
+        get
+        {
+            if (Parameters.Count == 0)
+            {
+                return "0";
+            }
+
+            var parts = new string[Parameters.Count];
+            for (var i = 0; i < Parameters.Count; i++)
+            {
+                parts[i] = ParamToken(Parameters[i]);
+            }
+
+            return Parameters.Count + "_" + string.Join("_", parts);
+        }
+    }
+
+    // The parameter types are part of the name. Two methods that share a name
+    // and an arity would otherwise be one LLVM symbol, and clang rejects the
+    // redefinition.
     public string MangledName
     {
         get
         {
-            if (IsConstructor)
-            {
-                return $"{Owner.Name}__ctor__{Parameters.Count}";
-            }
-
-            return $"{Owner.Name}__{Name}__{Parameters.Count}";
+            var kind = IsConstructor ? "ctor" : Name;
+            return LlvmNames.Ident($"{Owner.Name}__{kind}__{SignatureId}");
         }
+    }
+
+    private static string ParamToken(ParamSymbol p)
+    {
+        var prefix = p.RefKind switch
+        {
+            RefKind.Ref => "ref_",
+            RefKind.Out => "out_",
+            RefKind.In => "in_",
+            _ => ""
+        };
+        return prefix + p.Type.Name;
+    }
+}
+
+static class LlvmNames
+{
+    public static string Ident(string name)
+    {
+        var sb = new System.Text.StringBuilder(name.Length);
+        foreach (var c in name)
+        {
+            if (c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '.' or '$' or '-')
+            {
+                sb.Append(c);
+            }
+            else
+            {
+                sb.Append('_');
+            }
+        }
+
+        return sb.ToString();
     }
 }

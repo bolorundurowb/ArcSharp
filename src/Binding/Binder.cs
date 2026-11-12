@@ -23,7 +23,7 @@ public sealed class Binder
     // predefined
     private readonly TypeSymbol _int, _long, _bool, _char, _float, _double, _byte, _sbyte, _short, _ushort, _uint, _ulong, _void, _string, _null, _error;
 
-    // interface selectors:  key "Iface::Method/argc" -> selector index
+    // interface selectors: key "Iface::Method/argc[:types]" -> selector index
     private readonly Dictionary<string, int> _selectors = [];
 
     // per-method binding state
@@ -150,7 +150,7 @@ public sealed class Binder
         {
             foreach (var m in t.InterfaceSyntax!.Members.OfType<MethodDecl>())
             {
-                var key = $"{t.Name}::{m.Name}/{m.Parameters.Count}";
+                var key = SelectorKey(t.Name, m.Name, m.Parameters);
                 if (!_selectors.ContainsKey(key))
                 {
                     _selectors[key] = _selectors.Count;
@@ -413,11 +413,26 @@ public sealed class Binder
             }
 
             t.Methods.Add(m);
+            foreach (var existing in t.Methods)
+            {
+                if (existing == m)
+                {
+                    continue;
+                }
+
+                if (existing.IsConstructor == m.IsConstructor
+                    && (m.IsConstructor || existing.Name == m.Name)
+                    && SameSignature(existing, m))
+                {
+                    var what = m.IsConstructor ? "constructor" : $"method '{m.Name}'";
+                    Report(md.Line, $"{what} is already declared with these parameters");
+                }
+            }
 
             // vtable slot assignment
             if (m.IsOverride)
             {
-                var baseM = FindVirtual(t.BaseType, m.Name, m.Parameters.Count);
+                var baseM = FindVirtual(t.BaseType, m);
                 if (baseM != null)
                 {
                     m.VtableSlot = baseM.VtableSlot;
@@ -441,13 +456,13 @@ public sealed class Binder
         {
             foreach (var im in iface.InterfaceSyntax!.Members.OfType<MethodDecl>())
             {
-                var key = $"{iface.Name}::{im.Name}/{im.Parameters.Count}";
+                var key = SelectorKey(iface.Name, im.Name, im.Parameters);
                 if (!_selectors.TryGetValue(key, out var sel))
                 {
                     continue;
                 }
 
-                var impl = FindMethod(t, im.Name, im.Parameters.Count);
+                var impl = FindExact(t, im.Name, im.Parameters);
                 if (impl != null)
                 {
                     t.InterfaceImpl[sel] = impl;
@@ -478,13 +493,13 @@ public sealed class Binder
         }
     }
 
-    private MethodSymbol? FindVirtual(TypeSymbol? t, string name, int argc)
+    private MethodSymbol? FindVirtual(TypeSymbol? t, MethodSymbol method)
     {
         while (t != null)
         {
             foreach (var m in t.Methods)
             {
-                if (m.Name == name && m.Parameters.Count == argc && (m.IsVirtual || m.IsOverride))
+                if (m.Name == method.Name && SameSignature(m, method) && (m.IsVirtual || m.IsOverride))
                 {
                     return m;
                 }
@@ -494,6 +509,24 @@ public sealed class Binder
         }
 
         return null;
+    }
+
+    private static bool SameSignature(MethodSymbol a, MethodSymbol b)
+    {
+        if (a.Parameters.Count != b.Parameters.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < a.Parameters.Count; i++)
+        {
+            if (a.Parameters[i].Type != b.Parameters[i].Type || a.Parameters[i].RefKind != b.Parameters[i].RefKind)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private MethodSymbol? FindMethod(TypeSymbol? t, string name, int argc)
@@ -525,6 +558,296 @@ public sealed class Binder
         }
 
         return null;
+    }
+
+    private MethodSymbol? ResolveCtor(TypeSymbol t, List<BoundExpr> args, int line)
+    {
+        var found = new List<MethodSymbol>();
+        foreach (var m in t.Methods)
+        {
+            if (m.IsConstructor && m.Parameters.Count == args.Count)
+            {
+                found.Add(m);
+            }
+        }
+
+        if (found.Count == 0)
+        {
+            if (args.Count != 0)
+            {
+                Report(line, $"no constructor of '{t.Name}' takes {args.Count} arguments");
+            }
+
+            return null;
+        }
+
+        if (found.Count == 1)
+        {
+            return found[0];
+        }
+
+        var applicable = ApplicableOnes(found, args);
+        if (applicable.Count == 0)
+        {
+            Report(line, $"no constructor of '{t.Name}' matches the arguments");
+            return null;
+        }
+
+        return PickBest(applicable, args, t.Name, line);
+    }
+
+    private MethodSymbol? FindExact(TypeSymbol? t, string name, List<ParameterSyntax> parameters)
+    {
+        while (t != null)
+        {
+            foreach (var m in t.Methods)
+            {
+                if (m.IsConstructor || m.Name != name || m.Parameters.Count != parameters.Count)
+                {
+                    continue;
+                }
+
+                var match = true;
+                for (var i = 0; i < parameters.Count; i++)
+                {
+                    if (m.Parameters[i].Type != ResolveType(parameters[i].Type)
+                        || m.Parameters[i].RefKind != parameters[i].RefKind)
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
+                {
+                    return m;
+                }
+            }
+
+            t = t.BaseType;
+        }
+
+        return null;
+    }
+
+    private string SelectorKey(string owner, string name, List<ParameterSyntax> parameters)
+    {
+        if (parameters.Count == 0)
+        {
+            return $"{owner}::{name}/0";
+        }
+
+        var parts = new string[parameters.Count];
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            parts[i] = ParamToken(ResolveType(parameters[i].Type), parameters[i].RefKind);
+        }
+
+        return $"{owner}::{name}/{parameters.Count}:{string.Join(",", parts)}";
+    }
+
+    private static string SelectorKey(MethodSymbol m)
+    {
+        if (m.Parameters.Count == 0)
+        {
+            return $"{m.Owner.Name}::{m.Name}/0";
+        }
+
+        var parts = new string[m.Parameters.Count];
+        for (var i = 0; i < m.Parameters.Count; i++)
+        {
+            var p = m.Parameters[i];
+            parts[i] = ParamToken(p.Type, p.RefKind);
+        }
+
+        return $"{m.Owner.Name}::{m.Name}/{m.Parameters.Count}:{string.Join(",", parts)}";
+    }
+
+    private static string ParamToken(TypeSymbol type, RefKind kind) => kind switch
+    {
+        RefKind.Ref => "ref " + type.Name,
+        RefKind.Out => "out " + type.Name,
+        RefKind.In => "in " + type.Name,
+        _ => type.Name
+    };
+
+    private MethodSymbol? SelectMethod(TypeSymbol? type, string name, List<BoundExpr> args, bool staticOnly, int line, string noneMessage)
+    {
+        var found = CollectMethods(type, name, args.Count, staticOnly);
+        if (found.Count == 0)
+        {
+            Report(line, noneMessage);
+            return null;
+        }
+
+        if (found.Count == 1 || args.Exists(a => a.Type == _error))
+        {
+            return found[0];
+        }
+
+        var applicable = ApplicableOnes(found, args);
+        if (applicable.Count == 0)
+        {
+            Report(line, $"no overload of '{name}' matches the arguments");
+            return null;
+        }
+
+        return PickBest(applicable, args, name, line);
+    }
+
+    private List<MethodSymbol> CollectMethods(TypeSymbol? type, string name, int argc, bool staticOnly)
+    {
+        var result = new List<MethodSymbol>();
+        var hidden = new HashSet<string>();
+        while (type != null)
+        {
+            foreach (var m in type.Methods)
+            {
+                if (m.IsConstructor || m.Name != name || m.Parameters.Count != argc)
+                {
+                    continue;
+                }
+
+                if (staticOnly && !m.IsStatic)
+                {
+                    continue;
+                }
+
+                if (!hidden.Add(m.SignatureId))
+                {
+                    continue;
+                }
+
+                result.Add(m);
+            }
+
+            type = type.BaseType;
+        }
+
+        return result;
+    }
+
+    private List<MethodSymbol> ApplicableOnes(List<MethodSymbol> methods, List<BoundExpr> args)
+    {
+        var applicable = new List<MethodSymbol>();
+        foreach (var m in methods)
+        {
+            if (Applicable(m, args))
+            {
+                applicable.Add(m);
+            }
+        }
+
+        return applicable;
+    }
+
+    private bool Applicable(MethodSymbol m, List<BoundExpr> args)
+    {
+        for (var i = 0; i < m.Parameters.Count; i++)
+        {
+            var p = m.Parameters[i];
+            var arg = args[i];
+            if (p.RefKind != RefKind.None)
+            {
+                if (arg is not BoundByRefArg byRef || byRef.Kind != p.RefKind || (byRef.Type != p.Type && byRef.Type != _error))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (arg is BoundByRefArg || !CanConvert(arg.Type, p.Type))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private MethodSymbol? PickBest(List<MethodSymbol> applicable, List<BoundExpr> args, string name, int line)
+    {
+        if (applicable.Count == 1)
+        {
+            return applicable[0];
+        }
+
+        var best = -1;
+        MethodSymbol? chosen = null;
+        var tie = false;
+        foreach (var m in applicable)
+        {
+            var score = 0;
+            for (var i = 0; i < args.Count; i++)
+            {
+                if (args[i].Type == m.Parameters[i].Type)
+                {
+                    score++;
+                }
+            }
+
+            if (score > best)
+            {
+                best = score;
+                chosen = m;
+                tie = false;
+            }
+            else if (score == best)
+            {
+                tie = true;
+            }
+        }
+
+        if (tie || chosen == null)
+        {
+            Report(line, $"call to '{name}' is ambiguous");
+            return null;
+        }
+
+        return chosen;
+    }
+
+    private bool CanConvert(TypeSymbol from, TypeSymbol to)
+    {
+        if (from == to || to == _error || from == _error)
+        {
+            return true;
+        }
+
+        if (from == _null && to.IsReferenceType)
+        {
+            return true;
+        }
+
+        if (from == _int && to == _long)
+        {
+            return true;
+        }
+
+        if (from == _char && (to == _int || to == _long))
+        {
+            return true;
+        }
+
+        if (IsNumeric(from) && IsNumeric(to))
+        {
+            return true;
+        }
+
+        if (from.IsReferenceType && to.IsReferenceType && RefCompatible(from, to))
+        {
+            return true;
+        }
+
+        if (from.Kind == TypeKind.Array && to.Kind == TypeKind.Array
+            && from.ElementType!.IsReferenceType && to.ElementType!.IsReferenceType
+            && RefCompatible(from.ElementType, to.ElementType))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     // ---- type resolution ---------------------------------------------------
@@ -640,10 +963,16 @@ public sealed class Binder
         }
 
         var args = argSyntax.Select(BindExpr).ToList();
-        var target = FindCtor(targetType, args.Count);
+        var target = md.HasCtorInit
+            ? ResolveCtor(targetType, args, md.Line)
+            : FindCtor(targetType, 0);
         if (target == null)
         {
-            Report(md.Line, $"no matching constructor on '{targetType}'");
+            if (!md.HasCtorInit || args.Count == 0)
+            {
+                Report(md.Line, $"no matching constructor on '{targetType}'");
+            }
+
             return null;
         }
 
@@ -1067,14 +1396,14 @@ public sealed class Binder
             if (ma.Target is NameExpr tn && _types.TryGetValue(tn.Name, out var typeRef)
                                          && LookupLocal(tn.Name) == null && !_params.ContainsKey(tn.Name))
             {
-                var sm = FindMethod(typeRef, ma.Name, args.Count);
-                if (sm != null && sm.IsStatic)
+                var sm = SelectMethod(typeRef, ma.Name, args, staticOnly: true, inv.Line,
+                    $"'{tn.Name}' has no static method '{ma.Name}'");
+                if (sm == null)
                 {
-                    return MakeCall(null, sm, args, inv.Line);
+                    return Err();
                 }
 
-                Report(inv.Line, $"'{tn.Name}' has no static method '{ma.Name}'");
-                return Err();
+                return MakeCall(null, sm, args, inv.Line);
             }
 
             // instance / virtual / interface method
@@ -1086,10 +1415,15 @@ public sealed class Binder
 
             if (recv.Type.Kind == TypeKind.Interface)
             {
-                var key = $"{recv.Type.Name}::{ma.Name}/{args.Count}";
-                if (_selectors.TryGetValue(key, out var sel))
+                var im = SelectMethod(recv.Type, ma.Name, args, staticOnly: false, inv.Line,
+                    $"interface '{recv.Type}' has no method '{ma.Name}'");
+                if (im == null)
                 {
-                    var im = FindInterfaceMethod(recv.Type, ma.Name, args.Count)!;
+                    return Err();
+                }
+
+                if (_selectors.TryGetValue(SelectorKey(im), out var sel))
+                {
                     var call = MakeCall(recv, im, args, inv.Line);
                     if (call is BoundCall bc)
                     {
@@ -1105,10 +1439,10 @@ public sealed class Binder
                 return Err();
             }
 
-            var method = FindMethod(recv.Type, ma.Name, args.Count);
+            var method = SelectMethod(recv.Type, ma.Name, args, staticOnly: false, inv.Line,
+                $"'{recv.Type}' has no method '{ma.Name}'");
             if (method == null)
             {
-                Report(inv.Line, $"'{recv.Type}' has no method '{ma.Name}'");
                 return Err();
             }
 
@@ -1123,10 +1457,10 @@ public sealed class Binder
 
         if (inv.Callee is NameExpr nm)
         {
-            var method = FindMethod(_curType, nm.Name, args.Count);
+            var method = SelectMethod(_curType, nm.Name, args, staticOnly: false, inv.Line,
+                $"unknown method '{nm.Name}'");
             if (method == null)
             {
-                Report(inv.Line, $"unknown method '{nm.Name}'");
                 return Err();
             }
 
@@ -1321,17 +1655,13 @@ public sealed class Binder
         }
 
         var args = no.Arguments.Select(BindExpr).ToList();
-        var ctor = FindCtor(t, args.Count);
+        var ctor = ResolveCtor(t, args, no.Line);
         if (ctor != null)
         {
             for (var i = 0; i < args.Count; i++)
             {
                 args[i] = Convert(args[i], ctor.Parameters[i].Type, no.Line);
             }
-        }
-        else if (args.Count != 0)
-        {
-            Report(no.Line, $"no constructor of '{no.TypeName}' takes {args.Count} arguments");
         }
 
         return new BoundNewObject { Ctor = ctor, Arguments = args, Type = t };
