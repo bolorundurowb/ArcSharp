@@ -1314,6 +1314,12 @@ public sealed class Binder
             return Err();
         }
 
+        if (t.Kind == TypeKind.Class && t.ClassSyntax is { IsAbstract: true })
+        {
+            Report(no.Line, $"cannot instantiate abstract class '{t.Name}'", "ARC2012");
+            return Err();
+        }
+
         var args = no.Arguments.Select(BindExpr).ToList();
         var ctor = FindCtor(t, args.Count);
         if (ctor != null)
