@@ -163,13 +163,14 @@ unmarked items are still planned.
 | Tool                        | Priority             | Decision / approach                                                                                                                                                                                                           |
 |-----------------------------|----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Incremental compilation** | P1                   | Cache per-type and per-method compiled LLVM modules on disk keyed by source hash. Only recompile changed files/methods.                                                                                                       |
-| **Multi-file projects**     | P0 **[partly done]** | Compiling multiple `.cs` files is implemented: the driver accepts several inputs and the binder merges type declarations across them. A project file format (`arcproj.json` or MSBuild-compatible subset) is still to do.     |
+| **Multi-file projects**     | P0 **[done]**        | The driver accepts several `.cs` inputs and the binder merges their type declarations before binding. The compiler keeps taking that explicit file list. A consumer project discovers the files through the SDK below.                                                                        |
+| **Consumer SDK**            | P1                   | Ship a NuGet SDK, `ArcSharp.Sdk`, that a project uses in place of `Microsoft.NET.Sdk`. MSBuild still globs the `.cs` files and tracks which inputs are out of date. The SDK replaces `CoreCompile` and `Run`, so `dotnet build` and `dotnet run` invoke ArcSharp and produce the native executable. Replacing `csc` through `CscToolPath` does not fit: the `Csc` task writes a Roslyn response file, and the rest of `Microsoft.NET.Sdk` expects a managed assembly. `PackageReference` stays out until ArcSharp can consume a referenced assembly. |
 | **Diagnostic quality**      | P0 **[partly done]** | Error codes (`ARC0001`…) and severity levels (error/warning/info) are implemented, with error-count gating and `-Werror`. Richer messages with source snippets and column tracking through every phase remain follow-up work. |
 | **IDE integration (LSP)**   | P2                   | Implement a **Language Server Protocol** server exposing document symbols, diagnostics, go-to-definition, and autocomplete. Reuse the binder's symbol tables.                                                                 |
 
 ### Concrete first steps for tooling
 
-1. Change the driver to accept multiple input files and a `--project` option.
+1. Accept multiple input files in the driver. — **[done]** The remaining consumption step is `ArcSharp.Sdk`: a NuGet package whose targets replace `CoreCompile` and `Run` and pass `@(Compile)` to the compiler.
 2. Introduce a `DiagnosticDescriptor` with id/severity/message-template.
 3. Expose a `--verify` mode that compares output and ARC accounting against expected files.
 4. Begin an LSP server project that hosts the lexer/parser/binder as a library.
@@ -309,7 +310,7 @@ A pragmatic path from PoC to production:
 5. **ARC hardening** — atomic refcounts, borrow/ownership elision, weak table, cycle collector.
 6. **Backend upgrade** — LLVM C API, debug info, optimisations, multi-target.
 7. **BCL & threading** — corelib, `Span<T>`/`Memory<T>`, `Task<T>`, reflection.
-8. **Tooling** — multi-file projects, incremental build, diagnostics, LSP.
+8. **Tooling** — the consumer SDK (`ArcSharp.Sdk` in place of `Microsoft.NET.Sdk`), incremental build, diagnostics, LSP.
 9. **Async / closures** — state machines and closure lowering.
 
 ---
@@ -327,3 +328,4 @@ A pragmatic path from PoC to production:
 - `analyzers/ArcSharp.Analyzers/` — Roslyn analyser for the supported subset and possible strong cycles (section 7).
 - `analyzers/ArcSharp.Analyzers.Tests/` — xUnit tests for the analyser.
 - `ArcSharp.Lsp/` — new language server.
+- `sdk/ArcSharp.Sdk/` — NuGet SDK a consumer uses in place of `Microsoft.NET.Sdk` (section 6).
