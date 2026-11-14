@@ -273,6 +273,30 @@ only for single-threaded programs. Threads are not supported, and sharing
 objects between threads would corrupt the counts. Atomic counts are on the
 [Roadmap](roadmap.md#2-arc-model--from-correct-to-efficient).
 
+## Planned safety work
+
+The roadmap adds an opt-in runtime leak detector with allocation sites and
+object/reference graphs, distinguishing static-root retention from suspected
+unreachable cycles. Current accounting only reports totals. Detection will
+not itself reclaim objects, and static warnings cannot prove leak freedom.
+
+Interior references into heap fields and arrays need their backing allocation
+to remain alive for every use. The next safety milestone audits existing
+`ref`/`out`/`in` calls, including owner reassignment during a call. Expanded
+support requires proven owner lifetimes or hidden owner retention; cases
+without a safety proof must be rejected. Stack confinement alone is insufficient
+for heap-backed spans.
+
+Future closures will preserve C# strong captures. Capturing an object alone
+does not form a cycle, but a strong path back to the closure can do so. Define
+cycle policy before enabling closures, events, and async; use explicit
+`WeakReference<T>` patterns initially.
+
+Atomic counts alone will not make threading safe. Loading a shared pointer
+and then retaining it can race with its final release. Threading also requires
+safe shared-reference acquisition, weak promotion, synchronisation, and
+reclamation. The runtime remains single-threaded until that protocol is verified.
+
 ## Performance
 
 Every read of a reference into a local or temporary increments its count, and

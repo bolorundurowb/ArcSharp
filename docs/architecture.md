@@ -318,7 +318,9 @@ and *scope* (just not built yet).
 - **Multithreaded sharing.** Correct ARC across threads requires *atomic*
   retain/release (or ownership transfer rules). ArcSharp's counts are
   non-atomic, so shared mutable references across threads are unsound. Atomics
-  are a known, measurable throughput cost.
+  have workload-dependent costs. Safe shared-reference acquisition, weak
+  promotion, synchronisation, and reclamation are also required; atomic counts
+  alone cannot protect the interval between loading a pointer and retaining it.
 - **`GC.*` / finaliser semantics.** `GC.Collect`, `GC.KeepAlive`,
   resurrection, the two-phase finaliser queue, and the timing of
   `WeakReference<T>.TryGetTarget` assume a tracing collector. ArcSharp offers deterministic destructors instead; the GC
@@ -329,7 +331,12 @@ and *scope* (just not built yet).
   captured continuations) is a substantial design effort. Out of scope.
 - **Closures / lambda capture.** Captured variables become heap closure
   objects; capturing `this` readily forms cycles. Supportable in principle (with
-  the same weak-capture discipline Swift uses) but deferred.
+  explicit `WeakReference<T>` patterns) but deferred. Preserve C# strong
+  captures and define cycle policy before closures, events, and async.
+
+- **Interior references.** Audit current managed-reference arguments before
+  expanding support. Heap-backed spans and escaping references require proven
+  owner lifetimes or hidden owner retention; stack confinement alone is insufficient.
 
 ### Out of scope for the first pass (no fundamental conflict)
 - **Generics.** Requires monomorphisation (or a uniform boxed representation).
@@ -446,11 +453,11 @@ LLVM, currently x86-64-scoped, portable in design.
    ([Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project)).
    Whether a backup cycle collector is also required stays open; that work is
    section 2 of the roadmap.
-2. **Threading.** Do we commit to atomic refcounts (and the throughput cost) or
-   to a single-threaded / actor-style ownership model?
-3. **BCL strategy.** Re-implement a minimal corelib under ARC, or shim to an
-   existing native library? `string`, collections, and `IDisposable` all need a
-   home.
+2. **Threading.** Keep the runtime single-threaded until a concurrent ownership
+   protocol, including atomic counts and safe shared-reference acquisition, is verified.
+3. **BCL strategy.** Build a minimal ARC-aware corelib incrementally, with
+   lifetime tests per API. Full .NET BCL compatibility is a separate objective
+   requiring review of GC-dependent ownership and concurrency assumptions.
 4. **`weak` surface.** *(Resolved.)* ArcSharp lowers the standard
    `System.WeakReference<T>` so source stays idiomatic and Roslyn-compatible; the
    old non-standard `weak` keyword is retained only as a legacy alias. Remaining
