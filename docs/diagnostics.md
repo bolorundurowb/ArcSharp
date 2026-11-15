@@ -165,6 +165,21 @@ not meet the cleanup contract: the compiler needs a parameterless instance
 **Error. Abstract class instantiated.** `new Shape()` where `Shape` is
 `abstract`. Create an instance of a concrete derived class instead.
 
+### ARC2013
+
+**Error. Invalid generic use or specialisation limit.** A generic definition
+or matching arity is missing, type arguments cannot be inferred, constraints
+are malformed, a method parameter shadows an enclosing type parameter, or
+specialisation exceeds 64 nested or 1024 total instantiations. Supply the correct
+type arguments and avoid recursively expanding closed types.
+
+### ARC2014
+
+**Error. Generic constraint not satisfied.** A closed argument violates a
+`class`, `struct`, base/interface/type-parameter, or `new()` constraint. Use a
+type satisfying every constraint, including an accessible parameterless
+constructor when required.
+
 ### ARC2050
 
 **Error. No entry point.** No class declares `static void Main()` or
@@ -193,14 +208,15 @@ drift apart. The analyser is optional: the compiler reports every rule itself.
 recognised valid C# that the compiler cannot lower, and reports it instead of
 silently dropping it. The message names the construct.
 
-The rule covers generics other than `WeakReference<T>`, `try`/`catch`/`finally`,
+The rule covers virtual/interface generic methods, `try`/`catch`/`finally`,
 `throw`, `lock`, `foreach`, `switch`, `break`, `continue`, `do`/`while`, `goto`,
 lambdas, local functions, `async`/`await`, `yield`, LINQ, pattern matching,
 interpolated strings, `default`, `checked`/`unchecked`, top-level statements,
 attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,
 `params`, optional and named arguments, `base.` access, and the struct
 restrictions listed in the [Language reference](language-reference.md#structs).
-Bitwise and shift operators are lexer error `ARC0003`.
+Bitwise and shift operators report `ARC0003`. Adjacent `>` tokens close nested
+generic arguments; `>>` in an expression is rejected by the parser.
 
 The negative samples under `samples/negative/` exercise this rule.
 `tools/verify.ps1` checks that each one fails with the expected code.

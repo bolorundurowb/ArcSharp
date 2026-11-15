@@ -283,8 +283,16 @@ This section records only how the subset is lowered.
 - **Array stores** into a reference-element array call
   `arc_array_store_check`, which prints `ArrayTypeMismatchException` and exits
   on a mismatch. Value-type arrays stay invariant.
-- **`System.WeakReference<T>`** is the only generic type. `Name<T>` is parsed in
-  field types and `new` expressions so that it can be recognised.
+- **Generics** are monomorphised during binding. Open declarations remain
+  templates; closed types cache an independent substituted AST, layout, vtable,
+  itable, and destructor. Closed methods are cached and their bodies enter a
+  worklist, allowing recursive calls and types discovered while binding.
+  LLVM identifiers use a reserved `$g$` prefix and hex-encoded closed names.
+  Constraints are checked before emission; expansion limits report `ARC2013`
+  instead of exhausting the compiler stack. ARC operations follow the concrete
+  substituted types, including inline struct size and reference-field cleanup.
+- **`System.WeakReference<T>`** remains a runtime intrinsic, including when
+  used as a generic argument or local. It does not require template expansion.
 - **`using`** owns the resource value in a scoped local (`arc_assign_take`),
   calls its `Dispose()` method at scope exit — guarded against `null`,
   dispatched through the vtable or itable when the method is `virtual` or the
@@ -318,7 +326,9 @@ and *scope* (just not built yet).
 - **Multithreaded sharing.** Correct ARC across threads requires *atomic*
   retain/release (or ownership transfer rules). ArcSharp's counts are
   non-atomic, so shared mutable references across threads are unsound. Atomics
-  are a known, measurable throughput cost.
+  have workload-dependent costs. Safe shared-reference acquisition, weak
+  promotion, synchronisation, and reclamation are also required; atomic counts
+  alone cannot protect the interval between loading a pointer and retaining it.
 - **`GC.*` / finaliser semantics.** `GC.Collect`, `GC.KeepAlive`,
   resurrection, the two-phase finaliser queue, and the timing of
   `WeakReference<T>.TryGetTarget` assume a tracing collector. ArcSharp offers deterministic destructors instead; the GC
@@ -329,11 +339,17 @@ and *scope* (just not built yet).
   captured continuations) is a substantial design effort. Out of scope.
 - **Closures / lambda capture.** Captured variables become heap closure
   objects; capturing `this` readily forms cycles. Supportable in principle (with
-  the same weak-capture discipline Swift uses) but deferred.
+  explicit `WeakReference<T>` patterns) but deferred. Preserve C# strong
+  captures and define cycle policy before closures, events, and async.
+
+- **Interior references.** Audit current managed-reference arguments before
+  expanding support. Heap-backed spans and escaping references require proven
+  owner lifetimes or hidden owner retention; stack confinement alone is insufficient.
 
 ### Out of scope for the first pass (no fundamental conflict)
-- **Generics.** Requires monomorphisation (or a uniform boxed representation).
-  `Name<T>` is parsed only so `System.WeakReference<T>` can be recognised.
+- **Remaining generic features.** Virtual generic methods, interface generic
+  methods, variance, full overload inference, nested type declarations, and
+  additional constraint forms remain outside the subset.
 - **Reflection / `dynamic` / attributes at runtime**, `unsafe`/pointers,
   `stackalloc`, pinning.
 - **Exceptions** (`try`/`catch`/`finally`). Every unwinding path must release
@@ -365,7 +381,7 @@ and *scope* (just not built yet).
 | Type checking (core)                                   | Implemented (lightweight)             |
 | Virtual / override dispatch (vtables)                  | Implemented                           |
 | ARC: retain/release/deinit, statement & scope cleanup  | Implemented                           |
-| `WeakReference<T>` fields + cycle reclamation          | Implemented (fields only, not locals) |
+| `WeakReference<T>` fields, locals, and generic arguments | Implemented |
 | Arrays (value & reference element types)               | Implemented                           |
 | Strings + `Console`                                    | Implemented                           |
 | Control flow (`if`/`while`/`for`/`return`)             | Implemented                           |
@@ -381,11 +397,12 @@ and *scope* (just not built yet).
 | Diagnostics with codes (`ARC0001`…) and severities     | Implemented                           |
 | `ARC3001` unsupported-construct diagnostics            | Implemented (compiler and analyser)   |
 | `ARC3100` possible strong-cycle warning                 | Implemented (compiler and analyser)   |
-| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (62 xUnit cases)          |
+| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (66 xUnit cases)          |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Parsed and discarded (defect)         |
-| Generics, async, closures, exceptions                  | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
+| Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
+| Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 
 See [Verification](verification.md) for the exact set of sample programs that
 compile and run, with ARC alloc/free accounting, and the
@@ -446,16 +463,16 @@ LLVM, currently x86-64-scoped, portable in design.
    ([Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project)).
    Whether a backup cycle collector is also required stays open; that work is
    section 2 of the roadmap.
-2. **Threading.** Do we commit to atomic refcounts (and the throughput cost) or
-   to a single-threaded / actor-style ownership model?
-3. **BCL strategy.** Re-implement a minimal corelib under ARC, or shim to an
-   existing native library? `string`, collections, and `IDisposable` all need a
-   home.
+2. **Threading.** Keep the runtime single-threaded until a concurrent ownership
+   protocol, including atomic counts and safe shared-reference acquisition, is verified.
+3. **BCL strategy.** Build a minimal ARC-aware corelib incrementally, with
+   lifetime tests per API. Full .NET BCL compatibility is a separate objective
+   requiring review of GC-dependent ownership and concurrency assumptions.
 4. **`weak` surface.** *(Resolved.)* ArcSharp lowers the standard
    `System.WeakReference<T>` so source stays idiomatic and Roslyn-compatible; the
    old non-standard `weak` keyword is retained only as a legacy alias. Remaining
    question: do we also want an `unowned` (non-zeroing) variant? Separately,
-   `WeakReference<T>` locals are a parser defect to fix, not an open question.
+   `WeakReference<T>` locals now use the generic-aware declaration parser.
 5. **Value types with reference fields.** *(Resolved.)* Copying a struct
    retains its reference fields, and dropping a copy releases them. The
    remaining restrictions (arrays, returns, static fields, by-value parameters,

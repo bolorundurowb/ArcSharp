@@ -34,6 +34,8 @@ public sealed class TypeSymbol
     public InterfaceDecl? InterfaceSyntax;
     public bool LayoutDone;
     public bool LayoutInProgress;
+    public string? GenericDefinition;
+    public List<TypeSymbol> TypeArguments = [];
 
     // array
     public TypeSymbol? ElementType;
@@ -114,7 +116,8 @@ public sealed class TypeSymbol
         return false;
     }
 
-    public override string ToString() => Name;
+    public override string ToString() => GenericDefinition == null ? Name
+        : GenericDefinition + "<" + string.Join(",", TypeArguments) + ">";
 }
 
 public sealed class FieldSymbol
@@ -165,6 +168,8 @@ public sealed class PropertySymbol
 
 public sealed class MethodSymbol
 {
+    public MethodDecl? GenericDefinition;
+    public List<TypeSymbol> TypeArguments = [];
     public required string Name;
     public required TypeSymbol Owner;
     public TypeSymbol ReturnType = null!;

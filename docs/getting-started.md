@@ -154,7 +154,7 @@ tests.
 ## Next steps
 
 - Read the [Language reference](language-reference.md) to see which C# features
-  you can use. Many common ones, such as generics, `try`/`catch`, `foreach`,
+  you can use. Many common ones, such as `try`/`catch`, `foreach`,
   `++`, and lambdas, are not supported yet.
 - Read the [Memory model](memory-model.md) before you write classes that refer
   to each other.

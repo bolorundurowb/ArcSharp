@@ -26,13 +26,14 @@ public sealed class CompilationUnit : Node
 public abstract class TypeDecl : Node
 {
     public required string Name;
+    public List<string> TypeParameters = [];
+    public List<GenericConstraint> Constraints = [];
     public List<MemberDecl> Members = [];
 }
 
 public sealed class ClassDecl : TypeDecl
 {
-    public string? BaseTypeName;
-    public List<string> InterfaceNames = [];
+    public List<TypeSyntax> Bases = [];
     public bool IsAbstract;
 }
 
@@ -75,6 +76,8 @@ public sealed class ParameterSyntax : Node
 
 public sealed class MethodDecl : MemberDecl
 {
+    public List<string> TypeParameters = [];
+    public List<GenericConstraint> Constraints = [];
     public TypeSyntax? ReturnType; // null for constructors
     public required string Name;
     public List<ParameterSyntax> Parameters = [];
@@ -180,6 +183,7 @@ public sealed class LiteralExpr : Expr
 public sealed class NameExpr : Expr
 {
     public required string Name;
+    public List<TypeSyntax> TypeArgs = [];
 }
 
 public sealed class ThisExpr : Expr
@@ -194,8 +198,18 @@ public sealed class MemberAccessExpr : Expr
 
 public sealed class InvocationExpr : Expr
 {
+    public List<TypeSyntax> TypeArgs = [];
     public required Expr Callee;
     public List<Expr> Arguments = [];
+}
+
+public sealed class GenericConstraint : Node
+{
+    public required string Parameter;
+    public bool ReferenceType;
+    public bool ValueType;
+    public bool Constructor;
+    public List<TypeSyntax> Types = [];
 }
 
 public sealed class NewObjectExpr : Expr

@@ -170,6 +170,8 @@ try {
         $script:fail++
     }
 
+    Invoke-Sample generics 0 "generics PASS" @("generics", "generics_lib")
+    Invoke-Sample generic_structs 0 "layout=20,30,99,40" @("generic_structs")
     Invoke-Sample inherit       0 "sum=42"                     @("inherit")
     Invoke-Sample interface     0 "circle=75"                  @("interface")
     Invoke-Sample refarray      0 "refarray sum=5"             @("refarray")
@@ -202,7 +204,15 @@ try {
     Invoke-MustFail try             "ARC3001" @("try")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
     Invoke-MustFail lambda          "ARC3001" @("lambda")
-    Invoke-MustFail generic         "ARC3001" @("generic")
+    Invoke-MustFail generic         "ARC2013" @("generic")
+    Invoke-MustFail generic_arity "ARC2013" @("generic_arity")
+    Invoke-MustFail generic_constraint "ARC2014" @("generic_constraint")
+    Invoke-MustFail generic_interface_constraint "ARC2014" @("generic_interface_constraint")
+    Invoke-MustFail generic_method_constraint "ARC2014" @("generic_method_constraint")
+    Invoke-MustFail generic_constructor_constraint "ARC2014" @("generic_constructor_constraint")
+    Invoke-MustFail generic_expansion "ARC2013" @("generic_expansion")
+    Invoke-MustFail generic_virtual_method "ARC3001" @("generic_virtual_method")
+    Invoke-MustFail shift_right "ARC0003" @("shift_right")
     Invoke-MustFail shift           "ARC0003" @("shift")
     Invoke-MustFail expression_body "ARC3001" @("expression_body")
     Invoke-MustFail named_arg       "ARC3001" @("named_arg")

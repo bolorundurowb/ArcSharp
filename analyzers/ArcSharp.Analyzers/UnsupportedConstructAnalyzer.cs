@@ -98,7 +98,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.RecordStructDeclaration,
         SyntaxKind.LocalFunctionStatement,
         SyntaxKind.ArrowExpressionClause,
-        SyntaxKind.TypeParameterList,
         SyntaxKind.CollectionExpression,
         SyntaxKind.ImplicitArrayCreationExpression
     };
@@ -214,7 +213,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.RecordDeclaration or SyntaxKind.RecordStructDeclaration => "records are not supported",
         SyntaxKind.LocalFunctionStatement => "local functions are not supported",
         SyntaxKind.ArrowExpressionClause => "expression-bodied members are not supported: use a block body",
-        SyntaxKind.TypeParameterList => "generics are not supported: only WeakReference<T> is recognised",
         SyntaxKind.CollectionExpression => "collection expressions ('[...]') are not supported",
         SyntaxKind.ImplicitArrayCreationExpression => "array initialisers are not supported: use 'new T[n]'",
         _ => null
@@ -238,6 +236,14 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     {
         var decl = (MemberDeclarationSyntax)context.Node;
         var message = ModifierMessage(decl.Modifiers);
+        if (decl is MethodDeclarationSyntax { TypeParameterList: not null } method
+            && (method.Parent is InterfaceDeclarationSyntax
+                || method.Modifiers.Any(SyntaxKind.VirtualKeyword)
+                || method.Modifiers.Any(SyntaxKind.OverrideKeyword)
+                || method.Modifiers.Any(SyntaxKind.AbstractKeyword)))
+        {
+            message = "virtual and interface generic methods are not supported yet";
+        }
         if (message != null)
         {
             context.ReportDiagnostic(Diagnostic.Create(
