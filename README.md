@@ -65,6 +65,8 @@ reclaimed.
 ## What works
 
 - Classes with single inheritance, interfaces, and `virtual`/`override` dispatch.
+- Generic classes, structs, interfaces, and methods through monomorphisation,
+  with basic type inference and generic constraints.
 - Constructors, instance and static methods and fields, and instance
   auto-properties.
 - Structs with value semantics, including reference fields, nested structs,
@@ -82,16 +84,16 @@ reclaimed.
 - A Roslyn analyser in `analyzers/ArcSharp.Analyzers` that reports the same
   `ARC3001` and `ARC3100` rules inside an ordinary `dotnet build`.
 
-Generics, exceptions, `foreach`, `switch`, `++`, lambdas, and the .NET class
+Exceptions, `foreach`, `switch`, `++`, lambdas, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
 has the full list, the differences from .NET, and the known issues.
 
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 26 sample programs pass the test
-harness on Windows x64. The harness also runs 15 must-fail diagnostics, three
-command-line checks, four cycle checks, and 62 analyser unit tests. The
+executable, with ARC accounting) works, and 28 sample programs pass the test
+harness on Windows x64. The harness also runs 23 must-fail diagnostics, three
+command-line checks, four cycle checks, and 66 analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See
 [Verification](docs/verification.md) for the latest results and
 [Roadmap](docs/roadmap.md) for the plan.

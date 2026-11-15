@@ -283,8 +283,16 @@ This section records only how the subset is lowered.
 - **Array stores** into a reference-element array call
   `arc_array_store_check`, which prints `ArrayTypeMismatchException` and exits
   on a mismatch. Value-type arrays stay invariant.
-- **`System.WeakReference<T>`** is the only generic type. `Name<T>` is parsed in
-  field types and `new` expressions so that it can be recognised.
+- **Generics** are monomorphised during binding. Open declarations remain
+  templates; closed types cache an independent substituted AST, layout, vtable,
+  itable, and destructor. Closed methods are cached and their bodies enter a
+  worklist, allowing recursive calls and types discovered while binding.
+  LLVM identifiers use a reserved `$g$` prefix and hex-encoded closed names.
+  Constraints are checked before emission; expansion limits report `ARC2013`
+  instead of exhausting the compiler stack. ARC operations follow the concrete
+  substituted types, including inline struct size and reference-field cleanup.
+- **`System.WeakReference<T>`** remains a runtime intrinsic, including when
+  used as a generic argument or local. It does not require template expansion.
 - **`using`** owns the resource value in a scoped local (`arc_assign_take`),
   calls its `Dispose()` method at scope exit — guarded against `null`,
   dispatched through the vtable or itable when the method is `virtual` or the
@@ -339,8 +347,9 @@ and *scope* (just not built yet).
   owner lifetimes or hidden owner retention; stack confinement alone is insufficient.
 
 ### Out of scope for the first pass (no fundamental conflict)
-- **Generics.** Requires monomorphisation (or a uniform boxed representation).
-  `Name<T>` is parsed only so `System.WeakReference<T>` can be recognised.
+- **Remaining generic features.** Virtual generic methods, interface generic
+  methods, variance, full overload inference, nested type declarations, and
+  additional constraint forms remain outside the subset.
 - **Reflection / `dynamic` / attributes at runtime**, `unsafe`/pointers,
   `stackalloc`, pinning.
 - **Exceptions** (`try`/`catch`/`finally`). Every unwinding path must release
@@ -372,7 +381,7 @@ and *scope* (just not built yet).
 | Type checking (core)                                   | Implemented (lightweight)             |
 | Virtual / override dispatch (vtables)                  | Implemented                           |
 | ARC: retain/release/deinit, statement & scope cleanup  | Implemented                           |
-| `WeakReference<T>` fields + cycle reclamation          | Implemented (fields only, not locals) |
+| `WeakReference<T>` fields, locals, and generic arguments | Implemented |
 | Arrays (value & reference element types)               | Implemented                           |
 | Strings + `Console`                                    | Implemented                           |
 | Control flow (`if`/`while`/`for`/`return`)             | Implemented                           |
@@ -388,11 +397,12 @@ and *scope* (just not built yet).
 | Diagnostics with codes (`ARC0001`…) and severities     | Implemented                           |
 | `ARC3001` unsupported-construct diagnostics            | Implemented (compiler and analyser)   |
 | `ARC3100` possible strong-cycle warning                 | Implemented (compiler and analyser)   |
-| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (62 xUnit cases)          |
+| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (66 xUnit cases)          |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Parsed and discarded (defect)         |
-| Generics, async, closures, exceptions                  | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
+| Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
+| Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 
 See [Verification](verification.md) for the exact set of sample programs that
 compile and run, with ARC alloc/free accounting, and the
@@ -462,7 +472,7 @@ LLVM, currently x86-64-scoped, portable in design.
    `System.WeakReference<T>` so source stays idiomatic and Roslyn-compatible; the
    old non-standard `weak` keyword is retained only as a legacy alias. Remaining
    question: do we also want an `unowned` (non-zeroing) variant? Separately,
-   `WeakReference<T>` locals are a parser defect to fix, not an open question.
+   `WeakReference<T>` locals now use the generic-aware declaration parser.
 5. **Value types with reference fields.** *(Resolved.)* Copying a struct
    retains its reference fields, and dropping a copy releases them. The
    remaining restrictions (arrays, returns, static fields, by-value parameters,

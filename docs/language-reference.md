@@ -11,6 +11,7 @@ records the behaviour as it is today, not as it is planned.
 
 - [Program structure](#program-structure)
 - [Types](#types)
+- [Generics](#generics)
 - [Classes, interfaces, and members](#classes-interfaces-and-members)
 - [Statements](#statements)
 - [Expressions and operators](#expressions-and-operators)
@@ -68,8 +69,8 @@ parameter that holds them. `decimal`, `enum`, and nullable value types
 - **Single-dimensional arrays** `T[]` of any supported element type except the
   small integer types. Multi-dimensional and jagged array syntax
   (`int[,]`, `int[][]`) is not supported.
-- **`System.WeakReference<T>`**, where `T` is a class. It is the only generic
-  type the compiler recognises, and it can only be the type of a field. See
+- **`System.WeakReference<T>`**, where `T` is a reference type. It can be used
+  in fields, locals, and generic arguments. See
   [Memory model](memory-model.md).
 
 Every reference-type variable, field, and array element starts as `null`.
@@ -121,6 +122,55 @@ Not supported yet, each reported as `ARC3001`:
 - `virtual` or `override` members on a struct, and interfaces on a struct.
 - A struct that contains itself, directly or through another struct.
 - `using` a struct resource.
+
+## Generics
+
+Generic classes, structs, interfaces, and non-virtual methods are specialised
+for each closed set of type arguments. For example, `Box<int>` and
+`Box<string>` have separate layouts, type descriptors, methods, destructors,
+and static fields. Nested arguments such as `Box<Box<string>>` are supported,
+as are arrays and `WeakReference<T>` as type arguments.
+
+Methods accept explicit arguments, such as `Identity<int>(42)`. Basic inference
+also recognises exact parameter types, array elements, and matching closed
+generic types, so `Identity(42)` infers `int`. Conflicting inferred arguments
+require explicit types; full C# overload inference and variance are not
+implemented. A non-generic overload wins when its conversions are equally good.
+
+```csharp
+using System;
+class Program
+{
+    static T Identity<T>(T value)
+    {
+        return value;
+    }
+
+    static void Main()
+    {
+        Console.WriteLine(Identity<int>(42));
+    }
+}
+```
+
+Output: `42`.
+
+Constraints support `class`, `struct`, base classes, interfaces, other type
+parameters, and `new()`. They are checked when a closed type or method is used;
+constraint failures are `ARC2014`. A `new()` reference argument must be concrete
+and have a public parameterless constructor, or an implicit default constructor.
+Parameterless construction of primitive value types produces zero.
+
+The existing struct restrictions still apply after substitution: struct values
+can be stored inline in generic fields and copied through managed references,
+but cannot be returned, passed by value, or placed in arrays. Virtual methods
+on generic classes and methods of generic interfaces work. Methods that are
+themselves generic cannot be virtual, overrides, abstract, or interface members
+(`ARC3001`). Method type parameters must not shadow enclosing type parameters.
+Templates are checked when instantiated. Nested type declarations, variance,
+`default(T)`, and additional constraint forms such as `unmanaged`, `notnull`,
+and `class?` remain unsupported. The compiler caps specialisation at 64 nested
+instantiations and 1024 total type/method instantiations (`ARC2013`).
 
 ## Classes, interfaces, and members
 
@@ -328,7 +378,7 @@ Write `Console`, not `System.Console`; the fully qualified name is reported as
 These features are not implemented. The [Roadmap](roadmap.md) records the plan
 and priority for each one.
 
-- Generics, except `WeakReference<T>`.
+- Generic features outside the subset described under [Generics](#generics).
 - Exceptions: `try`, `catch`, `finally`, and `throw`.
 - Enums, delegates, events, indexers, and records.
 - Lambdas, closures, local functions, `async`, `await`, and iterators.
@@ -373,7 +423,8 @@ workaround.
 | **String `==` compares references.** Two equal strings built separately are not `==`. | Avoid comparing strings for equality. There is no content comparison yet. |
 | **Abstract methods fail to link.** Calling an `abstract` method through the base type compiles to IR that `clang` rejects with `use of undefined value`. | Declare the method `virtual` with a default body, and `override` it. |
 | **Get-only auto-properties cannot be assigned.** `public int Id { get; }` cannot be set, even in a constructor. | Declare `{ get; set; }`. |
-| **`WeakReference<T>` works only as a field type.** A local such as `WeakReference<Node> w = ...;` is parsed as a comparison and reported as `unknown name 'WeakReference'`. | Keep the weak reference in a field of an object. |
+| **Reference temporaries on short-circuit paths can produce invalid IR.** A reference-valued call or load on the right of `&&` or `||` can be released from a block it does not dominate. | Evaluate each reference-using condition into a boolean local in a separate statement. |
+| **Inherited auto-properties are not found through derived instances.** | Access the property through a base-typed local, or use a field. |
 | **Class casts are unchecked.** `(Dog)animal` succeeds even when `animal` is a `Cat`. | Use `animal as Dog` and test for `null`. |
 | **Small integer casts are rejected.** `(byte)x` and `new byte[n]` do not compile. | Use `int` or `long`. |
 

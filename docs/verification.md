@@ -19,11 +19,11 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (26 samples, Windows x64, 12 November 2026)
+## Results (28 samples, Windows x64, 15 November 2026)
 
-`tools\verify.ps1` reported **49 passed, 0 failed** with the .NET 8.0.428 SDK:
-26 sample programs, 15 must-fail diagnostics, 3 command-line checks, 4 cycle
-checks, and one run of the analyser unit tests (62 cases). `live=0` means every
+`tools\verify.ps1` reported **59 passed, 0 failed** with the .NET 8.0.428 SDK:
+28 sample programs, 23 must-fail diagnostics, 3 command-line checks, 4 cycle
+checks, and one run of the analyser unit tests (66 cases). `live=0` means every
 object was reclaimed.
 `numerics` and `byref` allocate nothing because they use only value types.
 `cycle_strong` and `cycle_struct` are the leaks the harness asserts on purpose.
@@ -56,6 +56,16 @@ object was reclaimed.
 | `overloads` | static and instance methods that share a name and an arity, chosen by argument type | alloc=19 dead=19 **live=0** | `int=7 str=ok 4 4` |
 | `charprint` | `Console.WriteLine` of a `char`, and concatenation of a `char` | alloc=5 dead=5 **live=0** | `concat=B direct=A` |
 | `staticprop` | a static auto-property, read and written | alloc=3 dead=3 **live=0** | `count=4` |
+| `generics` | two-file generic classes/interfaces, generic bases and virtual dispatch, methods and inference, recursion, independent statics, arrays and weak references as arguments, constraints, and primitive default construction | alloc=72 dead=72 freed=72 **live=0** | `generic=42,hello`, `dispatch=7,7`, `infer=11,hello,9`, `owners=after,hello,made`, `counts=2,1`, `arrays=11,array`, `weak=made`, `types=True,True`, `generics PASS` |
+| `generic_structs` | specialised struct copies, reference fields, nested wide values, managed-reference generic methods, and class field offsets | alloc=28 dead=28 freed=28 **live=0** | `copies=first,second,wide`, `layout=20,30,99,40` |
+
+The two new generic samples were also built and run with the normal .NET 8
+compiler, producing the same stdout. The generic identity example in the
+language reference was compiled and run with ArcSharp: output `42`, with
+`alloc=0 dead=0 freed=0 live=0`. Emitted IR was inspected for distinct closed
+type descriptors, destructors, method specialisations, and inline struct sizes.
+The generic linked-node type produces the expected conservative `ARC3100`
+warning; its sample creates no cycle and exits with `live=0`.
 
 ## Diagnostics
 
@@ -65,10 +75,12 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 15 programs that must fail (`samples/negative/`) and
+The harness also compiles 23 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, `ARC0003` for
 shift operators, `ARC0004` for an invalid Unicode escape, `ARC2011` for an
-invalid `using` resource, and `ARC2012` for `new` on an abstract class. It
+invalid `using` resource, `ARC2012` for `new` on an abstract class, `ARC2013`
+for missing generic definitions, wrong arity, or expanding specialisations, and
+`ARC2014` for unsatisfied type/method constraints. It
 checks that `-o` with no value, and a missing `clang` or `llc`, are reported
 as errors and exit with code 2. It checks
 `ARC3100` in both directions: `cycle_strong` and `cycle_struct` warn, while
@@ -77,8 +89,8 @@ as errors and exit with code 2. It checks
 ## Analyser unit tests
 
 `analyzers/ArcSharp.Analyzers.Tests` is an xUnit project that compiles snippets
-in memory with Microsoft.CodeAnalysis and runs the analyser. It has 62 cases:
-40 unsupported constructs that must report `ARC3001`, 13 supported programs
+in memory with Microsoft.CodeAnalysis and runs the analyser. It has 66 cases:
+41 unsupported constructs that must report `ARC3001`, 16 supported programs
 that must stay clean, and 9 cycle checks for `ARC3100` (mutual and self
 references, arrays, statics, struct bridges, and weak references that break the
 cycle). `tools/verify.ps1` runs `dotnet test` and counts the whole run as one

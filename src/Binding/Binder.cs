@@ -13,7 +13,7 @@ public sealed class BoundProgram
     public List<Diagnostic> Diagnostics = [];
 }
 
-public sealed class Binder
+public sealed partial class Binder
 {
     private readonly Dictionary<string, TypeSymbol> _types = [];
     private readonly Dictionary<string, TypeSymbol> _arrayCache = [];
@@ -79,6 +79,24 @@ public sealed class Binder
         // 1. declare types
         foreach (var td in cu.Types)
         {
+            if (td.TypeParameters.Count > 0)
+            {
+                var key = td.Name + "`" + td.TypeParameters.Count;
+                if (!_genericTypes.TryAdd(key, td))
+                {
+                    Report(td.Line, $"duplicate generic type '{td.Name}'", "ARC2013");
+                }
+                ValidateConstraints(td.TypeParameters, td.Constraints);
+                foreach (var method in td.Members.OfType<MethodDecl>())
+                {
+                    ValidateConstraints(method.TypeParameters, method.Constraints);
+                    if (method.TypeParameters.Intersect(td.TypeParameters).Any())
+                    {
+                        Report(method.Line, "method type parameters must not shadow enclosing type parameters", "ARC2013");
+                    }
+                }
+                continue;
+            }
             if (_types.ContainsKey(td.Name))
             {
                 Report(td.Line, $"duplicate type '{td.Name}'");
@@ -106,87 +124,40 @@ public sealed class Binder
             _types[td.Name] = sym;
         }
 
-        // 2. resolve bases / interfaces
-        foreach (var td in cu.Types)
+        // Closed types discovered in signatures or bodies join the same worklist.
+        foreach (var t in UserTypes().ToList())
         {
-            if (!_types.TryGetValue(td.Name, out var sym))
+            ResolveBases(t);
+        }
+        foreach (var t in UserTypes().ToList())
+        {
+            PrepareType(t);
+        }
+        var program = new BoundProgram();
+        var bound = new HashSet<MethodSymbol>();
+        var checkedConstraints = 0;
+        while (true)
+        {
+            while (checkedConstraints < _constraintChecks.Count)
             {
-                continue;
+                var check = _constraintChecks[checkedConstraints++];
+                CheckConstraints(check.Parameters, check.Constraints, check.Arguments, check.Line);
             }
-
-            if (td is ClassDecl cd)
+            var pending = UserTypes().SelectMany(t => t.Methods).Where(m =>
+                m.Syntax?.Body != null && !bound.Contains(m)
+                && (m.GenericDefinition == null || _usedGenericMethods.Contains(m))).ToList();
+            if (pending.Count == 0)
             {
-                foreach (var bn in cd.InterfaceNames)
-                {
-                    if (!_types.TryGetValue(bn, out var b))
-                    {
-                        Report(td.Line, $"unknown base type '{bn}'");
-                        continue;
-                    }
-
-                    if (b.Kind == TypeKind.Class)
-                    {
-                        if (sym.BaseType != null)
-                        {
-                            Report(td.Line, $"multiple base classes for '{td.Name}'");
-                        }
-
-                        sym.BaseType = b;
-                    }
-                    else if (b.Kind == TypeKind.Interface)
-                    {
-                        sym.Interfaces.Add(b);
-                    }
-                    else
-                    {
-                        Report(td.Line, $"'{bn}' cannot be a base of a class");
-                    }
-                }
+                break;
+            }
+            foreach (var m in pending)
+            {
+                bound.Add(m);
+                program.MethodBodies.Add(BindMethodBody(m.Owner, m));
             }
         }
-
-        // 3. assign interface selectors
-        foreach (var t in _types.Values.Where(t => t.Kind == TypeKind.Interface))
-        {
-            foreach (var m in t.InterfaceSyntax!.Members.OfType<MethodDecl>())
-            {
-                var key = SelectorKey(t.Name, m.Name, m.Parameters);
-                if (!_selectors.ContainsKey(key))
-                {
-                    _selectors[key] = _selectors.Count;
-                }
-            }
-        }
-
-        // 4. expand auto-properties into backing fields + accessor methods
-        foreach (var t in _types.Values.Where(t => t.Kind is TypeKind.Class or TypeKind.Struct or TypeKind.Interface))
-        {
-            ExpandProperties(t);
-        }
-
-        // 5. layout + member symbols
-        foreach (var t in _types.Values.Where(t => t.Kind is TypeKind.Class or TypeKind.Struct or TypeKind.Interface))
-        {
-            LayoutType(t);
-        }
-
-        // 5. bind bodies
-        var program = new BoundProgram { InterfaceSelectorCount = _selectors.Count };
-        program.Types.AddRange(_types.Values.Where(t =>
-            t.Kind is TypeKind.Class or TypeKind.Struct or TypeKind.Interface));
-        foreach (var t in program.Types)
-        {
-            foreach (var m in t.Methods)
-            {
-                if (m.Syntax?.Body == null)
-                {
-                    continue;
-                }
-
-                var body = BindMethodBody(t, m);
-                program.MethodBodies.Add(body);
-            }
-        }
+        program.Types.AddRange(UserTypes());
+        program.InterfaceSelectorCount = _selectors.Count;
 
         // definite-assignment flow analysis (conservative; reports as warnings)
         DefiniteAssignment.Analyze(program, (line, msg) => Report(line, msg, "ARC2100", DiagnosticSeverity.Warning));
@@ -334,7 +305,8 @@ public sealed class Binder
         // A struct-typed field needs the field type's layout for its slot size.
         foreach (var ts in decl.Members.OfType<FieldDecl>().Select(fd => fd.Type))
         {
-            if (_types.TryGetValue(ts.Name, out var found) && found.Kind == TypeKind.Struct)
+            var found = ResolveType(ts);
+            if (found.Kind == TypeKind.Struct)
             {
                 LayoutType(found);
             }
@@ -377,6 +349,19 @@ public sealed class Binder
         // methods
         foreach (var md in decl.Members.OfType<MethodDecl>())
         {
+            ValidateConstraints(md.TypeParameters, md.Constraints);
+            if (md.TypeParameters.Count > 0)
+            {
+                if (md.TypeParameters.Intersect(decl.TypeParameters).Any())
+                {
+                    Report(md.Line, "method type parameters must not shadow enclosing type parameters", "ARC2013");
+                }
+                if (md.IsVirtual || md.IsOverride || md.IsAbstract || t.Kind == TypeKind.Interface)
+                {
+                    Report(md.Line, "virtual and interface generic methods are not supported yet", DiagnosticCatalog.UnsupportedConstructId);
+                }
+                continue;
+            }
             if (t.Kind == TypeKind.Struct && (md.IsVirtual || md.IsOverride))
             {
                 Report(md.Line, "virtual members are not supported on structs", DiagnosticCatalog.UnsupportedConstructId);
@@ -703,7 +688,7 @@ public sealed class Binder
         {
             foreach (var m in type.Methods)
             {
-                if (m.IsConstructor || m.Name != name || m.Parameters.Count != argc)
+                if (m.GenericDefinition != null || m.IsConstructor || m.Name != name || m.Parameters.Count != argc)
                 {
                     continue;
                 }
@@ -787,6 +772,9 @@ public sealed class Binder
                 }
             }
 
+            // With equally good conversions C# prefers a non-generic method.
+            score = score * 2 + (m.GenericDefinition == null ? 1 : 0);
+
             if (score > best)
             {
                 best = score;
@@ -865,6 +853,7 @@ public sealed class Binder
 
     private TypeSymbol ResolveType(TypeSyntax ts)
     {
+        TypeSymbol baseT;
         if (ts.Name == "WeakReference" && ts.TypeArgs.Count == 1)
         {
             var elem = ResolveType(ts.TypeArgs[0]);
@@ -873,24 +862,21 @@ public sealed class Binder
                 Report(ts.Line, "WeakReference<T> requires a reference type argument");
             }
 
-            return GetWeakRefType(elem);
+            baseT = GetWeakRefType(elem);
         }
-
-        if (ts.TypeArgs.Count > 0)
+        else if (ts.TypeArgs.Count > 0)
         {
-            Report(ts.Line, $"generic type '{ts.Name}<{string.Join(", ", ts.TypeArgs)}>' is not supported: only WeakReference<T> is recognised", DiagnosticCatalog.UnsupportedConstructId);
-            return _error;
+            baseT = InstantiateType(ts);
         }
-
-        TypeSymbol baseT;
-        if (!_types.TryGetValue(ts.Name, out var found))
+        else if (!_types.TryGetValue(ts.Name, out baseT!))
         {
             Report(ts.Line, $"unknown type '{ts.Name}'");
             baseT = _error;
         }
-        else
+        if (ts.ArrayRank > 1)
         {
-            baseT = found;
+            Report(ts.Line, "jagged and multidimensional arrays are not supported", DiagnosticCatalog.UnsupportedConstructId);
+            return _error;
         }
 
         if (ts.ArrayRank == 1)
@@ -1336,7 +1322,7 @@ public sealed class Binder
     private BoundExpr BindMemberAccess(MemberAccessExpr m)
     {
         // static member: Target is a type name
-        if (m.Target is NameExpr tn && _types.TryGetValue(tn.Name, out var typeRef)
+        if (m.Target is NameExpr tn && TryResolveStaticType(tn, out var typeRef)
                                     && LookupLocal(tn.Name) == null && !_params.ContainsKey(tn.Name))
         {
             var sf = FindField(typeRef, m.Name, instance: false);
@@ -1393,10 +1379,10 @@ public sealed class Binder
             }
 
             // static method on a type
-            if (ma.Target is NameExpr tn && _types.TryGetValue(tn.Name, out var typeRef)
+            if (ma.Target is NameExpr tn && TryResolveStaticType(tn, out var typeRef)
                                          && LookupLocal(tn.Name) == null && !_params.ContainsKey(tn.Name))
             {
-                var sm = SelectMethod(typeRef, ma.Name, args, staticOnly: true, inv.Line,
+                var sm = SelectInvocationMethod(typeRef, ma.Name, args, inv.TypeArgs, staticOnly: true, inv.Line,
                     $"'{tn.Name}' has no static method '{ma.Name}'");
                 if (sm == null)
                 {
@@ -1415,7 +1401,7 @@ public sealed class Binder
 
             if (recv.Type.Kind == TypeKind.Interface)
             {
-                var im = SelectMethod(recv.Type, ma.Name, args, staticOnly: false, inv.Line,
+                var im = SelectInvocationMethod(recv.Type, ma.Name, args, inv.TypeArgs, staticOnly: false, inv.Line,
                     $"interface '{recv.Type}' has no method '{ma.Name}'");
                 if (im == null)
                 {
@@ -1439,7 +1425,7 @@ public sealed class Binder
                 return Err();
             }
 
-            var method = SelectMethod(recv.Type, ma.Name, args, staticOnly: false, inv.Line,
+            var method = SelectInvocationMethod(recv.Type, ma.Name, args, inv.TypeArgs, staticOnly: false, inv.Line,
                 $"'{recv.Type}' has no method '{ma.Name}'");
             if (method == null)
             {
@@ -1457,7 +1443,7 @@ public sealed class Binder
 
         if (inv.Callee is NameExpr nm)
         {
-            var method = SelectMethod(_curType, nm.Name, args, staticOnly: false, inv.Line,
+            var method = SelectInvocationMethod(_curType, nm.Name, args, inv.TypeArgs, staticOnly: _curMethod.IsStatic, inv.Line,
                 $"unknown method '{nm.Name}'");
             if (method == null)
             {
@@ -1636,13 +1622,23 @@ public sealed class Binder
             return new BoundWeakRefNew { Target = target, Type = wr };
         }
 
-        if (no.TypeArgs.Count > 0 && no.TypeName != "WeakReference")
+        var t = ResolveType(new TypeSyntax { Name = no.TypeName, TypeArgs = no.TypeArgs, Line = no.Line });
+        if (t.Kind == TypeKind.Primitive && no.Arguments.Count == 0)
         {
-            Report(no.Line, $"generic type '{no.TypeName}<{string.Join(", ", no.TypeArgs)}>' is not supported: only WeakReference<T> is recognised", DiagnosticCatalog.UnsupportedConstructId);
-            return Err();
+            return new BoundLiteral
+            {
+                Type = t,
+                LitKind = t.Name switch
+                {
+                    "float" => LiteralKind.Float,
+                    "double" => LiteralKind.Double,
+                    "bool" => LiteralKind.Bool,
+                    "char" => LiteralKind.Char,
+                    _ => LiteralKind.Int
+                }
+            };
         }
-
-        if (!_types.TryGetValue(no.TypeName, out var t) || t.Kind is not (TypeKind.Class or TypeKind.Struct))
+        if (t.Kind is not (TypeKind.Class or TypeKind.Struct))
         {
             Report(no.Line, $"cannot instantiate '{no.TypeName}'");
             return Err();
@@ -1873,7 +1869,7 @@ public sealed class Binder
         if (target is not MemberAccessExpr ma) return null;
 
         // static property
-        if (ma.Target is NameExpr tn && _types.TryGetValue(tn.Name, out var typeRef)
+        if (ma.Target is NameExpr tn && TryResolveStaticType(tn, out var typeRef)
                                        && LookupLocal(tn.Name) == null && !_params.ContainsKey(tn.Name))
         {
             var prop = FindProperty(typeRef, ma.Name, instance: false);

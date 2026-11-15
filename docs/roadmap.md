@@ -41,8 +41,13 @@ results are in [Verification](verification.md).
   `ARC3100` for possible strong cycles are emitted by the compiler, backed by
   a shared catalogue and a Roslyn analyser with unit tests.
 
-**Next phases (sequenced, not yet implemented):** generics (monomorphisation) →
-ARC safety (leak diagnostics and owner lifetimes) → backend upgrade (LLVM C API, debug
+**Phase 3 — generics (done for the supported subset):** cached closed class,
+struct, interface, and method specialisations; basic inference; generic bases;
+separate static storage; and binder-enforced constraints. Existing struct limits,
+virtual/interface generic methods, variance, full inference, and additional
+constraint forms remain follow-up work.
+
+**Next phases (sequenced, not yet implemented):** ARC safety (leak diagnostics and owner lifetimes) → backend upgrade (LLVM C API, debug
 info, optimisation, multi-target) → BCL & threading.
 Per-item design and "concrete first steps" are in the sections below.
 
@@ -55,7 +60,7 @@ unmarked items are still planned.
 
 | Feature                                            | Priority         | Decision / approach                                                                                                                                                                                                                                                                                                                                                                                                                               |
 |----------------------------------------------------|------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Generics**                                       | P0               | Implement **monomorphisation** (like C++ templates / Rust / Swift generics). Every closed generic type (`List<int>`, `Dictionary<string, Foo>`) gets its own `TypeInfo`, vtable, and `__deinit`. The current "uniform 8-byte slot" object model stays; generic value-type arguments are specialised by size. Generic methods are instantiated at call sites. Constraint checking (`where T : class`, `where T : IFoo`) is enforced in the binder. |
+| **Generics**                                       | P0 **[done]**    | Implemented **monomorphisation** for the supported subset. Every closed generic type (`Box<int>`, `Pair<string>`) gets its own `TypeInfo`, vtable, and `__deinit`. The current "uniform 8-byte slot" object model stays; generic value-type arguments are specialised by size. Generic methods are instantiated at call sites. Constraint checking (`where T : class`, `where T : IFoo`) is enforced in the binder. |
 | **Exception handling (`try`/`catch`/`finally`)**   | P0               | Use **DWARF on Linux/macOS** and **SEH/Table-based exception handling on Windows**. Every cleanup scope (statement temps + locals) must emit a landing pad that releases live reference-typed locals and temporaries. `finally` blocks are inlined on both normal and unwind paths. `catch` requires RTTI (Section 5). `Exception` becomes the root class of a small exception hierarchy.                                                         |
 | **Closures / lambdas**                             | P1               | Lower lambdas to **heap-allocated closure objects** that capture variables by reference into fields. ARC owns the closure. Preserve ordinary C# strong captures, including `this`; do not add weak-by-default captures or non-standard syntax. Define cycle policy before closures, events, and async; initially use explicit `WeakReference<T>` patterns and decide whether broad compatibility requires backup cycle collection. Anonymous methods and expression-bodied lambdas (`x => x + 1`) are parsed and bound to delegate-compatible types.                                                                    |
 | **`async`/`await`**                                | P1               | Lower to a **state machine class** (like Roslyn). The compiler generates `IAsyncStateMachine`-like machinery manually. ARC retain/release must be threaded across suspension points: every captured local/reference field in the state machine is managed, and the state machine itself is ARC-owned. Initially target single-threaded continuations; thread-pool dispatch is P2.                                                                 |
@@ -73,7 +78,10 @@ unmarked items are still planned.
 4. **`using`** — **[done]** added `UsingStmt` to the parser; lowered to
    scoped-ownership cleanup: dispose at scope exit and on `return`, then
    release (`ARC2011` when the resource is not disposable).
-5. **Generics** — add generic parameter lists to type/method declarations, build a substitution map, and instantiate closed types during binding.
+5. **Generics** — **[done]** generic parameter lists, syntax substitution, cached
+   closed types and methods, basic inference, and constraints. Remaining work:
+   virtual/interface generic methods, variance, full overload inference, and
+   additional constraint forms.
 
 ---
 
@@ -150,8 +158,8 @@ unmarked items are still planned.
 | **Array covariance**    | P0 **[done]** | Arrays store their element `TypeInfo` at offset 32 (offset 40 for elements). Every store to a reference-type array performs a runtime assignability check via `arc_array_store_check` that throws `ArrayTypeMismatchException` on mismatch. Value-type arrays are invariant. `S[]` → `T[]` binder conversion allowed when `S` is reference-compatible with `T`.     |
 | **Definite assignment** | P0 **[done]** | A conservative structured flow pass (`DefiniteAssignment.cs`) tracks whether each local is definitely assigned before use, with completes-normally tracking so `if`/loop joins don't false-positive. Currently reports `ARC2100` as a warning (promotable via `-Werror`); tightening to a hard error and extending to `out`-parameter exit paths is follow-up work. |
 | **Overflow checking**   | P1            | Support `checked`/`unchecked` contexts. Integer arithmetic in `checked` emits `llvm.sadd.with.overflow` / `smul.with.overflow` and branches to an overflow exception. `unchecked` uses plain LLVM integer ops.                                                                                                                                                      |
-| **Known defects**       | P0            | Fix the defects recorded in [Known issues](language-reference.md#known-issues): ignored field initialisers, abstract methods that produce invalid IR, unchecked class casts, `WeakReference<T>` locals, and reference equality for `string ==`. Each fix lands with a sample that checks its output. |
-| **Verification suite**  | P0 **[partly done]** | The harness now runs 26 samples, 15 must-fail diagnostics, 3 command-line checks, 4 cycle checks, and 62 analyser unit tests. Grow to a **thousands-of-tests conformance suite**. Adopt or write a test harness that runs ArcSharp output against expected output and ARC accounting. Target the C# spec incrementally; include negative tests (must-fail diagnostics), which the harness supports. |
+| **Known defects**       | P0            | Fix the defects recorded in [Known issues](language-reference.md#known-issues): ignored field initialisers, abstract methods that produce invalid IR, unchecked class casts, reference equality for `string ==`, inherited auto-property lookup, and reference temporaries in short-circuit expressions. Each fix lands with a sample that checks its output. |
+| **Verification suite**  | P0 **[partly done]** | The harness now runs 28 samples, 23 must-fail diagnostics, 3 command-line checks, 4 cycle checks, and 66 analyser unit tests. Grow to a **thousands-of-tests conformance suite**. Adopt or write a test harness that runs ArcSharp output against expected output and ARC accounting. Target the C# spec incrementally; include negative tests (must-fail diagnostics), which the harness supports. |
 
 ### Concrete first steps for correctness
 
@@ -191,7 +199,7 @@ the analyser.
 
 ArcSharp source is meant to stay valid C#, so the program people actually
 edit is built by Roslyn (`dotnet build`, Visual Studio, VS Code). That build
-accepts generics, `try`, `async`, lambdas, and a strong parent/child cycle,
+accepts `try`, `async`, lambdas, and a strong parent/child cycle,
 then produces a program ArcSharp will reject, ignore, or leak. The author
 finds out only later, by running `arcsharp`. An analyser referenced from the
 project reports the same problems as squiggles and `dotnet build` warnings,
@@ -220,7 +228,7 @@ reclaim the ones nobody broke. Those are three different tools.
 
 | Rule | Severity | Where it fires | Why |
 |---|---|---|---|
-| **Unsupported construct** | Error (`ARC3001` and following) | Compiler and analyser — implemented | Generics other than `WeakReference<T>`, `try`/`catch`/`finally`, `throw`, `async`/`await`, `yield`, lambdas, local functions, delegates, events, enums, indexers, records, pattern matching, LINQ, `lock`, `unsafe`, `stackalloc`, bitwise operators, `params`, optional and named arguments, and the struct restrictions. The compiler must stop dropping these on the floor. |
+| **Unsupported construct** | Error (`ARC3001` and following) | Compiler and analyser — implemented | Virtual/interface generic methods, `try`/`catch`/`finally`, `throw`, `async`/`await`, `yield`, lambdas, local functions, delegates, events, enums, indexers, records, pattern matching, LINQ, `lock`, `unsafe`, `stackalloc`, bitwise operators, `params`, optional and named arguments, and the struct restrictions. The compiler must stop dropping these on the floor. |
 | **Possible strong cycle** | Warning (`ARC3100`) | Compiler and analyser — implemented | A set of classes whose strong fields reach each other can form a runtime cycle. ARC leaks it. `WeakReference<T>` and the legacy `weak` modifier are not edges in this graph. |
 | **ARC and CLR disagree** | Info (`ARC3200`) | Planned | `GC.Collect`, `GC.KeepAlive`, finalisers that assume a collector, and `TryGetTarget` used as if it waited for a GC. The code compiles on both, and the timing does not match. |
 | **Threads** | Warning (`ARC3300`) | Planned | `Thread`, `Task`, `lock`, and other shared cross-thread use. Refcounts are non-atomic, so this is unsound rather than merely unimplemented. |
@@ -310,7 +318,8 @@ A pragmatic path from PoC to production:
    `ARC3001`, possible strong cycles as `ARC3100`, and the Roslyn analyser in
    `analyzers/ArcSharp.Analyzers` mirrors those rules with unit tests
    (section 7).
-4. **Generics** — monomorphisation engine; re-implement collections once generics land.
+4. **Generics** — **[done]** monomorphisation engine for the supported subset,
+   basic inference, and constraint checks. Collections remain a corelib task.
 5. **ARC safety foundation** — leak diagnostics, then an audit of existing managed-reference calls and proven owner lifetimes. Gate broader language support on cycle policy and interior-reference safety. Keep the runtime single-threaded; defer ownership optimisations until these checks exist. Enrich leak reports with allocation stacks after backend debug info lands.
 6. **Backend upgrade** — LLVM C API, debug info, optimisations, multi-target.
 7. **Minimal corelib, then concurrency** — add ARC-aware APIs incrementally. Gate spans on owner tracking and threading on a verified concurrent ownership protocol, including atomic counts. Follow with ownership optimisations once safety is established.

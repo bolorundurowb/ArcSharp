@@ -1,4 +1,4 @@
-// Expected: ARC3001 generics are not supported (except WeakReference<T>).
+// Expected: ARC2013; List<T> is not part of the core library yet.
 class Program {
     static void Main() {
         List<int> xs;

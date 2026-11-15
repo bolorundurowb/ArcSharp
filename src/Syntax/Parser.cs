@@ -218,15 +218,17 @@ public sealed class Parser(List<Token> tokens)
         Expect(TokenKind.ClassKw);
         var name = Expect(TokenKind.Identifier).Text;
         var cls = new ClassDecl { Name = name, Line = line, IsAbstract = isAbstract };
+        ParseTypeParameters(cls.TypeParameters);
         if (Accept(TokenKind.Colon))
         {
             do
             {
-                var b = Expect(TokenKind.Identifier).Text;
-                cls.InterfaceNames.Add(b);
+                var b = ParseType();
+                cls.Bases.Add(b);
             } while (Accept(TokenKind.Comma));
         }
 
+        ParseConstraints(cls.Constraints);
         Expect(TokenKind.OpenBrace);
         while (!At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
         {
@@ -243,6 +245,7 @@ public sealed class Parser(List<Token> tokens)
         Expect(TokenKind.StructKw);
         var name = Expect(TokenKind.Identifier).Text;
         var s = new StructDecl { Name = name, Line = line };
+        ParseTypeParameters(s.TypeParameters);
         if (Accept(TokenKind.Colon))
         {
             do
@@ -252,6 +255,7 @@ public sealed class Parser(List<Token> tokens)
             } while (Accept(TokenKind.Comma));
         }
 
+        ParseConstraints(s.Constraints);
         Expect(TokenKind.OpenBrace);
         while (!At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
         {
@@ -268,6 +272,7 @@ public sealed class Parser(List<Token> tokens)
         Expect(TokenKind.InterfaceKw);
         var name = Expect(TokenKind.Identifier).Text;
         var iface = new InterfaceDecl { Name = name, Line = line };
+        ParseTypeParameters(iface.TypeParameters);
         if (Accept(TokenKind.Colon))
         {
             do
@@ -276,6 +281,7 @@ public sealed class Parser(List<Token> tokens)
             } while (Accept(TokenKind.Comma));
         }
 
+        ParseConstraints(iface.Constraints);
         Expect(TokenKind.OpenBrace);
         while (!At(TokenKind.CloseBrace) && !At(TokenKind.EndOfFile))
         {
@@ -392,6 +398,8 @@ public sealed class Parser(List<Token> tokens)
 
         var type = ParseType();
         var name = Expect(TokenKind.Identifier).Text;
+        var typeParameters = new List<string>();
+        ParseTypeParameters(typeParameters);
 
         if (At(TokenKind.FatArrow))
         {
@@ -418,7 +426,9 @@ public sealed class Parser(List<Token> tokens)
                 IsAbstract = isAbstract || owner is InterfaceDecl,
                 IsPublic = isPublic
             };
+            m.TypeParameters = typeParameters;
             ParseParameterList(m.Parameters);
+            ParseConstraints(m.Constraints);
             if (At(TokenKind.OpenBrace))
             {
                 m.Body = ParseBlock();
@@ -559,6 +569,72 @@ public sealed class Parser(List<Token> tokens)
         Expect(TokenKind.Greater);
     }
 
+    private void ParseTypeParameters(List<string> parameters)
+    {
+        if (!Accept(TokenKind.Less))
+        {
+            return;
+        }
+        do
+        {
+            var name = Expect(TokenKind.Identifier).Text;
+            if (parameters.Contains(name))
+            {
+                Report($"duplicate type parameter '{name}'");
+            }
+            parameters.Add(name);
+        } while (Accept(TokenKind.Comma));
+        Expect(TokenKind.Greater);
+    }
+
+    private void ParseConstraints(List<GenericConstraint> constraints)
+    {
+        while (At(TokenKind.Identifier) && Current.Text == "where")
+        {
+            var line = Advance().Line;
+            var parameter = Expect(TokenKind.Identifier).Text;
+            Expect(TokenKind.Colon);
+            var constraint = new GenericConstraint { Parameter = parameter, Line = line };
+            do
+            {
+                if (Accept(TokenKind.ClassKw))
+                {
+                    constraint.ReferenceType = true;
+                }
+                else if (Accept(TokenKind.StructKw))
+                {
+                    constraint.ValueType = true;
+                }
+                else if (Accept(TokenKind.NewKw))
+                {
+                    constraint.Constructor = true;
+                    Expect(TokenKind.OpenParen);
+                    Expect(TokenKind.CloseParen);
+                }
+                else
+                {
+                    constraint.Types.Add(ParseType());
+                }
+            } while (Accept(TokenKind.Comma));
+            constraints.Add(constraint);
+        }
+    }
+
+    private bool TryParseExpressionTypeArguments(out List<TypeSyntax> arguments)
+    {
+        var save = _i;
+        var diagnostics = Diagnostics.Count;
+        arguments = [];
+        ParseTypeArgList(arguments);
+        if (Diagnostics.Count == diagnostics && (At(TokenKind.OpenParen) || At(TokenKind.Dot)))
+        {
+            return true;
+        }
+        _i = save;
+        Diagnostics.RemoveRange(diagnostics, Diagnostics.Count - diagnostics);
+        return false;
+    }
+
     // ---- Statements --------------------------------------------------------
     private BlockStmt ParseBlock()
     {
@@ -615,10 +691,6 @@ public sealed class Parser(List<Token> tokens)
             UnsupportedStatementWords.TryGetValue(Current.Text, out var msg))
         {
             Report(msg, DiagnosticCatalog.UnsupportedConstructId);
-        }
-        else if (Current.Kind == TokenKind.Identifier && Peek(1).Kind == TokenKind.Less)
-        {
-            Report("generics are not supported: only WeakReference<T> is recognised", DiagnosticCatalog.UnsupportedConstructId);
         }
         else if (IsTypeStart(Current) && Peek(1).Kind == TokenKind.Identifier && Peek(2).Kind == TokenKind.OpenParen)
         {
@@ -707,6 +779,13 @@ public sealed class Parser(List<Token> tokens)
 
         if (Current.Kind == TokenKind.Identifier)
         {
+            var save = _i;
+            var diagnostics = Diagnostics.Count;
+            ParseType();
+            var declaration = At(TokenKind.Identifier);
+            _i = save;
+            Diagnostics.RemoveRange(diagnostics, Diagnostics.Count - diagnostics);
+            if (declaration) return true;
             if (Peek(1).Kind == TokenKind.Identifier) return true;
             if (Peek(1).Kind == TokenKind.Question && Peek(2).Kind == TokenKind.Identifier) return true;
             if (Peek(1).Kind == TokenKind.OpenBracket && Peek(2).Kind == TokenKind.CloseBracket
@@ -865,6 +944,11 @@ private Expr ParseEquality()
                 continue;
             }
 
+            if (At(TokenKind.Greater) && Peek(1).Kind == TokenKind.Greater)
+            {
+                Report("shift operator '>>' not supported", "ARC0003");
+                Advance();
+            }
             var op = Advance().Kind;
             var right = ParseAdditive();
             left = new BinaryExpr { Op = op, Left = left, Right = right, Line = left.Line };
@@ -969,6 +1053,21 @@ private Expr ParsePostfix()
             Advance();
             var name = Expect(TokenKind.Identifier).Text;
             e = new MemberAccessExpr { Target = e, Name = name, Line = e.Line };
+        }
+        else if (At(TokenKind.Less) && TryParseExpressionTypeArguments(out var typeArgs))
+        {
+            if (At(TokenKind.OpenParen))
+            {
+                e = new InvocationExpr { Callee = e, TypeArgs = typeArgs, Arguments = ParseArgumentList(), Line = e.Line };
+            }
+            else if (e is NameExpr name)
+            {
+                name.TypeArgs = typeArgs;
+            }
+            else
+            {
+                Report("invalid generic type expression");
+            }
         }
         else if (At(TokenKind.OpenParen))
         {
@@ -1156,7 +1255,7 @@ private Expr ParseNew()
         Advance();
         var size = ParseExpression();
         Expect(TokenKind.CloseBracket);
-        return new NewArrayExpr { ElementType = new TypeSyntax { Name = type, Line = line }, Size = size, Line = line };
+        return new NewArrayExpr { ElementType = new TypeSyntax { Name = type, TypeArgs = typeArgs, Line = line }, Size = size, Line = line };
     }
 
     var args = ParseArgumentList();

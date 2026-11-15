@@ -34,7 +34,8 @@ public sealed class UnsupportedConstructTests
         { "record", "record R(int X); class C { }" },
         { "local function", "class C { static void Main() { void F() { } F(); } }" },
         { "expression body", "class C { static int One() => 1; }" },
-        { "generic method", "class C { static void M<T>() { } }" },
+        { "virtual generic method", "class C { public virtual T M<T>(T value) { return value; } }" },
+        { "interface generic method", "interface I { T M<T>(T value); }" },
         { "optional parameter", "class C { static void M(int x = 1) { } }" },
         { "params parameter", "class C { static void M(params int[] xs) { } }" },
         { "named argument", "class C { static void M(int x) { } static void Main() { M(x: 1); } }" },
@@ -52,6 +53,9 @@ public sealed class UnsupportedConstructTests
 
     public static TheoryData<string, string> SupportedSources => new()
     {
+        { "generic class", "class Box<T> where T : class { public T Value; }" },
+        { "generic method", "class C { static T Identity<T>(T value) { return value; } }" },
+        { "generic interface and struct", "interface IValue<T> { T Get(); } struct Pair<T> { public T Item; public int Tag; }" },
         { "plain program", "class Program { static void Main() { System.Console.WriteLine(\"hi\"); } }" },
         {
             "inheritance and interfaces",

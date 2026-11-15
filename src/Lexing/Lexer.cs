@@ -649,14 +649,6 @@ public sealed class Lexer(string text)
 
                 break;
             case '>':
-                if (n == '>')
-                {
-                    Report(line, col, "shift operator '>>' not supported", "ARC0003");
-                    Advance();
-                    Advance();
-                    return new Token(TokenKind.Bad, ">>", start, line, col);
-                }
-
                 if (n == '=')
                 {
                     kind = TokenKind.GreaterEquals;
