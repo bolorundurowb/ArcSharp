@@ -33,6 +33,7 @@ internal sealed class TypeSubstitution(IReadOnlyDictionary<string, TypeSyntax> a
             _ => throw new InvalidOperationException($"Unhandled generic declaration: {declaration.GetType().Name}")
         };
         result.Line = declaration.Line;
+        result.File = declaration.File;
         result.Members = declaration.Members.Select(Member).ToList();
         return result;
     }

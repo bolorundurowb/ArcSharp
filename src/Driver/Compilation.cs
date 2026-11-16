@@ -45,7 +45,9 @@ public static class Compilation
             var src = File.ReadAllText(input);
             var lexer = new Lexer(src);
             var parser = new Parser(lexer.Lex());
-            units.Add(parser.ParseCompilationUnit());
+            var unit = parser.ParseCompilationUnit();
+            unit.File = Path.GetFileName(input);
+            units.Add(unit);
             foreach (var d in lexer.Diagnostics.Concat(parser.Diagnostics))
             {
                 diags.Add((input, d));

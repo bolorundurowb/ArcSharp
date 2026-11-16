@@ -49,6 +49,10 @@ The compiler writes diagnostics and progress lines, such as
 writes its own output to standard output, and the runtime writes its
 accounting line, `[arc] alloc=... live=...`, to standard error.
 
+Set the environment variable `ARC_LEAKS` to `1` before running a program to
+print a survivor line for each object still alive when `Main` returns. The
+accounting line is unchanged. See [Finding leaks](memory-model.md#finding-leaks).
+
 If you call the compiler from a script, do not treat output on standard error
 as a failure. Check the exit code instead. `tools/verify.ps1` shows one way to
 capture both streams from PowerShell.

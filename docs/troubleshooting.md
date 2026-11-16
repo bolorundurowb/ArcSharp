@@ -106,9 +106,12 @@ order.
 
 ### `live` is greater than zero
 
-Some objects were never destroyed. Usually this is a reference cycle; see
-[Finding leaks](memory-model.md#finding-leaks). Objects held by static fields
-also count, because static fields are not cleared when `Main` returns.
+Some objects were never destroyed. Run the program again with the environment
+variable `ARC_LEAKS` set to `1`. Each surviving object is printed after the
+accounting line. `root=unreachable` is a leak, and a following `[arc] cycle`
+line names the types in a strong cycle. `root=static` is an object a static
+field still holds; static fields are not cleared when `Main` returns. See
+[Finding leaks](memory-model.md#finding-leaks).
 
 ### A field has the wrong starting value
 

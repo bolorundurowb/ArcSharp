@@ -250,12 +250,40 @@ Every program prints its accounting line when `Main` returns:
 [arc] alloc=A dead=D freed=F live=L
 ```
 
-`live` is the number of objects that were never destroyed. If it is not zero:
+`live` is the number of objects that were never destroyed. If it is not zero,
+set the environment variable `ARC_LEAKS` to `1` and run the program again. The
+accounting line is unchanged. After it, the runtime prints one line for each
+object that is still alive:
 
-1. Look for classes whose fields can lead back to themselves, directly or
-   through other classes.
-2. Make the back-reference a `WeakReference<T>`.
-3. Run the program again and check that `live=0`.
+```text
+[arc] survivor addr=<address> type=<type> strong=<n> weak=<n> site=<file:line> root=static|unreachable
+```
+
+`root=static` means a static field still reaches the object, so it is retained
+on purpose. `root=unreachable` means nothing the program can still name reaches
+it, which is a leak. When unreachable objects form a strong cycle, a further
+line names the types around that cycle. `samples/cycle_strong.cs` prints a
+report of this shape (the address changes from run to run):
+
+```text
+[arc] alloc=3 dead=1 freed=1 live=2
+[arc] survivor addr=000001C80194F040 type=Child strong=1 weak=1 site=cycle_strong.cs:11 root=unreachable
+[arc] survivor addr=000001C80194EE00 type=Parent strong=1 weak=1 site=cycle_strong.cs:10 root=unreachable
+[arc] cycle Parent -> Child -> Parent
+```
+
+`site` is the source file and line of the `new` expression, the array
+creation, the string literal, or the `WeakReference<T>` constructor. Strings
+built by concatenation or by printing a number are reported as `<runtime>`.
+The report does not free the objects. A cycle that is still reachable from a
+static field is classified as `root=static` and is not printed as an
+unreachable cycle.
+
+With that report:
+
+1. Make an unreachable back-reference a `WeakReference<T>`.
+2. Run the program again and check that `live=0`, and that `ARC_LEAKS=1`
+   prints no `survivor` lines.
 
 The compiler warns about possible cycles as `ARC3100` when a set of classes can
 reach each other through strong fields. The warning is about declared types,
@@ -264,7 +292,9 @@ not a particular object graph, so a tree or a singly linked list warns too. See
 [Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project).
 
 Static fields are a special case. An object held by a static field is still
-alive when `Main` returns, so it counts towards `live`.
+alive when `Main` returns, so it counts towards `live` and the leak report
+marks it `root=static`. `samples/leaks.cs` keeps one object that way and also
+builds two unreachable cycles.
 
 ## Threads
 
@@ -275,10 +305,10 @@ objects between threads would corrupt the counts. Atomic counts are on the
 
 ## Planned safety work
 
-The roadmap adds an opt-in runtime leak detector with allocation sites and
-object/reference graphs, distinguishing static-root retention from suspected
-unreachable cycles. Current accounting only reports totals. Detection will
-not itself reclaim objects, and static warnings cannot prove leak freedom.
+The opt-in leak report above names surviving objects and unreachable cycles.
+It does not prove that a program is free of leaks when it is switched off, and
+a static `ARC3100` warning still cannot prove that a cycle will happen at run
+time. Allocation stacks are not part of the report yet.
 
 Interior references into heap fields and arrays need their backing allocation
 to remain alive for every use. The next safety milestone audits existing

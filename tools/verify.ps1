@@ -34,7 +34,7 @@ try {
     # The compiler writes progress lines such as "[arcsharp] wrote ..." there,
     # so read both streams from the process instead of calling dotnet directly.
     function Invoke-Captured {
-        param([string[]] $Arguments)
+        param([string[]] $Arguments, [hashtable] $Environment)
         $start = New-Object System.Diagnostics.ProcessStartInfo
         $start.FileName = "dotnet"
         $start.WorkingDirectory = $root
@@ -42,6 +42,11 @@ try {
         $start.RedirectStandardOutput = $true
         $start.RedirectStandardError = $true
         $start.CreateNoWindow = $true
+        if ($null -ne $Environment) {
+            foreach ($key in $Environment.Keys) {
+                $start.EnvironmentVariables[$key] = [string]$Environment[$key]
+            }
+        }
         $start.Arguments = ($Arguments | ForEach-Object {
             if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
         }) -join ' '
@@ -70,7 +75,7 @@ try {
         $run = Invoke-Captured (@($dll) + $a)
         $out = $run.Out
         $err = $run.Err
-        $arc = ($err -split "`r?`n" | Where-Object { $_ -match '\[arc\]' }) -join ""
+        $arc = ($err -split "`r?`n" | Where-Object { $_ -match '\[arc\] alloc=' }) -join ""
         $gotLive = if ($arc -match 'live=(\d+)') { [int]$Matches[1] } else { -1 }
         $ok = ($gotLive -eq $Live) -and ($out -match [regex]::Escape($Want))
         if ($ok) {
@@ -79,6 +84,39 @@ try {
         }
         else {
             Write-Host "FAIL  $Name  want_live=$Live got='$arc' want_out='$Want' got_out='$out'"
+            $script:fail++
+        }
+    }
+
+    # Same as Invoke-Sample, with ARC_LEAKS=1. Patterns are .NET regexes matched
+    # against the whole stderr. Absent patterns must not match.
+    function Invoke-LeakCheck {
+        param(
+            [string]   $Name,
+            [int]      $Live,
+            [string]   $Want,
+            [string[]] $Sources,
+            [string[]] $Patterns,
+            [string[]] $Absent
+        )
+        $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
+        $outBase = Join-Path $build "out/leak_$Name"
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
+        $run = Invoke-Captured -Arguments (@($dll) + $a) -Environment @{ ARC_LEAKS = "1" }
+        $out = $run.Out
+        $err = $run.Err
+        $arc = ($err -split "`r?`n" | Where-Object { $_ -match '\[arc\] alloc=' }) -join ""
+        $gotLive = if ($arc -match 'live=(\d+)') { [int]$Matches[1] } else { -1 }
+        $missing = @($Patterns | Where-Object { $err -notmatch $_ })
+        $present = @($Absent | Where-Object { $err -match $_ })
+        $ok = ($gotLive -eq $Live) -and ($out -match [regex]::Escape($Want)) -and ($missing.Count -eq 0) -and ($present.Count -eq 0)
+        if ($ok) {
+            Write-Host "PASS  leak/$Name  ($arc)"
+            $script:pass++
+        }
+        else {
+            Write-Host "FAIL  leak/$Name  want_live=$Live got='$arc' missing='$($missing -join ' | ')' unexpected='$($present -join ' | ')'"
+            Write-Host $err
             $script:fail++
         }
     }
@@ -198,6 +236,31 @@ try {
     Invoke-Sample overloads      0 "int=7 str=ok 4 4"           @("overloads")        # same-arity overloads, static and instance
     Invoke-Sample charprint      0 "concat=B direct=A"          @("charprint")        # char prints as a character
     Invoke-Sample staticprop     0 "count=4"                    @("staticprop")       # static auto-property
+    Invoke-Sample leaks          6 "leaks reported"             @("leaks")            # static root plus unreachable cycles; ARC_LEAKS report checked below
+
+    Write-Host "--- leak detector (ARC_LEAKS=1) ---"
+    Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(
+        "type=Node .*root=static",
+        "type=Parent .*root=unreachable",
+        "type=Child .*root=unreachable",
+        "type=Cell .*root=unreachable",
+        "type=<ref\[\]> .*root=unreachable",
+        "site=leaks\.cs:",
+        "\[arc\] cycle (Parent -> Child -> Parent|Child -> Parent -> Child)",
+        "\[arc\] cycle (<ref\[\]> -> Cell -> <ref\[\]>|Cell -> <ref\[\]> -> Cell)"
+    ) @()
+    Invoke-LeakCheck cycle_strong 2 "done (strong cycle)" @("cycle_strong") @(
+        "type=Parent .*root=unreachable",
+        "type=Child .*root=unreachable",
+        "site=cycle_strong\.cs:",
+        "\[arc\] cycle (Parent -> Child -> Parent|Child -> Parent -> Child)"
+    ) @("root=static")
+    Invoke-LeakCheck cycle_struct 2 "done (struct cycle)" @("cycle_struct") @(
+        "type=Owner .*root=unreachable",
+        "site=cycle_struct\.cs:",
+        "\[arc\] cycle Owner -> Owner -> Owner"
+    ) @("root=static")
+    Invoke-LeakCheck cycle_weak 0 "done (weak cycle)" @("cycle_weak") @() @("\[arc\] survivor")
 
     Write-Host "--- unsupported constructs must be rejected (ARC3001 / ARC0003 / ARC0004 / ARC2011 / ARC2012) ---"
     Invoke-MustFail break           "ARC3001" @("break")

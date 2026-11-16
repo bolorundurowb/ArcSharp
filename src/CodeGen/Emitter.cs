@@ -13,6 +13,8 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     private readonly StringBuilder _mod = new();
     private readonly List<string> _strings = [];
+    private readonly Dictionary<string, string> _siteOperands = [];
+    private int _staticRootCount;
 
     private List<string> _entry = [];
     private List<string> _body = [];
@@ -71,7 +73,8 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         _mod.AppendLine("; ArcSharp generated module");
         _mod.AppendLine($"target triple = \"{_triple}\"");
         _mod.AppendLine();
-        _mod.AppendLine("%TypeInfo = type { i8*, i64, void (i8*)*, i8**, i64, i8**, i64, i8* }");
+        _mod.AppendLine("%ArcSlot = type { i64, i32, i32, i8* }");
+        _mod.AppendLine("%TypeInfo = type { i8*, i64, void (i8*)*, i8**, i64, i8**, i64, i8*, %ArcSlot*, i64 }");
         _mod.AppendLine();
         EmitRuntimeDecls();
         _mod.AppendLine();
@@ -86,6 +89,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             }
             else if (t.Kind == TypeKind.Struct)
             {
+                EmitStructTypeInfo(t);
                 EmitStructHelpers(t, fns);
             }
         }
@@ -98,6 +102,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             }
         }
 
+        EmitStaticRoots();
         _mod.AppendLine();
 
         foreach (var b in _program.MethodBodies)
@@ -119,21 +124,21 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
     {
         foreach (var d in new[]
                  {
-                     "declare i8* @arc_alloc(%TypeInfo*)",
+                     "declare i8* @arc_alloc(%TypeInfo*, i8*)",
                      "declare void @arc_retain(i8*)",
                      "declare void @arc_release(i8*)",
                      "declare void @arc_assign_take(i8**, i8*)",
                      "declare void @arc_store_strong(i8**, i8*)",
                      "declare void @arc_store_weak(i8**, i8*)",
                      "declare i8* @arc_load_weak(i8**)",
-                     "declare i8* @arc_weakref_new(i8*)",
+                     "declare i8* @arc_weakref_new(i8*, i8*)",
                      "declare i8* @arc_weakref_try_get(i8*)",
                      "declare void @arc_weakref_set(i8*, i8*)",
-            "declare i8* @arc_array_new(i64, i32, %TypeInfo*)",
+            "declare i8* @arc_array_new(i64, i32, %TypeInfo*, i8*)",
             "declare i64 @arc_array_length(i8*)",
             "declare void @arc_bounds_check(i8*, i64)",
             "declare void @arc_array_store_check(i8*, i64, i8*)",
-                     "declare i8* @arc_str_lit(i8*, i64)",
+                     "declare i8* @arc_str_lit(i8*, i64, i8*)",
                      "declare i64 @arc_str_length(i8*)",
                      "declare i8* @arc_str_concat(i8*, i8*)",
                      "declare i8* @arc_str_from_int(i64)",
@@ -149,6 +154,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                      "declare void @arc_console_write_double(double, i32)",
             "declare void @arc_console_newline()",
             "declare i32 @arc_is_instance(i8*, %TypeInfo*)",
+            "declare void @arc_set_roots(i8***, i64)",
             "declare void @arc_report()",
                  })
         {
@@ -161,10 +167,125 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     private static bool IsFloatType(TypeSymbol t) => t.LlvmType is "float" or "double";
 
+    private static string LlvmBytes(string text, out int byteLength)
+    {
+        var bytes = Encoding.UTF8.GetBytes(text);
+        byteLength = bytes.Length;
+        var sb = new StringBuilder();
+        foreach (var bt in bytes)
+        {
+            if (bt >= 0x20 && bt < 0x7f && bt != (byte)'"' && bt != (byte)'\\')
+            {
+                sb.Append((char)bt);
+            }
+            else
+            {
+                sb.Append("\\" + bt.ToString("X2"));
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private string EmitTypeName(TypeSymbol t)
+    {
+        var escaped = LlvmBytes(t.ToString(), out var nbytes);
+        _mod.AppendLine($"@{t.Name}__name = private constant [{nbytes + 1} x i8] c\"{escaped}\\00\"");
+        return $"getelementptr ([{nbytes + 1} x i8], [{nbytes + 1} x i8]* @{t.Name}__name, i64 0, i64 0)";
+    }
+
+    // kind matches ArcSlot in the runtime: 1 is a strong reference, 2 is an
+    // inline struct whose nested TypeInfo continues the walk. Weak fields are
+    // left out because they do not keep their target alive.
+    private string EmitSlots(TypeSymbol t, out int count)
+    {
+        var parts = new List<string>();
+        foreach (var f in t.InstanceFields)
+        {
+            if (f.IsWeak)
+            {
+                continue;
+            }
+
+            if (f.Type.Kind == TypeKind.Struct)
+            {
+                parts.Add($"%ArcSlot {{ i64 {f.ByteOffset}, i32 2, i32 0, i8* bitcast (%TypeInfo* @{f.Type.Name}__ti to i8*) }}");
+            }
+            else if (f.Type.IsReferenceType)
+            {
+                parts.Add($"%ArcSlot {{ i64 {f.ByteOffset}, i32 1, i32 0, i8* null }}");
+            }
+        }
+
+        count = parts.Count;
+        if (count == 0)
+        {
+            return "%ArcSlot* null";
+        }
+
+        var sym = $"@{t.Name}__slots";
+        _mod.AppendLine($"{sym} = private constant [{count} x %ArcSlot] [ {string.Join(", ", parts)} ]");
+        return $"%ArcSlot* getelementptr ([{count} x %ArcSlot], [{count} x %ArcSlot]* {sym}, i64 0, i64 0)";
+    }
+
+    private void EmitStructTypeInfo(TypeSymbol t)
+    {
+        var name = EmitTypeName(t);
+        var slots = EmitSlots(t, out var count);
+        _mod.AppendLine(
+            $"@{t.Name}__ti = constant %TypeInfo {{ " +
+            $"i8* {name}, i64 {t.HeapSize}, void (i8*)* null, i8** null, i64 0, i8** null, i64 0, i8* null, {slots}, i64 {count} }}");
+    }
+
+    private void EmitStaticRoots()
+    {
+        var roots = new List<string>();
+        foreach (var t in _program.Types)
+        {
+            foreach (var f in t.StaticFields)
+            {
+                if (f.IsWeak || !f.Type.IsReferenceType)
+                {
+                    continue;
+                }
+
+                roots.Add($"i8** {f.MangledStatic}");
+            }
+        }
+
+        _staticRootCount = roots.Count;
+        if (_staticRootCount == 0)
+        {
+            return;
+        }
+
+        _mod.AppendLine(
+            $"@arc_static_roots = private constant [{_staticRootCount} x i8**] [ {string.Join(", ", roots)} ]");
+    }
+
+    private string SiteOperand(string site)
+    {
+        if (string.IsNullOrEmpty(site))
+        {
+            return "null";
+        }
+
+        if (_siteOperands.TryGetValue(site, out var existing))
+        {
+            return existing;
+        }
+
+        var escaped = LlvmBytes(site, out var nbytes);
+        var g = $"@.site.{_siteOperands.Count}";
+        _strings.Add($"{g} = private constant [{nbytes + 1} x i8] c\"{escaped}\\00\"");
+        var operand = $"getelementptr ([{nbytes + 1} x i8], [{nbytes + 1} x i8]* {g}, i64 0, i64 0)";
+        _siteOperands[site] = operand;
+        return operand;
+    }
+
     private void EmitTypeInfo(TypeSymbol t, StringBuilder fns)
     {
-        var nameLen = t.Name.Length + 1;
-        _mod.AppendLine($"@{t.Name}__name = private constant [{nameLen} x i8] c\"{t.Name}\\00\"");
+        var name = EmitTypeName(t);
 
         var k = t.Vtable.Count;
         if (k > 0)
@@ -202,11 +323,12 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var baseExpr = t.BaseType != null
             ? $"i8* bitcast (%TypeInfo* @{t.BaseType.Name}__ti to i8*)"
             : "i8* null";
+        var slots = EmitSlots(t, out var slotCount);
 
         _mod.AppendLine(
             $"@{t.Name}__ti = constant %TypeInfo {{ " +
-            $"i8* getelementptr ([{nameLen} x i8], [{nameLen} x i8]* @{t.Name}__name, i64 0, i64 0), " +
-            $"i64 {size}, void (i8*)* @{t.Name}__deinit, {vtExpr}, i64 {k}, {itExpr}, i64 {s}, {baseExpr} }}");
+            $"i8* {name}, " +
+            $"i64 {size}, void (i8*)* @{t.Name}__deinit, {vtExpr}, i64 {k}, {itExpr}, i64 {s}, {baseExpr}, {slots}, i64 {slotCount} }}");
 
         fns.AppendLine($"define void @{t.Name}__deinit(i8* %self) {{");
         fns.AppendLine("entry:");
@@ -949,7 +1071,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 var g = $"@.str.{_strId++}";
                 _strings.Add($"{g} = private constant [{len + 1} x i8] c\"{sb}\\00\"");
                 var ptr = Inst($"getelementptr [{len + 1} x i8], [{len + 1} x i8]* {g}, i64 0, i64 0");
-                return Inst($"call i8* @arc_str_lit(i8* {ptr}, i64 {len})");
+                return Inst($"call i8* @arc_str_lit(i8* {ptr}, i64 {len}, i8* {SiteOperand(l.Site)})");
             }
         }
 
@@ -1208,7 +1330,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             return EmitNewObjectValue(n);
         }
 
-        var obj = Inst($"call i8* @arc_alloc(%TypeInfo* @{n.Type.Name}__ti)");
+        var obj = Inst($"call i8* @arc_alloc(%TypeInfo* @{n.Type.Name}__ti, i8* {SiteOperand(n.Site)})");
         if (n.Ctor != null)
         {
             var argVals = new List<string>();
@@ -1272,7 +1394,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var elemTi = a.ElementType.Kind == TypeKind.Class
             ? $"%TypeInfo* @{a.ElementType.Name}__ti"
             : "%TypeInfo* null";
-        return Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef}, {elemTi})");
+        return Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef}, {elemTi}, i8* {SiteOperand(a.Site)})");
     }
 
     private string ElemAddr(string arr, string idx, TypeSymbol elem, bool checkBounds = true)
@@ -1705,7 +1827,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             _stmtTemps.Add(target);
         }
 
-        return Inst($"call i8* @arc_weakref_new(i8* {target})");
+        return Inst($"call i8* @arc_weakref_new(i8* {target}, i8* {SiteOperand(n.Site)})");
     }
 
     private string EmitWeakRefTryGet(BoundWeakRefTryGet n)
@@ -1866,6 +1988,12 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var entry = _program.Entry;
         fns.AppendLine("define i32 @main() {");
         fns.AppendLine("entry:");
+        if (_staticRootCount > 0)
+        {
+            fns.AppendLine(
+                $"  call void @arc_set_roots(i8*** bitcast ([{_staticRootCount} x i8**]* @arc_static_roots to i8***), i64 {_staticRootCount})");
+        }
+
         if (entry == null)
         {
             fns.AppendLine("  ret i32 0");
