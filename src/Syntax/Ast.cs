@@ -20,11 +20,13 @@ public sealed class TypeSyntax : Node
 // ---- Top level -------------------------------------------------------------
 public sealed class CompilationUnit : Node
 {
+    public string File = "";
     public List<TypeDecl> Types = [];
 }
 
 public abstract class TypeDecl : Node
 {
+    public string File = "";
     public required string Name;
     public List<string> TypeParameters = [];
     public List<GenericConstraint> Constraints = [];

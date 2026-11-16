@@ -11,6 +11,7 @@ public abstract class BoundExpr
 
 public sealed class BoundLiteral : BoundExpr
 {
+    public string Site = "";
     public Syntax.LiteralKind LitKind;
     public long IntValue;
     public bool BoolValue;
@@ -57,12 +58,14 @@ public sealed class BoundCall : BoundExpr
 
 public sealed class BoundNewObject : BoundExpr
 {
+    public string Site = "";
     public MethodSymbol? Ctor;
     public List<BoundExpr> Arguments = [];
 }
 
 public sealed class BoundNewArray : BoundExpr
 {
+    public string Site = "";
     public required TypeSymbol ElementType;
     public required BoundExpr Size;
 }
@@ -75,6 +78,7 @@ public sealed class BoundIndex : BoundExpr
 
 public sealed class BoundWeakRefNew : BoundExpr
 {
+    public string Site = "";
     public required BoundExpr Target; // T value the weak ref points at
 }
 

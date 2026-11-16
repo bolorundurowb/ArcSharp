@@ -204,12 +204,14 @@ the symbols, and the runtime.
 | String | Length at 24, UTF-8 bytes at 32, NUL-terminated |
 | `WeakReference<T>` | One weak slot at 24 |
 
-`TypeInfo` has eight fields: name, instance size, deinit, vtable, vtable
-length, itable, itable length, and base. It is declared in two places that must
-match: the `%TypeInfo` type emitted at the top of every module in
-`Emitter.Emit`, and `struct TypeInfo` in `runtime/arc_runtime.c`. Change both
-together or neither. When documentation shows a different layout, the code is
-correct; update the documentation.
+`TypeInfo` has ten fields: name, instance size, deinit, vtable, vtable
+length, itable, itable length, base, strong-slot metadata, and slot count.
+The slot record (`ArcSlot`) is a strong reference or an inline struct. It is
+declared in two places that must match: the `%TypeInfo` and `%ArcSlot` types
+emitted at the top of every module in `Emitter.Emit`, and `struct TypeInfo`
+and `struct ArcSlot` in `runtime/arc_runtime.c`. Change both together or
+neither. When documentation shows a different layout, the code is correct;
+update the documentation.
 
 Symbol names in the IR are useful when you read `.ll` files: methods are
 `<Type>__<Name>__<paramCount>`, constructors are `<Type>__ctor__<paramCount>`,

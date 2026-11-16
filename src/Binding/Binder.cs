@@ -68,7 +68,11 @@ public sealed partial class Binder
         var merged = new CompilationUnit { Line = 0 };
         foreach (var u in units)
         {
-            merged.Types.AddRange(u.Types);
+            foreach (var td in u.Types)
+            {
+                td.File = u.File;
+                merged.Types.Add(td);
+            }
         }
 
         return Bind(merged);
@@ -1224,6 +1228,20 @@ public sealed partial class Binder
 
     private BoundExpr Err() => new BoundLiteral { Type = _error, LitKind = LiteralKind.Null };
 
+    private string AllocSite(int line)
+    {
+        var file = "";
+        if (_curType != null)
+        {
+            file = _curType.ClassSyntax?.File
+                ?? _curType.StructSyntax?.File
+                ?? _curType.InterfaceSyntax?.File
+                ?? "";
+        }
+
+        return file.Length == 0 ? "line " + line : file + ":" + line;
+    }
+
     private BoundExpr BindLiteral(LiteralExpr l) => l.Kind switch
     {
         LiteralKind.Int => new BoundLiteral { Type = _int, LitKind = l.Kind, IntValue = l.IntValue },
@@ -1234,7 +1252,7 @@ public sealed partial class Binder
         LiteralKind.Double => new BoundLiteral { Type = _double, LitKind = l.Kind, FloatValue = l.FloatValue },
         LiteralKind.Char => new BoundLiteral { Type = _char, LitKind = l.Kind, IntValue = l.IntValue },
         LiteralKind.Bool => new BoundLiteral { Type = _bool, LitKind = l.Kind, BoolValue = l.BoolValue },
-        LiteralKind.String => new BoundLiteral { Type = _string, LitKind = l.Kind, StringValue = l.StringValue },
+        LiteralKind.String => new BoundLiteral { Type = _string, LitKind = l.Kind, StringValue = l.StringValue, Site = AllocSite(l.Line) },
         _ => new BoundLiteral { Type = _null, LitKind = LiteralKind.Null }
     };
 
@@ -1619,7 +1637,7 @@ public sealed partial class Binder
             }
 
             var target = Convert(BindExpr(no.Arguments[0]), elem, no.Line);
-            return new BoundWeakRefNew { Target = target, Type = wr };
+            return new BoundWeakRefNew { Target = target, Type = wr, Site = AllocSite(no.Line) };
         }
 
         var t = ResolveType(new TypeSyntax { Name = no.TypeName, TypeArgs = no.TypeArgs, Line = no.Line });
@@ -1660,7 +1678,7 @@ public sealed partial class Binder
             }
         }
 
-        return new BoundNewObject { Ctor = ctor, Arguments = args, Type = t };
+        return new BoundNewObject { Ctor = ctor, Arguments = args, Type = t, Site = AllocSite(no.Line) };
     }
 
     private BoundExpr BindNewArray(NewArrayExpr na)
@@ -1678,7 +1696,7 @@ public sealed partial class Binder
         }
 
         var size = Convert(BindExpr(na.Size), _int, na.Line);
-        return new BoundNewArray { ElementType = elem, Size = size, Type = arr };
+        return new BoundNewArray { ElementType = elem, Size = size, Type = arr, Site = AllocSite(na.Line) };
     }
 
     private BoundExpr BindIndex(IndexExpr ix)
