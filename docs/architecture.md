@@ -108,6 +108,13 @@ just a pointer to the header; field/element access adds the field offset.
 `TypeInfo` is a statically emitted, per-type descriptor:
 
 ```c
+typedef struct ArcSlot {
+    intptr_t  offset;             // byte offset from the object, or from the struct
+    int32_t   kind;               // 1 = strong reference, 2 = inline struct
+    int32_t   pad;
+    TypeInfo* nested;             // struct TypeInfo when kind is 2
+} ArcSlot;
+
 typedef struct TypeInfo {
     const char* name;
     intptr_t    instanceSize;     // header + fields, in bytes
@@ -117,6 +124,8 @@ typedef struct TypeInfo {
     void**      itable;           // interface method slots, indexed by selector
     intptr_t    itableLen;
     TypeInfo*   base;             // base class, or NULL; used by is/as
+    ArcSlot*    slots;            // strong edges; weak fields are omitted
+    intptr_t    slotCount;
 } TypeInfo;
 ```
 
@@ -268,7 +277,17 @@ This section records only how the subset is lowered.
 - **Classes** get a `TypeInfo`, a vtable when they have virtual methods, an
   itable when the program declares interface methods, and a generated
   `__deinit`. Auto-properties lower to a backing field plus `get_` and `set_`
-  methods.
+  methods. Each class and struct `TypeInfo` also lists its strong reference
+  slots, including references nested inside an inline struct. Weak fields are
+  not slots. Reference-typed static fields are emitted as a root list passed
+  to `arc_set_roots` at the start of `main`.
+- **Leak reports** are off unless the process environment contains
+  `ARC_LEAKS=1`. The runtime then keeps a side table of allocations (not
+  itself reference-counted) and, after the accounting line, prints each
+  surviving object with its type, counts, source site, and whether a static
+  root reaches it. Unreachable survivors are searched for strong cycles. The
+  report does not release or reclaim anything. Allocation stacks are not
+  available until debug info exists.
 - **Structs** lower to an opaque `[HeapSize / 8 x i64]` value. Field `i` lives at
   slot `i`, so nested structs keep their full size. Every struct gets
   `<T>__copy` (value semantics: copy value fields, retain reference fields) and
@@ -402,6 +421,7 @@ and *scope* (just not built yet).
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Parsed and discarded (defect)         |
 | Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
+| Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |
 | Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 
 See [Verification](verification.md) for the exact set of sample programs that

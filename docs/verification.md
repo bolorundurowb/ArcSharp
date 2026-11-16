@@ -19,12 +19,12 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (28 samples, Windows x64, 15 November 2026)
+## Results (29 samples, Windows x64, 16 November 2026)
 
-`tools\verify.ps1` reported **59 passed, 0 failed** with the .NET 8.0.428 SDK:
-28 sample programs, 23 must-fail diagnostics, 3 command-line checks, 4 cycle
-checks, and one run of the analyser unit tests (66 cases). `live=0` means every
-object was reclaimed.
+`tools\verify.ps1` reported **64 passed, 0 failed** with the .NET 8.0.428 SDK:
+29 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 23 must-fail
+diagnostics, 3 command-line checks, 4 cycle checks, and one run of the analyser
+unit tests (66 cases). `live=0` means every object was reclaimed.
 `numerics` and `byref` allocate nothing because they use only value types.
 `cycle_strong` and `cycle_struct` are the leaks the harness asserts on purpose.
 
@@ -56,6 +56,7 @@ object was reclaimed.
 | `overloads` | static and instance methods that share a name and an arity, chosen by argument type | alloc=19 dead=19 **live=0** | `int=7 str=ok 4 4` |
 | `charprint` | `Console.WriteLine` of a `char`, and concatenation of a `char` | alloc=5 dead=5 **live=0** | `concat=B direct=A` |
 | `staticprop` | a static auto-property, read and written | alloc=3 dead=3 **live=0** | `count=4` |
+| `leaks` | a static root, an unreachable class cycle, and an unreachable cycle through a reference array. With `ARC_LEAKS=1` the report marks `Node` as `root=static` and the others as `root=unreachable`, and prints the `Parent`/`Child` and `<ref[]>`/`Cell` cycles | alloc=7 dead=1 freed=1 **live=6** | `leaks reported` |
 | `generics` | two-file generic classes/interfaces, generic bases and virtual dispatch, methods and inference, recursion, independent statics, arrays and weak references as arguments, constraints, and primitive default construction | alloc=72 dead=72 freed=72 **live=0** | `generic=42,hello`, `dispatch=7,7`, `infer=11,hello,9`, `owners=after,hello,made`, `counts=2,1`, `arrays=11,array`, `weak=made`, `types=True,True`, `generics PASS` |
 | `generic_structs` | specialised struct copies, reference fields, nested wide values, managed-reference generic methods, and class field offsets | alloc=28 dead=28 freed=28 **live=0** | `copies=first,second,wide`, `layout=20,30,99,40` |
 
@@ -66,6 +67,13 @@ language reference was compiled and run with ArcSharp: output `42`, with
 type descriptors, destructors, method specialisations, and inline struct sizes.
 The generic linked-node type produces the expected conservative `ARC3100`
 warning; its sample creates no cycle and exits with `live=0`.
+
+With `ARC_LEAKS=1`, the harness checks the survivor report for `leaks`,
+`cycle_strong`, `cycle_struct`, and `cycle_weak`. The two strong-cycle programs
+name an unreachable cycle (`Parent -> Child -> Parent`, and
+`Owner -> Owner -> Owner` through the struct field). `cycle_weak` prints no
+survivor lines. The accounting totals above are unchanged when the report is
+off.
 
 ## Diagnostics
 

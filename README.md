@@ -91,9 +91,10 @@ has the full list, the differences from .NET, and the known issues.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 28 sample programs pass the test
-harness on Windows x64. The harness also runs 23 must-fail diagnostics, three
-command-line checks, four cycle checks, and 66 analyser unit tests. The
+executable, with ARC accounting) works, and 29 sample programs pass the test
+harness on Windows x64. The harness also runs four leak-report checks, 23
+must-fail diagnostics, three command-line checks, four cycle checks, and 66
+analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See
 [Verification](docs/verification.md) for the latest results and
 [Roadmap](docs/roadmap.md) for the plan.
