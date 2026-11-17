@@ -725,20 +725,11 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var cmark = _stmtTemps.Count;
         if (n.Ctor != null)
         {
-            var argVals = new List<string>();
-            foreach (var a in n.Arguments)
-            {
-                var v = EmitR(a);
-                if (a.Type.IsReferenceType)
-                {
-                    _stmtTemps.Add(v);
-                }
-
-                argVals.Add($"{a.Type.LlvmType} {v}");
-            }
-
+            var pins = new List<string>();
+            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"{ty}* {slot}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
+            ReleasePins(pins);
         }
 
         ReleaseTemps(cmark);
@@ -1119,7 +1110,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         return v;
     }
 
-    private string LValueAddress(BoundExpr lval)
+    // Address a ref/out/in slot. When the slot lives inside a heap object, that
+    // object is pinned for the rest of the call: stack locals, static fields,
+    // and by-ref parameters borrowed from the caller already outlive it.
+    private string EmitManagedAddress(BoundExpr lval, List<string> pins)
     {
         switch (lval)
         {
@@ -1132,27 +1126,59 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 }
 
                 return $"%arg{p.Symbol.Index}";
+            case BoundThis th when th.Type.Kind == TypeKind.Struct:
+            {
+                var ty = th.Type.LlvmType;
+                return Inst($"load {ty}*, {ty}** %this.addr");
+            }
+            case BoundFieldAccess { Field.IsStatic: true } fa:
+                return fa.Field.MangledStatic;
             case BoundFieldAccess fa:
             {
                 var receiver = fa.Receiver!;
-                var recv = EmitR(receiver);
+                string basePtr;
                 if (receiver.Type.IsReferenceType)
                 {
-                    _stmtTemps.Add(recv);
+                    basePtr = EmitR(receiver);
+                    _stmtTemps.Add(basePtr);
+                    PinOwner(pins, basePtr);
+                }
+                else if (receiver.Type.Kind == TypeKind.Struct)
+                {
+                    basePtr = EmitManagedAddress(receiver, pins);
+                }
+                else
+                {
+                    basePtr = EmitR(receiver);
                 }
 
-                return FieldAddr(recv, receiver.Type, fa.Field);
+                return FieldAddr(basePtr, receiver.Type, fa.Field);
             }
             case BoundIndex ix:
             {
                 var arr = EmitR(ix.Receiver);
                 _stmtTemps.Add(arr);
+                PinOwner(pins, arr);
                 var idx = EmitR(ix.Index);
                 return ElemAddr(arr, idx, ix.Type);
             }
         }
 
         return "null";
+    }
+
+    private void PinOwner(List<string> pins, string owner)
+    {
+        Do($"call void @arc_retain(i8* {owner})");
+        pins.Add(owner);
+    }
+
+    private void ReleasePins(List<string> pins)
+    {
+        for (var i = pins.Count - 1; i >= 0; i--)
+        {
+            Do($"call void @arc_release(i8* {pins[i]})");
+        }
     }
 
     private string FieldAddr(string basePtr, TypeSymbol recvType, FieldSymbol f)
@@ -1246,41 +1272,32 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     private string EmitCall(BoundCall c)
     {
+        // Pins keep the heap object behind an interior reference alive until
+        // this call returns. The callee can drop every named reference to that
+        // object; the pin is a retain it cannot see, released only afterwards.
+        var pins = new List<string>();
         string? recv = null;
         if (c.Receiver != null)
         {
-            recv = EmitR(c.Receiver);
-            if (c.Receiver.Type.IsReferenceType)
+            if (c.Receiver.Type.Kind == TypeKind.Struct)
             {
-                _stmtTemps.Add(recv);
-            }
-        }
-
-        var argVals = new List<string>();
-        for (var i = 0; i < c.Arguments.Count; i++)
-        {
-            var a = c.Arguments[i];
-            var p = i < c.Method.Parameters.Count ? c.Method.Parameters[i] : null;
-            if (p != null && p.RefKind != RefKind.None && a is BoundByRefArg bra)
-            {
-                var addr = LValueAddress(bra.Lvalue);
-                argVals.Add($"{p.Type.LlvmType}* {addr}");
+                recv = EmitStructReceiver(c.Receiver, pins);
             }
             else
             {
-                var v = EmitR(a);
-                if (a.Type.IsReferenceType)
+                recv = EmitR(c.Receiver);
+                if (c.Receiver.Type.IsReferenceType)
                 {
-                    _stmtTemps.Add(v);
+                    _stmtTemps.Add(recv);
                 }
-
-                argVals.Add($"{a.Type.LlvmType} {v}");
             }
         }
 
+        var argVals = EmitArguments(c.Arguments, c.Method.Parameters, pins);
         var m = c.Method;
         var ret = m.ReturnType.LlvmType;
         var isVoid = m.ReturnType.Kind == TypeKind.Void;
+        string result;
 
         if (c.Virtual || c.Interface)
         {
@@ -1298,29 +1315,76 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             if (isVoid)
             {
                 Do($"call void {fn}({callArgs})");
-                return "";
+                result = "";
+            }
+            else
+            {
+                result = Inst($"call {ret} {fn}({callArgs})");
+            }
+        }
+        else
+        {
+            var parts = new List<string>();
+            if (!m.IsStatic)
+            {
+                parts.Add(m.Owner.Kind == TypeKind.Struct
+                    ? $"{m.Owner.LlvmType}* {recv}"
+                    : $"i8* {recv}");
             }
 
-            return Inst($"call {ret} {fn}({callArgs})");
+            parts.AddRange(argVals);
+            var args = string.Join(", ", parts);
+            if (isVoid)
+            {
+                Do($"call void @{m.MangledName}({args})");
+                result = "";
+            }
+            else
+            {
+                result = Inst($"call {ret} @{m.MangledName}({args})");
+            }
         }
 
-        var parts = new List<string>();
-        if (!m.IsStatic)
+        ReleasePins(pins);
+        return result;
+    }
+
+    private List<string> EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins)
+    {
+        var argVals = new List<string>();
+        for (var i = 0; i < args.Count; i++)
         {
-            parts.Add(m.Owner.Kind == TypeKind.Struct
-                ? $"{m.Owner.LlvmType}* {recv}"
-                : $"i8* {recv}");
+            var a = args[i];
+            var p = i < parameters.Count ? parameters[i] : null;
+            if (p != null && p.RefKind != RefKind.None && a is BoundByRefArg bra)
+            {
+                var addr = EmitManagedAddress(bra.Lvalue, pins);
+                argVals.Add($"{p.Type.LlvmType}* {addr}");
+            }
+            else
+            {
+                var v = EmitR(a);
+                if (a.Type.IsReferenceType)
+                {
+                    _stmtTemps.Add(v);
+                }
+
+                argVals.Add($"{a.Type.LlvmType} {v}");
+            }
         }
 
-        parts.AddRange(argVals);
-        var args = string.Join(", ", parts);
-        if (isVoid)
+        return argVals;
+    }
+
+    // A struct method's this is an interior pointer into the caller's storage.
+    private string EmitStructReceiver(BoundExpr receiver, List<string> pins)
+    {
+        if (receiver is BoundLocal or BoundParam or BoundFieldAccess or BoundIndex or BoundThis)
         {
-            Do($"call void @{m.MangledName}({args})");
-            return "";
+            return EmitManagedAddress(receiver, pins);
         }
 
-        return Inst($"call {ret} @{m.MangledName}({args})");
+        return EmitR(receiver);
     }
 
     private string EmitNewObject(BoundNewObject n)
@@ -1333,20 +1397,11 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var obj = Inst($"call i8* @arc_alloc(%TypeInfo* @{n.Type.Name}__ti, i8* {SiteOperand(n.Site)})");
         if (n.Ctor != null)
         {
-            var argVals = new List<string>();
-            foreach (var a in n.Arguments)
-            {
-                var v = EmitR(a);
-                if (a.Type.IsReferenceType)
-                {
-                    _stmtTemps.Add(v);
-                }
-
-                argVals.Add($"{a.Type.LlvmType} {v}");
-            }
-
+            var pins = new List<string>();
+            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"i8* {obj}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
+            ReleasePins(pins);
         }
 
         return obj;
@@ -1367,20 +1422,11 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
         if (n.Ctor != null)
         {
-            var argVals = new List<string>();
-            foreach (var a in n.Arguments)
-            {
-                var v = EmitR(a);
-                if (a.Type.IsReferenceType)
-                {
-                    _stmtTemps.Add(v);
-                }
-
-                argVals.Add($"{a.Type.LlvmType} {v}");
-            }
-
+            var pins = new List<string>();
+            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"{ty}* {temp}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
+            ReleasePins(pins);
         }
 
         return temp;

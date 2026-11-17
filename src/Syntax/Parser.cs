@@ -396,6 +396,14 @@ public sealed class Parser(List<Token> tokens)
             return;
         }
 
+        if (At(TokenKind.RefKw))
+        {
+            Report(
+                "ref locals and ref returns are not supported: a managed reference must not outlive the call",
+                DiagnosticCatalog.UnsupportedConstructId);
+            Advance();
+        }
+
         var type = ParseType();
         var name = Expect(TokenKind.Identifier).Text;
         var typeParameters = new List<string>();
@@ -733,6 +741,26 @@ public sealed class Parser(List<Token> tokens)
 
     private Stmt ParseSimpleStatement(bool requireSemicolon)
     {
+        if (At(TokenKind.RefKw))
+        {
+            var line = Current.Line;
+            Report(
+                "ref locals and ref returns are not supported: a managed reference must not outlive the call",
+                DiagnosticCatalog.UnsupportedConstructId);
+            while (!At(TokenKind.Semicolon) && !At(TokenKind.CloseParen) && !At(TokenKind.CloseBrace) &&
+                   !At(TokenKind.EndOfFile))
+            {
+                Advance();
+            }
+
+            if (requireSemicolon)
+            {
+                Expect(TokenKind.Semicolon);
+            }
+
+            return new BlockStmt { Line = line };
+        }
+
         if (LooksLikeLocalDecl())
         {
             var line = Current.Line;
@@ -858,6 +886,13 @@ private Stmt ParseReturn()
     var line = Current.Line;
     Expect(TokenKind.ReturnKw);
     Expr? v = null;
+    if (Accept(TokenKind.RefKw))
+    {
+        Report(
+            "ref locals and ref returns are not supported: a managed reference must not outlive the call",
+            DiagnosticCatalog.UnsupportedConstructId);
+    }
+
     if (!At(TokenKind.Semicolon))
     {
         v = ParseExpression();

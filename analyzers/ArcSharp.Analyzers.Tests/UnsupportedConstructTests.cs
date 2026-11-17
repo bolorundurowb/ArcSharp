@@ -48,7 +48,9 @@ public sealed class UnsupportedConstructTests
         { "get-only property", "class C { public int P { get; } }" },
         { "top-level statements", "System.Console.WriteLine(\"x\");" },
         { "tuple", "class C { static void Main() { (int a, int b) t = (1, 2); } }" },
-        { "base access", "class B { public int X; } class C : B { public int Get() { return base.X; } }" }
+        { "base access", "class B { public int X; } class C : B { public int Get() { return base.X; } }" },
+        { "ref local", "class C { static void Main() { int n = 1; ref int a = ref n; } }" },
+        { "ref return", "class C { static ref int Get(ref int x) { return ref x; } }" }
     };
 
     public static TheoryData<string, string> SupportedSources => new()

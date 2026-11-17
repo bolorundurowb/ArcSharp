@@ -303,19 +303,34 @@ only for single-threaded programs. Threads are not supported, and sharing
 objects between threads would corrupt the counts. Atomic counts are on the
 [Roadmap](roadmap.md#2-arc-model--from-correct-to-efficient).
 
+## Managed references
+
+A `ref`, `out`, or `in` argument, and a struct method's `this`, is an interior
+pointer that lasts only for that call. When the slot lives inside a heap object
+— a class field, a field of an inline struct, or an array element — the caller
+retains that object until the call returns. The callee can clear every variable
+and field that named the object. The hidden retain keeps the storage alive and
+is released afterwards. A local, a by-value parameter, a static field, and a
+`ref` parameter borrowed from the caller need no extra retain, because that
+storage already outlives the call.
+
+A managed reference that would outlive the call is rejected. Ref locals and
+ref returns are [`ARC3001`](diagnostics.md#arc3001). A weak field cannot be
+passed by `ref`, `out`, or `in` ([`ARC2015`](diagnostics.md#arc2015)), because a
+store through that pointer would not use the weak primitives. An `in`
+parameter is read-only, including the fields of an inline struct. Assigning
+that storage, passing it as `ref` or `out`, or calling an instance method on
+an `in` struct is also `ARC2015`. A reference loaded from that struct is a
+different object and may still be written. Heap-backed spans, and any other
+escaping interior reference, stay rejected until a proof can cover a lifetime
+longer than one call. Stack confinement alone does not keep heap storage alive.
+
 ## Planned safety work
 
 The opt-in leak report above names surviving objects and unreachable cycles.
 It does not prove that a program is free of leaks when it is switched off, and
 a static `ARC3100` warning still cannot prove that a cycle will happen at run
 time. Allocation stacks are not part of the report yet.
-
-Interior references into heap fields and arrays need their backing allocation
-to remain alive for every use. The next safety milestone audits existing
-`ref`/`out`/`in` calls, including owner reassignment during a call. Expanded
-support requires proven owner lifetimes or hidden owner retention; cases
-without a safety proof must be rejected. Stack confinement alone is insufficient
-for heap-backed spans.
 
 Future closures will preserve C# strong captures. Capturing an object alone
 does not form a cycle, but a strong path back to the closure can do so. Define
