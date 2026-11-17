@@ -15,11 +15,11 @@
 
 ---
 
-ArcSharp compiles a subset of C# 12 to a native Windows x64 executable. Instead
-of a tracing garbage collector, every object carries a reference count, and it
-is destroyed at the moment its last strong reference goes away. There are no
-collection pauses and no background threads, and memory is returned as soon as
-it is no longer used.
+ArcSharp compiles a subset of C# 12 to a native Windows x64 executable. It is
+a separate runtime with its own memory contract, not a garbage collector
+dropped into the CLR. In the compiler that exists today, every object carries
+a reference count and is destroyed when its last strong reference goes away.
+There are no collection pauses and no background threads.
 
 The source you write is ordinary C#. It also builds with `dotnet build`, so you
 can compare the two runtimes side by side.

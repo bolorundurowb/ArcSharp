@@ -7,9 +7,11 @@ same source with `dotnet build` and compare the results.
 This page lists what the subset contains, where it behaves differently from
 .NET, and the known issues in the current compiler. Each statement on this page
 was checked against the compiler; the [Known issues](#known-issues) section
-records the behaviour as it is today, not as it is planned. The move to a
-Roslyn frontend, and the lifetime pass that follows it, are in the
-[Roadmap](roadmap.md). They do not change what this page describes.
+records the behaviour as it is today, not as it is planned. The
+[Roadmap](roadmap.md) is the direction: Roslyn, then a lifetime pass, then
+deterministic finalisation, inside the
+[compatibility target](roadmap.md#compatibility-target). None of that changes
+what this page describes.
 
 - [Program structure](#program-structure)
 - [Types](#types)

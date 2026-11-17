@@ -4,10 +4,12 @@
 
 # ArcSharp documentation
 
-ArcSharp compiles a subset of C# 12 to native Windows x64 executables. It
-manages memory with automatic reference counting (ARC) instead of a garbage
-collector, so an object is destroyed at the moment its last strong reference
-goes away.
+ArcSharp compiles a subset of C# 12 to native Windows x64 executables. The
+compiler that exists today reference-counts every object and destroys it when
+the last strong reference goes away. The [Roadmap](roadmap.md) is the
+direction from here: a Roslyn frontend, an ownership tree rather than CIL, ARC
+only where a lifetime cannot be proved, deterministic finalisation, and a
+bounded compatibility target.
 
 ArcSharp is a proof of concept. Read [Known issues](language-reference.md#known-issues)
 before you rely on it for anything beyond experiments.
@@ -27,7 +29,7 @@ before you rely on it for anything beyond experiments.
 
 | Document | What it covers |
 |---|---|
-| [Architecture](architecture.md) | The compiler pipeline, the object layout, the ARC ownership rules, and open design questions |
+| [Architecture](architecture.md) | The pipeline as it is today, the object layout, the ARC rules, and the decisions that bound the direction |
 | [Roadmap](roadmap.md) | Roslyn first, then hybrid lifetimes, then the compatibility target. That target is a subset of C# and the libraries, not the whole framework |
 | [Verification](verification.md) | The test harness and the results of the latest recorded run |
 | [`analyzers/`](../analyzers/) | The Roslyn analyser, the shared `ARC3xxx` catalogue, and their xUnit tests |

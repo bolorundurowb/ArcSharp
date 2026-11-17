@@ -19,6 +19,17 @@ breadth. When a change has to choose between "simple and correct" and "fast or
 clever", choose simple and correct, and record the optimisation in
 `docs/roadmap.md`.
 
+The direction of the project is that roadmap, not an open-ended C# compiler.
+Roslyn replaces the hand-written frontend before any new language feature.
+The ownership tree is the intermediate representation; stock CIL is not a
+stage, because it drops the lifetime facts the memory model needs. A proved
+lifetime skips retain and release on the existing header, and everything else
+stays reference-counted. Finalisers run at the last strong release.
+`ARC3100` warns on a visible cycle, the program still compiles, and an ignored
+warning leaks. The compatibility target bounds the language and libraries.
+Do not start work outside that target, and do not extend the hand-written
+parser while the Roslyn transition is the current milestone.
+
 ## Quick start
 
 ### Prerequisites

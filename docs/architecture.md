@@ -1,17 +1,22 @@
 # ArcSharp — Architecture & Design
 
-ArcSharp is a proof-of-concept compiler for a subset of C# 12 that replaces the
-.NET garbage collector with **ARC (Automatic Reference Counting)**. It emits
-textual **LLVM IR**, links against a small **C runtime**, and produces a native,
-GC-less executable. The intended target is **Windows x64**
-(`x86_64-pc-windows-msvc`); the compiler itself is written in C# (.NET 11,
-LangVersion 12).
+ArcSharp is a proof-of-concept compiler for a subset of C# 12. The compiler
+that exists today replaces the .NET garbage collector with **ARC (Automatic
+Reference Counting)**: every heap object has a count, and it is destroyed when
+that count reaches zero. It emits textual **LLVM IR**, links against a small
+**C runtime**, and produces a native executable. The verified target is
+**Windows x64** (`x86_64-pc-windows-msvc`). The compiler itself is written in
+C# (.NET 11, LangVersion 12).
 
-> Status: first pass / PoC. The goal is to prove the pipeline and the ARC memory
-> model end-to-end, not to be a conformant C# implementation. See
-> [Unsupported features](#7-features-arc-cannot-reasonably-support-first-pass),
-> [Decisions and remaining questions](#10-decisions-and-remaining-questions), and the production-readiness
-> **[Roadmap](roadmap.md)**.
+> Status: first pass / PoC. The compiler that exists today retains every
+> reference and parses with its own frontend. The direction is a separate
+> runtime, not a collector for the CLR: Roslyn at the front, an ownership tree
+> rather than CIL, ARC only where a lifetime cannot be proved, deterministic
+> finalisation, and the [compatibility target](roadmap.md#compatibility-target)
+> rather than the whole language or framework. See
+> [Current limits](#7-current-limits),
+> [Decisions and remaining questions](#10-decisions-and-remaining-questions),
+> and the **[Roadmap](roadmap.md)**.
 >
 > This document describes the compiler's internals. For the user-facing
 > description of the language and the memory model, read the
@@ -34,7 +39,7 @@ count reaches zero.
 | Pauses          | Stop-the-world phases               | None (work is spread inline)                 |
 | Per-object cost | Amortised                           | A counter field + retain/release traffic     |
 | Cycles          | Collected automatically             | Warned, permitted, and a leak if the warning is ignored |
-| Determinism     | Finalisers run nondeterministically | Destructors run deterministically            |
+| Determinism     | Finalisers run later, on another thread, and may resurrect | At the last strong release, on that thread. No resurrection. `~T()` is not accepted yet |
 
 The defining trade-off — and the reason GC exists — is reference cycles. Naive
 ARC cannot reclaim them. The architectural decision is to warn, permit, and
@@ -42,6 +47,10 @@ document the leak. `ARC3100` warns when the type graph can form a cycle. The
 program still compiles. `System.WeakReference<T>` (Section 5) is how a cycle is
 broken. If the developer or a library ignores the warning, the objects leak
 and that result is intended. There is no backup collector.
+
+The counts above are what every heap object does today. The lifetime pass will
+skip a retain and release when it can prove the lifetime, on this same header.
+Stock CIL is not the representation that pass reads.
 
 ---
 
@@ -365,10 +374,10 @@ This section records only how the subset is lowered.
 
 ---
 
-## 7. Features ARC cannot reasonably support (first pass)
+## 7. Current limits
 
-Catalogued honestly, split into *fundamental* (ARC semantics fight the feature)
-and *scope* (just not built yet).
+Two lists. The first is inherent in the memory model. The second is inside the
+[compatibility target](roadmap.md#compatibility-target) and is simply not built.
 
 ### Fundamental tensions with ARC
 - **Uncollected reference cycles.** Closed decision: warn with `ARC3100`,
@@ -514,15 +523,17 @@ Still open, and not required to start the Roslyn transition:
 1. **Threading.** The runtime stays single-threaded until a concurrent
    ownership protocol, including atomic counts and safe shared-reference
    acquisition, is verified. That work waits until the lifetime pass exists.
-2. **BCL strategy.** Build a minimal corelib incrementally, with a lifetime
-   test per API, after the lifetime pass. Full .NET BCL compatibility is a
-   separate objective.
+2. **Library surface.** The libraries to build are the ones named in the
+   compatibility target: collections, LINQ, and the small set of types that
+   table already lists. The rest of the .NET BCL is not a target. Each API
+   still needs a lifetime test, and that work waits until the lifetime pass
+   exists.
 3. **`unowned`.** `WeakReference<T>` is the weak surface. A non-zeroing
    `unowned` reference is not decided. The legacy `weak` field modifier stays
    a compatibility alias only.
-4. **Exceptions.** They are wanted eventually, and every cleanup scope will
-   have to be a landing pad. They wait until the lifetime pass exists, so the
-   landing pads are generated for proved and shared values together.
+4. **Exceptions.** They are a full row of the compatibility target. Landing
+   pads have to release proved and shared values, and run `using` cleanup and
+   finalisers. They come after deterministic finalisers, not before.
 5. **How precise the first lifetime pass is.** The fallback is ARC, so a weak
    first proof is safe. The roadmap does not yet fix which escapes the first
    version must prove (repeated local reads, a call that only borrows, a

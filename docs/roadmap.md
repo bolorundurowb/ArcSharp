@@ -193,7 +193,7 @@ This resumes after the lifetime pass. New library APIs should be written against
 
 ### Strategy choice
 
-**Re-implement a minimal corelib in ArcSharp C#** with a thin C runtime shim for platform calls (file I/O, threads, console). This keeps ARC semantics uniform across library and user code and avoids impedance mismatch with a foreign GC. Reuse well-tested algorithms from the BCL where possible, with lifetime tests for each API. Full .NET BCL compatibility is a separate objective requiring review of GC-dependent ownership and concurrency assumptions.
+**Re-implement the libraries named in the compatibility target in ArcSharp C#**, with a thin C runtime shim for platform calls such as the console. Collections and LINQ are in that target. The rest of the .NET base class library is not. Reuse a BCL algorithm only when it does not assume a garbage collector, and give each API a lifetime test.
 
 ### Concrete first steps for BCL
 
@@ -354,16 +354,16 @@ it with a `PackageReference` and an analyser asset, and keeps building with
 the normal SDK. It does not invoke the native toolchain and it does not change
 the program's semantics.
 
-The compiler project stays free of NuGet dependencies. The analyser project is
-separate and may reference the Roslyn analyser packages; that is the one
-planned exception, because an analyser cannot be loaded without them. Target
-`netstandard2.0` so Visual Studio and `dotnet build` can both load it.
+The analyser project is separate and references the Roslyn analyser packages,
+because an analyser cannot be loaded without them. Target `netstandard2.0` so
+Visual Studio and `dotnet build` can both load it.
 
-Prefer one shared descriptor assembly, also `netstandard2.0`, referenced by
-the analyser and by the compiler, so the id, severity, and message cannot
-drift. That is implemented as `analyzers/ArcSharp.Diagnostics`; it has no
-Roslyn reference, so the compiler stays NuGet-free. This section is the
-specification; the implementation should not grow a further copy of its own.
+The shared catalogue, `analyzers/ArcSharp.Diagnostics`, stays free of Roslyn
+so the id, severity, and message cannot drift, and so the compiler can
+reference it without taking an analyser dependency. The compiler itself gains
+`Microsoft.CodeAnalysis.CSharp` in the Roslyn transition, and no other package
+unless this roadmap says so. This section is the specification of the
+analyser; the implementation should not grow a further copy of its own.
 
 ### Concrete first steps
 

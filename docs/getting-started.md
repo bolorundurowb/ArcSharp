@@ -117,7 +117,9 @@ When `Main` returns, the runtime prints one line to standard error:
 | `live` | `alloc` minus `dead`: objects still alive when the program ended |
 
 `live=0` means that every object was reclaimed. A higher number usually means a
-reference cycle; see [Memory model](memory-model.md).
+reference cycle. The compiler warns about cycles it can see, and it still
+allows them. A cycle that remains is a leak, and nothing collects it later.
+See [Memory model](memory-model.md).
 
 The `hello` program allocates six objects: the `Greeter`, the strings, and the
 intermediate strings that concatenation builds.
