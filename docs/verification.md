@@ -19,12 +19,12 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (29 samples, Windows x64, 16 November 2026)
+## Results (30 samples, Windows x64, 17 November 2026)
 
-`tools\verify.ps1` reported **64 passed, 0 failed** with the .NET 8.0.428 SDK:
-29 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 23 must-fail
+`tools\verify.ps1` reported **67 passed, 0 failed** with the .NET 8.0.428 SDK:
+30 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
 diagnostics, 3 command-line checks, 4 cycle checks, and one run of the analyser
-unit tests (66 cases). `live=0` means every object was reclaimed.
+unit tests (68 cases). `live=0` means every object was reclaimed.
 `numerics` and `byref` allocate nothing because they use only value types.
 `cycle_strong` and `cycle_struct` are the leaks the harness asserts on purpose.
 
@@ -59,6 +59,7 @@ unit tests (66 cases). `live=0` means every object was reclaimed.
 | `leaks` | a static root, an unreachable class cycle, and an unreachable cycle through a reference array. With `ARC_LEAKS=1` the report marks `Node` as `root=static` and the others as `root=unreachable`, and prints the `Parent`/`Child` and `<ref[]>`/`Cell` cycles | alloc=7 dead=1 freed=1 **live=6** | `leaks reported` |
 | `generics` | two-file generic classes/interfaces, generic bases and virtual dispatch, methods and inference, recursion, independent statics, arrays and weak references as arguments, constraints, and primitive default construction | alloc=72 dead=72 freed=72 **live=0** | `generic=42,hello`, `dispatch=7,7`, `infer=11,hello,9`, `owners=after,hello,made`, `counts=2,1`, `arrays=11,array`, `weak=made`, `types=True,True`, `generics PASS` |
 | `generic_structs` | specialised struct copies, reference fields, nested wide values, managed-reference generic methods, and class field offsets | alloc=28 dead=28 freed=28 **live=0** | `copies=first,second,wide`, `layout=20,30,99,40` |
+| `owners` | interior references stay valid when the callee drops the named owner: a field, an array element reached through a forwarded `ref`, a nested reference, a struct method's `this`, a static `ref`, an `in` read, and a constructor `ref` | alloc=33 dead=33 freed=33 **live=0** | `owners=4,7,5,6,5,2` |
 
 The two new generic samples were also built and run with the normal .NET 8
 compiler, producing the same stdout. The generic identity example in the
@@ -83,12 +84,14 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 23 programs that must fail (`samples/negative/`) and
-checks the expected code: `ARC3001` for unsupported constructs, `ARC0003` for
-shift operators, `ARC0004` for an invalid Unicode escape, `ARC2011` for an
-invalid `using` resource, `ARC2012` for `new` on an abstract class, `ARC2013`
-for missing generic definitions, wrong arity, or expanding specialisations, and
-`ARC2014` for unsatisfied type/method constraints. It
+The harness also compiles 25 programs that must fail (`samples/negative/`) and
+checks the expected code: `ARC3001` for unsupported constructs, including ref
+locals and ref returns, `ARC0003` for shift operators, `ARC0004` for an invalid
+Unicode escape, `ARC2011` for an invalid `using` resource, `ARC2012` for `new`
+on an abstract class, `ARC2013` for missing generic definitions, wrong arity, or
+expanding specialisations, `ARC2014` for unsatisfied type/method constraints,
+and `ARC2015` for a weak field passed by `ref` or a write through an `in`
+parameter. It
 checks that `-o` with no value, and a missing `clang` or `llc`, are reported
 as errors and exit with code 2. It checks
 `ARC3100` in both directions: `cycle_strong` and `cycle_struct` warn, while
@@ -97,8 +100,8 @@ as errors and exit with code 2. It checks
 ## Analyser unit tests
 
 `analyzers/ArcSharp.Analyzers.Tests` is an xUnit project that compiles snippets
-in memory with Microsoft.CodeAnalysis and runs the analyser. It has 66 cases:
-41 unsupported constructs that must report `ARC3001`, 16 supported programs
+in memory with Microsoft.CodeAnalysis and runs the analyser. It has 68 cases:
+43 unsupported constructs that must report `ARC3001`, 16 supported programs
 that must stay clean, and 9 cycle checks for `ARC3100` (mutual and self
 references, arrays, statics, struct bridges, and weak references that break the
 cycle). `tools/verify.ps1` runs `dotnet test` and counts the whole run as one

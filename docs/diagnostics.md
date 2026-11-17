@@ -180,6 +180,17 @@ type arguments and avoid recursively expanding closed types.
 type satisfying every constraint, including an accessible parameterless
 constructor when required.
 
+### ARC2015
+
+**Error. Managed reference is not safe for this call.** The compiler cannot
+prove that the storage addressed by `ref`, `out`, or `in` stays valid, or the
+use would break the rules for that slot.
+
+| Message | What to do |
+|---|---|
+| `a weak field cannot be passed with 'ref', 'out', or 'in'` | Pass a strong field, or load the weak field into a local and pass that. A store through the pointer would not update the weak count. |
+| `'in' parameter 'p' is read-only` | Do not assign `p`, pass it as `ref` or `out`, or call an instance method on it when `p` is an `in` struct. Copy it into a local first. A reference loaded from the struct can still be written. |
+
 ### ARC2050
 
 **Error. No entry point.** No class declares `static void Main()` or

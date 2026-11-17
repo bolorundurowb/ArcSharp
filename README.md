@@ -73,7 +73,8 @@ reclaimed.
   and structs inside classes.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
   `string`, plus single-dimensional arrays.
-- `ref`, `out`, and `in` parameters, and `is` and `as`.
+- `ref`, `out`, and `in` parameters. A reference into a heap object is kept
+  alive for the call. Also `is` and `as`.
 - `if`, `while`, `for`, and `return`.
 - `using` statements with deterministic `Dispose()` at scope exit
   (`IDisposable` is structural: any type with a `Dispose()` method qualifies).
@@ -91,9 +92,9 @@ has the full list, the differences from .NET, and the known issues.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 29 sample programs pass the test
-harness on Windows x64. The harness also runs four leak-report checks, 23
-must-fail diagnostics, three command-line checks, four cycle checks, and 66
+executable, with ARC accounting) works, and 30 sample programs pass the test
+harness on Windows x64. The harness also runs four leak-report checks, 25
+must-fail diagnostics, three command-line checks, four cycle checks, and 68
 analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See
 [Verification](docs/verification.md) for the latest results and

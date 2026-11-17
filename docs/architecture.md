@@ -295,7 +295,12 @@ This section records only how the subset is lowered.
   each struct field. A struct local is zero-initialised and dropped at
   `func.exit`, and a struct temporary is dropped at the end of its statement.
 - **`ref`, `out`, and `in`** lower to pointers to the slot. A reference-typed
-  `ref` borrows the slot and does not transfer ownership.
+  `ref` borrows the slot and does not transfer ownership. When the slot is
+  inside a heap object, the caller retains that object until the call returns
+  and then releases it. The same pin covers a struct method's `this`. Stack
+  slots, static fields, and by-ref parameters borrowed from the caller are not
+  pinned. Weak slots and writes through an `in` parameter are rejected before
+  emission.
 - **`is` and `as`** call `arc_is_instance`, which walks the `TypeInfo` base
   chain. An explicit cast `(T)x` is a `BoundConversion` with no runtime test,
   for classes and interfaces alike.
@@ -361,9 +366,10 @@ and *scope* (just not built yet).
   explicit `WeakReference<T>` patterns) but deferred. Preserve C# strong
   captures and define cycle policy before closures, events, and async.
 
-- **Interior references.** Audit current managed-reference arguments before
-  expanding support. Heap-backed spans and escaping references require proven
-  owner lifetimes or hidden owner retention; stack confinement alone is insufficient.
+- **Interior references.** Calls pin the heap owner of a managed reference for
+  the duration of the call. Ref locals, ref returns, and heap-backed spans
+  remain rejected: their lifetime is longer than one call, and stack
+  confinement does not keep a heap object alive.
 
 ### Out of scope for the first pass (no fundamental conflict)
 - **Remaining generic features.** Virtual generic methods, interface generic
@@ -407,6 +413,7 @@ and *scope* (just not built yet).
 | `float` / `double`                                     | Implemented                           |
 | `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
 | `ref` / `out` / `in` parameters                        | Implemented                           |
+| Interior-reference owner pins                          | Implemented for calls; longer lifetimes rejected |
 | Auto-properties                                        | Implemented for instance and static properties with both accessors |
 | `is` / `as`                                            | Implemented                           |
 | Array covariance (runtime store check)                 | Implemented                           |
@@ -416,7 +423,7 @@ and *scope* (just not built yet).
 | Diagnostics with codes (`ARC0001`…) and severities     | Implemented                           |
 | `ARC3001` unsupported-construct diagnostics            | Implemented (compiler and analyser)   |
 | `ARC3100` possible strong-cycle warning                 | Implemented (compiler and analyser)   |
-| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (66 xUnit cases)          |
+| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (68 xUnit cases)          |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Parsed and discarded (defect)         |
