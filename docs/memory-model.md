@@ -2,7 +2,10 @@
 
 ArcSharp has no garbage collector. Every object on the heap carries a count of
 the strong references that point at it. When that count reaches zero, the
-object is destroyed straight away and its memory is returned.
+object is destroyed straight away and its memory is returned. This page
+describes the compiler as it is today. The planned lifetime pass, which skips
+those counts when a lifetime can be proved, is summarised under
+[Performance](#performance) and specified in the [Roadmap](roadmap.md).
 
 This page explains what that means for the code you write: when objects die,
 why reference cycles leak, and how to break a cycle with `WeakReference<T>`.
@@ -93,16 +96,130 @@ Built with `dotnet run`, the same program prints `alive: 1` twice, because the
 first object stays in memory until the garbage collector happens to run. Under
 ArcSharp the answer is the same every time.
 
-ArcSharp has no user-defined destructors or finalisers yet. The runtime
-generates a destructor for each class that releases its reference fields and
-drops its struct fields, and that is the only code that runs when an object
-dies.
+## Finalisation
+
+Finalisation is a deliberate difference from the CLR. ArcSharp is a separate
+runtime with its own compatibility profile. It is not a replacement garbage
+collector for the existing CLR, and it does not pretend that `GC` means the
+same thing in both.
+
+The contract is:
+
+1. When an object's strong count reaches zero, its finaliser runs
+   synchronously, on the thread that released the last strong reference.
+2. The object is then torn down and its memory reclaimed, once any outstanding
+   weak-reference bookkeeping has finished. A weak reference does not keep the
+   object alive, and it does not by itself keep the allocation after that
+   bookkeeping.
+3. `WeakReference<T>` never contributes to the strong count.
+   `TryGetTarget` is false as soon as the strong count is zero.
+4. `Dispose()` is not a finaliser. `IDisposable` and `IAsyncDisposable` stay
+   the programmer's responsibility. A finaliser does not call `Dispose`, and
+   `using` does not suppress or replace a finaliser.
+5. There is no finaliser thread, no finalisation queue, and no
+   stop-the-world tracing collector.
+
+The finaliser runs when the last strong reference is released. That is not the
+same event as a variable leaving lexical scope. A local that is stored into a
+field, returned, or otherwise still reachable is not finalised at the end of
+the block that declared it. A local that never escapes is finalised when that
+method releases its locals, which is during the method's cleanup, not on a
+later collection.
+
+```csharp
+public sealed class Resource
+{
+    ~Resource()
+    {
+        Console.WriteLine("Resource finalized");
+    }
+}
+
+void Execute()
+{
+    var resource = new Resource();
+}
+```
+
+If `resource` does not escape, `Resource` is finalised as `Execute` cleans up,
+because that cleanup releases the last strong reference. On the CLR the same
+finaliser would wait for an unspecified future collection.
+
+Order inside one object:
+
+- The finaliser runs before the object's own strong references are released, so
+  it can still use its children.
+- A derived finaliser runs, then the base finaliser. The most derived body
+  runs first.
+- Children are released after that chain returns. A child whose strong count
+  falls to zero is finalised at that release, so a child's finaliser runs
+  after its parent's finaliser.
+- Two objects that die because of unrelated releases are ordered only by those
+releases. The compiler may delete a redundant retain or release. Deleting the
+count traffic does not delete the finaliser. A proved lifetime still runs the
+finaliser at the point where that lifetime ends, which is the point that would
+have dropped the last strong reference. The compiler must not move the
+finaliser past that point.
+
+A finaliser that throws does not stop teardown and does not propagate to the
+code that dropped the last reference. The runtime reports the exception and
+continues with field release and reclamation. The object cannot be resurrected
+by the exception. Until the language accepts `throw`, a finaliser cannot throw
+because `throw` itself is rejected.
+
+Resurrection is prohibited. A finaliser must not store `this`, or a reference
+derived from it, into any location that outlives the finaliser. The compiler
+rejects that store. If a finaliser returns with the strong count above zero,
+the runtime aborts the process. It does not keep the object, and it does not
+run the finaliser again.
+
+`GC.SuppressFinalize` sets a flag on the object. The flag skips the finaliser
+at the last strong release. It does not skip field release or reclamation, and
+it does not keep the object alive. Calling it while the finaliser is already
+running does not abort the chain that has started. `GC.ReRegisterForFinalize`
+is rejected. `GC.Collect` and `GC.WaitForPendingFinalizers` are accepted and
+do nothing, because there is nothing to collect and no queue to wait for. Each
+is reported with info `ARC3200`, so the difference from the CLR is visible.
+
+Deep graphs are released with a worklist. Tearing a child down must not recurse
+on the call stack that is already running a finaliser. The runtime today still
+releases fields recursively. The worklist arrives with user finalisers.
+
+Objects in a strong cycle never reach a zero count, so their finalisers never
+run. Breaking the cycle with `WeakReference<T>` is what allows finalisation.
+
+| Feature | Contract | Compiler today |
+|---|---|---|
+| C# finaliser (`~ClassName()`) | Supported. Runs at the last strong release, on that thread. | Rejected (`ARC3001`). |
+| Finaliser inheritance | Supported. Derived body, then base body. | Not accepted. |
+| `GC.SuppressFinalize` | Supported. Skips the finaliser only. | Not implemented. |
+| `GC.ReRegisterForFinalize` | Unsupported. Rejected. | Not implemented. |
+| Object resurrection | Unsupported. A store of `this` out of the finaliser is rejected. A strong count above zero when the finaliser returns aborts the process. | Not applicable yet. |
+| `GC.Collect` | Documented no-op, with info `ARC3200`. | Not in the supported library. |
+| `GC.WaitForPendingFinalizers` | Documented no-op, with info `ARC3200`. | Not in the supported library. |
+| `IDisposable` | Separate from finalisation. `Dispose()` runs only when the program calls it, including through `using`. | `using` is supported, with the limits in the [language reference](language-reference.md#using-and-idisposable). `Dispose` is structural. There is no library `IDisposable` type yet. |
+| `IAsyncDisposable` | The same separation. `await using` disposes at the end of the statement. It is not a finaliser. | Not supported. `async` is not implemented. |
+| `WeakReference<T>` | Does not keep the target alive. The allocation outlives the object only for weak bookkeeping. | Supported. |
+
+What runs today, for every class, is a generated teardown. It releases strong
+reference fields and drops struct fields when the strong count reaches zero.
+It is not a user finaliser, and there is no `~T()` body in it. The compiler
+still rejects a finaliser. The contract above is the semantics that teardown
+will grow into. It is specified in the [Roadmap](roadmap.md#2-memory-model--hybrid-lifetimes).
 
 ## Why cycles leak
 
+This is an architectural decision. A cycle that the compiler can see in the
+type declarations produces warning `ARC3100`. The program is still accepted.
+If you ignore the warning, or a library you use ignores it, the cycle leaks.
+ArcSharp will not collect it later. `WeakReference<T>` is how the cycle is
+broken. The opt-in leak report is how a leak that got through is named.
+
 Reference counting cannot reclaim a group of objects that refer to each other.
 Each one keeps the next alive, so none of their counts ever reaches zero, even
-after the rest of the program has forgotten them.
+after the rest of the program has forgotten them. A finaliser on one of those
+objects does not run, because the count never reaches the point that would
+call it.
 
 ```csharp
 class Parent
@@ -285,11 +402,10 @@ With that report:
 2. Run the program again and check that `live=0`, and that `ARC_LEAKS=1`
    prints no `survivor` lines.
 
-The compiler warns about possible cycles as `ARC3100` when a set of classes can
-reach each other through strong fields. The warning is about declared types,
-not a particular object graph, so a tree or a singly linked list warns too. See
-[Diagnostics](diagnostics.md#arc3100) and
-[Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project).
+`ARC3100` is that warning. It looks at declared field types, not at one object
+graph, so a tree or a singly linked list warns too. A cycle the warning cannot
+see, or a warning that was ignored in this program or in a library, still
+leaks. See [Diagnostics](diagnostics.md#arc3100).
 
 Static fields are a special case. An object held by a static field is still
 alive when `Main` returns, so it counts towards `live` and the leak report
@@ -301,7 +417,7 @@ builds two unreachable cycles.
 Reference counts are updated without atomic instructions, so ArcSharp is safe
 only for single-threaded programs. Threads are not supported, and sharing
 objects between threads would corrupt the counts. Atomic counts are on the
-[Roadmap](roadmap.md#2-arc-model--from-correct-to-efficient).
+[Roadmap](roadmap.md#2-memory-model--hybrid-lifetimes).
 
 ## Managed references
 
@@ -333,9 +449,11 @@ a static `ARC3100` warning still cannot prove that a cycle will happen at run
 time. Allocation stacks are not part of the report yet.
 
 Future closures will preserve C# strong captures. Capturing an object alone
-does not form a cycle, but a strong path back to the closure can do so. Define
-cycle policy before enabling closures, events, and async; use explicit
-`WeakReference<T>` patterns initially.
+does not form a cycle, but a strong path back to the closure can do so. The
+cycle decision is closed: `ARC3100` warns, the cycle stays legal, and an
+ignored warning leaks, including inside a library. `WeakReference<T>` is how a
+back-edge is broken. There is no tracing collector. Closures,
+events, and async wait until the lifetime pass exists.
 
 Atomic counts alone will not make threading safe. Loading a shared pointer
 and then retaining it can race with its final release. Threading also requires
@@ -345,7 +463,13 @@ reclamation. The runtime remains single-threaded until that protocol is verified
 ## Performance
 
 Every read of a reference into a local or temporary increments its count, and
-the matching release decrements it later. This is deliberately simple and easy
-to prove correct, but it does more work than necessary. Removing redundant
-pairs is planned as a separate compiler pass. In exchange, there are no
-collection pauses, and memory is returned as soon as it is no longer used.
+the matching release decrements it later. This is the compiler's behaviour
+today. It is simple to prove, and it does more work than the planned model.
+
+The [lifetime pass](roadmap.md#2-memory-model--hybrid-lifetimes) will skip a
+retain and its release when it can prove the lifetime, and it will keep using
+the count everywhere else. The object header does not change. A value that
+escapes into a field, an array, or a call the compiler cannot see stays
+reference-counted on the same object. That pass is not in the compiler yet.
+Until it is, every heap object is reference-counted, there are no collection
+pauses, and memory is returned when the last strong reference goes away.

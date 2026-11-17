@@ -18,7 +18,7 @@ before you rely on it for anything beyond experiments.
 |---|---|
 | [Getting started](getting-started.md) | Install the prerequisites, build the compiler, and run your first program |
 | [Language reference](language-reference.md) | The supported C# subset, how it differs from .NET, and known issues |
-| [Memory model](memory-model.md) | How ARC decides when objects die, why cycles leak, and how to break them with `WeakReference<T>` |
+| [Memory model](memory-model.md) | When objects die, why cycles leak, `WeakReference<T>`, and the finalisation contract |
 | [Command-line reference](cli-reference.md) | Every compiler option, the files it writes, and its exit codes |
 | [Diagnostics](diagnostics.md) | Every error and warning code, and what to do about each |
 | [Troubleshooting](troubleshooting.md) | Build failures, crashes, leaks, and wrong output |
@@ -28,7 +28,7 @@ before you rely on it for anything beyond experiments.
 | Document | What it covers |
 |---|---|
 | [Architecture](architecture.md) | The compiler pipeline, the object layout, the ARC ownership rules, and open design questions |
-| [Roadmap](roadmap.md) | The plan from proof of concept to a usable toolchain, with priorities |
+| [Roadmap](roadmap.md) | Roslyn first, then hybrid lifetimes, then the compatibility target. That target is a subset of C# and the libraries, not the whole framework |
 | [Verification](verification.md) | The test harness and the results of the latest recorded run |
 | [`analyzers/`](../analyzers/) | The Roslyn analyser, the shared `ARC3xxx` catalogue, and their xUnit tests |
 | [`AGENTS.md`](../AGENTS.md) | Contributor guide: the invariants you must preserve and the change checklist |

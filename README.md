@@ -35,12 +35,12 @@ games, and real-time control, and environments with tight memory budgets.
 | **Reclamation**     | Deferred, at collection time | Immediate, at last release                |
 | **Pauses**          | Stop-the-world phases        | None (work is spread inline)              |
 | **Per-object cost** | Amortised                    | A counter field + retain/release traffic  |
-| **Cycles**          | Collected automatically      | Leak unless broken by `WeakReference<T>`  |
-| **Determinism**     | Nondeterministic finalisers  | Deterministic destruction                 |
+| **Cycles**          | Collected automatically      | Warned (`ARC3100`), still permitted. An ignored warning leaks |
+| **Finalisation**    | Later, on a finaliser thread, and may resurrect | At the last strong release, on that thread. No resurrection |
 
 ## Quick start
 
-You need Windows x64, the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0),
+You need Windows x64, the [.NET 11 SDK](https://dotnet.microsoft.com/download/dotnet/11.0),
 [LLVM](https://github.com/llvm/llvm-project/releases) `clang`, and the
 Microsoft C++ build tools. [Getting started](docs/getting-started.md) has the
 details.
@@ -48,7 +48,7 @@ details.
 ```powershell
 dotnet build -c Release
 
-dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit `
+dotnet bin/Release/net11.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit `
     --clang "C:/Program Files/LLVM/bin/clang.exe" `
     --runtime runtime/arc_runtime.c --run
 ```
@@ -87,7 +87,11 @@ reclaimed.
 
 Exceptions, `foreach`, `switch`, `++`, lambdas, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
-has the full list, the differences from .NET, and the known issues.
+has the full list, the differences from .NET, and the known issues. The
+[compatibility target](docs/roadmap.md#compatibility-target) is the language
+and library surface the project is aiming at: classes through `Span<T>` as
+full, and reflection, `dynamic`, and `unsafe` as limited. It is not a plan to
+implement the whole framework.
 
 ## Status
 
@@ -97,8 +101,17 @@ harness on Windows x64. The harness also runs four leak-report checks, 25
 must-fail diagnostics, three command-line checks, four cycle checks, and 68
 analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See
-[Verification](docs/verification.md) for the latest results and
-[Roadmap](docs/roadmap.md) for the plan.
+[Verification](docs/verification.md) for the latest results.
+
+The present compiler reference-counts every heap object and parses C# with its
+own lexer and parser. It rejects C# finalisers. The [Roadmap](docs/roadmap.md)
+moves the frontend to Roslyn before any new language feature, then adds a
+lifetime pass that uses ARC only where a lifetime cannot be proved, then
+implements deterministic finalisation. That contract is in the
+[memory model](docs/memory-model.md#finalisation): a finaliser runs when the
+last strong reference is released, not when a variable leaves scope, and
+`Dispose()` stays a separate call. ArcSharp is a separate runtime with that
+profile. It is not a collector dropped into the CLR.
 
 ## Documentation
 
@@ -111,7 +124,7 @@ compiler can also emit IR for Linux x64, but that path is not tested. See
 | [Diagnostics](docs/diagnostics.md) | Every error and warning code |
 | [Troubleshooting](docs/troubleshooting.md) | Build failures, crashes, and leaks |
 | [Architecture](docs/architecture.md) | Compiler internals, object layout, and the ARC rules |
-| [Roadmap](docs/roadmap.md) | The plan towards a usable toolchain |
+| [Roadmap](docs/roadmap.md) | Roslyn frontend first, then hybrid lifetimes, then the language backlog |
 
 Contributors should read [`AGENTS.md`](AGENTS.md), which lists the invariants
 the compiler and runtime depend on.

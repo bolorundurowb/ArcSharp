@@ -1,11 +1,11 @@
 # ArcSharp — Verification Results
 
 Reproduce with: `powershell -ExecutionPolicy Bypass -File tools\verify.ps1`.
-It requires the .NET 8 SDK and LLVM `clang`, by default at
+It requires the .NET 11 SDK and LLVM `clang`, by default at
 `C:/Program Files/LLVM/bin/clang.exe`; `-Clang <path>` overrides the location.
 See [Getting started](getting-started.md) for the prerequisites.
 
-The harness builds the compiler with the .NET 8 SDK selected by `global.json`,
+The harness builds the compiler with the .NET 11 SDK selected by `global.json`,
 compiles each sample in `samples/` to LLVM IR, uses `clang` to lower the IR and
 link it with `runtime/arc_runtime.c` into a native Windows x64 `.exe`
 (`x86_64-pc-windows-msvc`), runs it, and checks both program output **and** ARC
@@ -21,7 +21,7 @@ still retained at exit). **`live=0` means no leaks.**
 
 ## Results (30 samples, Windows x64, 17 November 2026)
 
-`tools\verify.ps1` reported **67 passed, 0 failed** with the .NET 8.0.428 SDK:
+`tools\verify.ps1` reported **67 passed, 0 failed** with the .NET 11.0.100 SDK:
 30 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
 diagnostics, 3 command-line checks, 4 cycle checks, and one run of the analyser
 unit tests (68 cases). `live=0` means every object was reclaimed.

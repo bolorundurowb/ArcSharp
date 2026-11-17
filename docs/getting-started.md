@@ -9,13 +9,14 @@ ArcSharp builds on Windows x64 only. It needs three things.
 
 | Tool | Why | How to get it |
 |---|---|---|
-| .NET 8 SDK | The compiler itself is a .NET 8 program | [Download the .NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) |
+| .NET 11 SDK | The compiler itself is a .NET 11 program | [Download the .NET 11 SDK](https://dotnet.microsoft.com/download/dotnet/11.0) |
 | LLVM `clang` | Turns the generated LLVM IR and the C runtime into an executable | [Download LLVM](https://github.com/llvm/llvm-project/releases), or run `winget install LLVM.LLVM` |
 | A Windows linker and C libraries | `clang` hands linking to the Microsoft toolchain | Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload |
 
-The repository's `global.json` selects the newest .NET 8 SDK that you have
-installed. It does not roll forward to .NET 9 or later, so a machine with only
-a newer SDK cannot build the compiler until you add an 8.0 SDK.
+The repository's `global.json` selects the newest .NET 11 SDK that you have
+installed. It rolls forward within the 11 release and does not roll forward to
+.NET 12 or later, so a machine with only an older SDK, or only a later major,
+cannot build the compiler until you add an 11 SDK.
 
 The scripts and the examples below assume that `clang` is installed at
 `C:/Program Files/LLVM/bin/clang.exe`, which is the LLVM installer's default.
@@ -25,7 +26,7 @@ If yours is elsewhere, pass its path wherever these pages use `--clang` or
 Check the tools from a PowerShell prompt:
 
 ```powershell
-dotnet --list-sdks          # expect at least one 8.0.x line
+dotnet --list-sdks          # expect at least one 11.x line
 & "C:/Program Files/LLVM/bin/clang.exe" --version
 ```
 
@@ -37,7 +38,7 @@ From the repository root:
 dotnet build -c Release
 ```
 
-The compiler is written to `bin/Release/net8.0/arcsharp.dll`. You run it with
+The compiler is written to `bin/Release/net11.0/arcsharp.dll`. You run it with
 `dotnet`; there is no installed `arcsharp` command yet.
 
 ## Write a program
@@ -78,7 +79,7 @@ useful way to compare behaviour.
 ## Compile and run it
 
 ```powershell
-dotnet bin/Release/net8.0/arcsharp.dll hello.cs -o hello `
+dotnet bin/Release/net11.0/arcsharp.dll hello.cs -o hello `
     --clang "C:/Program Files/LLVM/bin/clang.exe" `
     --runtime runtime/arc_runtime.c --run
 ```
@@ -134,7 +135,7 @@ Use `--emit-llvm` to stop after writing the LLVM IR, which is useful when you
 want to see what the compiler generated:
 
 ```powershell
-dotnet bin/Release/net8.0/arcsharp.dll hello.cs -o hello --emit-llvm
+dotnet bin/Release/net11.0/arcsharp.dll hello.cs -o hello --emit-llvm
 ```
 
 ## Run the test suite

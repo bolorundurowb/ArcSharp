@@ -10,7 +10,7 @@ source to textual LLVM IR, links that IR with a small C runtime, and produces a
 native executable that manages memory with automatic reference counting (ARC)
 instead of a garbage collector.
 
-The compiler is written in C# 12 on .NET 8. The runtime is a single C file. The
+The compiler is written in C# 12 on .NET 11. The runtime is a single C file. The
 only supported architecture is x86-64, and the actively verified target is
 Windows x64 (`x86_64-pc-windows-msvc`).
 
@@ -23,9 +23,10 @@ clever", choose simple and correct, and record the optimisation in
 
 ### Prerequisites
 
-- The .NET 8 SDK. `global.json` pins the repository to the newest installed
-  8.0 SDK and does not roll forward to .NET 9 or later. Do not change the target
-  framework or the pin unless the task asks for it.
+- The .NET 11 SDK. `global.json` pins the repository to the newest installed
+  11 SDK (`rollForward` is `latestMinor`) and does not roll forward to .NET 12
+  or later. Do not change the target framework or the pin unless the task asks
+  for it.
 - LLVM `clang`, by default at `C:/Program Files/LLVM/bin/clang.exe`. A Windows
   linker that clang can reach (Visual Studio Build Tools or the Windows SDK).
 - PowerShell. `tools/verify.ps1` runs on both Windows PowerShell 5.1 and
@@ -38,12 +39,12 @@ clever", choose simple and correct, and record the optimisation in
 dotnet build -c Release
 
 # Compile and run one program (writes <name>.ll and <name>.exe next to -o)
-dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit `
+dotnet bin/Release/net11.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit `
   --target windows --clang "C:/Program Files/LLVM/bin/clang.exe" `
   --runtime runtime/arc_runtime.c --run
 
 # Emit LLVM IR only, for inspection
-dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit --emit-llvm
+dotnet bin/Release/net11.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit --emit-llvm
 
 # Run the full verification suite (the project's only test gate)
 powershell -ExecutionPolicy Bypass -File tools\verify.ps1
@@ -116,9 +117,22 @@ declarations from all files into one flat program before binding. `using`
 directives are skipped, and `namespace` names are discarded, so two types with
 the same simple name collide even in different namespaces.
 
+The [Roadmap](docs/roadmap.md) freezes this frontend. The next milestone ports
+today's behaviour onto Roslyn and then deletes the hand-written lexer, parser,
+and name resolution once `tools/verify.ps1` passes. Do not add a language
+feature to the lexer or the parser while that transition is the milestone. A
+defect in the emitter or the runtime may still be fixed, because that code
+survives the port. A defect in the lexer or the parser is fixed in the Roslyn
+lowering instead.
+
 ### Adding or changing a language feature
 
-A feature usually touches every stage. Work through this list in order:
+Do this only for a change the roadmap still allows on the current compiler,
+which today means an emitter or runtime defect. A new language feature waits
+until the Roslyn transition has landed, and it is then lowered from Roslyn
+rather than from `Parser.cs`.
+
+When a change does touch the current pipeline, work through this list in order:
 
 1. **Lexer**: add the `TokenKind` and, for a keyword, the `Keywords` entry.
 2. **AST and parser**: add the node class to `Ast.cs` and parse it in
@@ -181,14 +195,19 @@ These rules are what keep every sample at `live=0`. They are described in
   `arc_load_weak` returns +1 or null.
 - **Destructors.** The emitter generates `<Type>__deinit` for every class. It
   releases each strong reference field and clears each weak field.
-  `arc_release` calls it when the strong count reaches zero.
+  `arc_release` calls it when the strong count reaches zero. This is generated
+  teardown, not a C# finaliser. `~T()` stays rejected until the finalisation
+  milestone in `docs/roadmap.md`. When that lands, the user finaliser runs
+  before those field releases, on the releasing thread, and a worklist replaces
+  the recursive release. Do not implement `~T()` on the current parser.
 - **Counts are non-atomic and the model is single-threaded.** Do not introduce
   threads or shared state without the atomic-refcount work from the roadmap.
 
 Over-retaining is acceptable; an unbalanced retain or release is not. Do not
-remove or "optimise away" retain and release pairs. Borrow and ownership
-elision is planned as a separate, deliberate compiler pass
-(`docs/roadmap.md` section 2).
+remove or skip retain and release pairs in the current emitter. The lifetime
+pass that will do that is a later milestone
+(`docs/roadmap.md` section 2). It keeps this header on every heap object and
+uses ARC wherever it cannot prove a lifetime. It does not add a second layout.
 
 ### Object layout
 
@@ -278,8 +297,10 @@ broken ones, and runs the analyser's xUnit project with `dotnet test`.
 
 Run it after every change to the compiler or the runtime. All samples must
 pass. `cycle_strong` and `cycle_struct` are expected to report `live=2`; those
-leaks are deliberate, and they document that ARC cannot reclaim a strong cycle,
-including one that runs through a struct field.
+leaks are deliberate. Cycles are a closed decision: `ARC3100` warns, the
+program stays legal, and an ignored warning leaks, including when the cycle
+comes from a library. Do not turn `ARC3100` into an error, and do not add a
+cycle collector. `WeakReference<T>` is how a cycle is broken.
 
 ### Adding a sample
 
@@ -311,7 +332,7 @@ is expected and harmless.
 
 ### Honesty about verification
 
-Report only what was actually run. If the .NET 8 SDK or clang is not available
+Report only what was actually run. If the .NET 11 SDK or clang is not available
 in your environment, say that the harness could not be run. Never write
 accounting numbers or "passed" into `docs/verification.md` or a commit message
 without a real run. The Linux x64 path (`--target host` with `llc` and `gcc`)
@@ -332,10 +353,11 @@ Follow `.editorconfig`. The points that matter most:
 - Private fields are `_camelCase`. Interfaces start with `I`.
 - Nullable reference types are enabled. Do not suppress warnings with `!`
   unless the value is guaranteed non-null.
-- Target C# 12 and .NET 8. Do not use APIs or syntax from later versions.
-- The compiler has no NuGet dependencies. Do not add one without a strong
-  reason. Planned exceptions such as LLVMSharp are roadmap decisions, not
-  incidental changes.
+- Target C# 12 and .NET 11. Do not use C# syntax newer than C# 12.
+- The compiler has no NuGet dependencies today. The Roslyn transition in
+  `docs/roadmap.md` adds `Microsoft.CodeAnalysis.CSharp`, matched to the
+  analyser. Do not add any other package unless the roadmap says so.
+  LLVMSharp stays a later roadmap item, after the lifetime pass.
 
 Match the surrounding code. The emitter builds IR with string interpolation
 through the helpers `Inst`, `Do`, `Term`, and `Lbl`. Use them, because they
@@ -377,9 +399,9 @@ Write prose in UK English (for example "finalisation", "behaviour",
 
 ## Current limits
 
-Do not assume that these work. Each is unimplemented or deliberately limited:
+The [compatibility target](docs/roadmap.md#compatibility-target) is the language surface the project is aiming at. Do not treat it as implemented, and do not start work outside it. Do not assume that these work today. Each is unimplemented or deliberately limited:
 
-- Generics (`Name<T>` is parsed only to recognise `WeakReference<T>`)
+- Generics beyond the specialised subset already in the compiler
 - Exceptions (`try`, `catch`, `finally`)
 - Struct arrays, struct return values, static struct fields, by-value struct
   parameters, struct-typed properties, printing a struct, `virtual`/`override`

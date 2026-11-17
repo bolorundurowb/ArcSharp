@@ -1,9 +1,9 @@
 # Command-line reference
 
-The compiler is a .NET 8 program. After `dotnet build -c Release`, run it with:
+The compiler is a .NET 11 program. After `dotnet build -c Release`, run it with:
 
 ```text
-dotnet bin/Release/net8.0/arcsharp.dll <input.cs> [more.cs ...] [options]
+dotnet bin/Release/net11.0/arcsharp.dll <input.cs> [more.cs ...] [options]
 ```
 
 ## Options
@@ -82,7 +82,7 @@ When the program is run, its exit codes include:
 Compile and run one file:
 
 ```powershell
-dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit `
+dotnet bin/Release/net11.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit `
     --clang "C:/Program Files/LLVM/bin/clang.exe" `
     --runtime runtime/arc_runtime.c --run
 ```
@@ -90,7 +90,7 @@ dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit `
 Compile several files into one program:
 
 ```powershell
-dotnet bin/Release/net8.0/arcsharp.dll samples/mf_main.cs samples/mf_lib.cs `
+dotnet bin/Release/net11.0/arcsharp.dll samples/mf_main.cs samples/mf_lib.cs `
     -o $env:TEMP\multifile --clang "C:/Program Files/LLVM/bin/clang.exe" `
     --runtime runtime/arc_runtime.c --run
 ```
@@ -98,13 +98,13 @@ dotnet bin/Release/net8.0/arcsharp.dll samples/mf_main.cs samples/mf_lib.cs `
 Write the LLVM IR only:
 
 ```powershell
-dotnet bin/Release/net8.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit --emit-llvm
+dotnet bin/Release/net11.0/arcsharp.dll samples/inherit.cs -o $env:TEMP\inherit --emit-llvm
 ```
 
 Fail on warnings:
 
 ```powershell
-dotnet bin/Release/net8.0/arcsharp.dll app.cs -o app -Werror --emit-llvm
+dotnet bin/Release/net11.0/arcsharp.dll app.cs -o app -Werror --emit-llvm
 ```
 
 ## Helper scripts

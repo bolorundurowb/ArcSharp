@@ -3,7 +3,7 @@
 
     . tools\env.ps1
 
-  Assumes a system .NET 8 SDK and LLVM (clang/llc) install. If LLVM is in the
+  Assumes a system .NET 11 SDK and LLVM (clang/llc) install. If LLVM is in the
   default location it is added to PATH so `clang` and `llc` are reachable.
 #>
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"

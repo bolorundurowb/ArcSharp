@@ -7,9 +7,10 @@ but behaves strangely, also check [Known issues](language-reference.md#known-iss
 
 ### `dotnet build` reports that a compatible SDK was not found
 
-`global.json` requires a .NET 8 SDK and does not roll forward to .NET 9 or
-later. Run `dotnet --list-sdks`. If no `8.0.x` line appears, install the
-[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0). Newer SDKs can
+`global.json` requires a .NET 11 SDK and rolls forward to the latest installed
+11 release. It does not roll forward to .NET 12 or later. Run
+`dotnet --list-sdks`. If no `11.` line appears, install the
+[.NET 11 SDK](https://dotnet.microsoft.com/download/dotnet/11.0). Other SDKs can
 stay installed alongside it.
 
 ## Building a program

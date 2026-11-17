@@ -4,13 +4,13 @@ ArcSharp is a proof-of-concept compiler for a subset of C# 12 that replaces the
 .NET garbage collector with **ARC (Automatic Reference Counting)**. It emits
 textual **LLVM IR**, links against a small **C runtime**, and produces a native,
 GC-less executable. The intended target is **Windows x64**
-(`x86_64-pc-windows-msvc`); the compiler itself is written in C# (.NET 8,
+(`x86_64-pc-windows-msvc`); the compiler itself is written in C# (.NET 11,
 LangVersion 12).
 
 > Status: first pass / PoC. The goal is to prove the pipeline and the ARC memory
 > model end-to-end, not to be a conformant C# implementation. See
 > [Unsupported features](#7-features-arc-cannot-reasonably-support-first-pass),
-> [Open questions](#10-open-questions), and the production-readiness
+> [Decisions and remaining questions](#10-decisions-and-remaining-questions), and the production-readiness
 > **[Roadmap](roadmap.md)**.
 >
 > This document describes the compiler's internals. For the user-facing
@@ -33,16 +33,21 @@ count reaches zero.
 | Reclamation     | Deferred, at collection time        | Immediate, at last release                   |
 | Pauses          | Stop-the-world phases               | None (work is spread inline)                 |
 | Per-object cost | Amortised                           | A counter field + retain/release traffic     |
-| Cycles          | Collected automatically             | **Leak** unless broken by `WeakReference<T>` |
+| Cycles          | Collected automatically             | Warned, permitted, and a leak if the warning is ignored |
 | Determinism     | Finalisers run nondeterministically | Destructors run deterministically            |
 
-The defining trade-off — and the reason GC exists — is the last row: naive ARC
-cannot reclaim **reference cycles**. ArcSharp addresses this with the standard
-`System.WeakReference<T>` type (Section 5).
+The defining trade-off — and the reason GC exists — is reference cycles. Naive
+ARC cannot reclaim them. The architectural decision is to warn, permit, and
+document the leak. `ARC3100` warns when the type graph can form a cycle. The
+program still compiles. `System.WeakReference<T>` (Section 5) is how a cycle is
+broken. If the developer or a library ignores the warning, the objects leak
+and that result is intended. There is no backup collector.
 
 ---
 
 ## 2. Compiler pipeline
+
+What the compiler does today:
 
 ```
  .cs source
@@ -74,6 +79,16 @@ the `--clang` path and the only one in the current verification. Without
 `--clang`, the driver runs `llc` to produce an object file. On Windows it then
 stops and prints the link command; with `--target host` it links the object and
 the runtime with `gcc`.
+
+The [Roadmap](roadmap.md) replaces the front of this picture. Roslyn will parse
+and bind, a lifetime pass will sit between that bound tree and the emitter, and
+the hand-written lexer, parser, and name resolution will be removed once the
+Roslyn path passes the same verification. The bound tree stays the ownership
+representation. Stock CIL is not inserted in front of it: the CLR's IL has
+already dropped the escape and last-release facts that finalisation and the
+lifetime pass require. The emitter, the object header, and the C runtime stay.
+That transition is the current milestone. Until it lands, the diagram above is
+the compiler.
 
 Source layout:
 
@@ -206,14 +221,27 @@ Two cleanup scopes guarantee balance:
 Object teardown: the emitter generates `<Type>__deinit` for every class. It
 releases each strong reference field and clears each weak field; the runtime
 releases each element when an array of references dies. `arc_release` calls
-the destructor when `strong` hits 0. This is what makes destruction recursive
-and deterministic.
+that function when `strong` hits 0, and the field releases recurse. This is
+the compiler's behaviour today. It is not a C# finaliser. `~T()` is rejected.
+
+The [finalisation contract](memory-model.md#finalisation) changes the order
+inside that function once `~T()` is accepted. The user finaliser runs first,
+derived class before base, while children are still alive. Field release
+happens afterwards, through a worklist rather than a recursive call. A
+suppressed finaliser skips the user body and still releases fields.
+`__deinit` remains the generated teardown. It gains the user finaliser in
+front of the releases it already performs. `GC.SuppressFinalize` needs a flag
+on the object. Where that flag sits in the header is chosen with the
+implementation, and the emitter, the runtime, and this layout are updated
+together. The header does not change before then.
 
 > This "retain every read to +1, release temporaries per statement, release
-> slots at scope exit" rule over-retains slightly versus an optimising ARC
-> implementation. That is intentional: it is simple, local, and provably
-> balanced, which is what a first pass needs. Optimisation (eliding
-> retain/release pairs) is future work.
+> slots at scope exit" rule over-retains slightly versus the hybrid model in
+> the [Roadmap](roadmap.md#2-memory-model--hybrid-lifetimes). That is
+> intentional until the lifetime pass exists: it is simple, local, and
+> provably balanced. The pass will skip retain and release where it can prove
+> a lifetime. It will not remove the header, and it will not introduce a
+> second object layout. An escape still uses the count on the same object.
 
 ---
 
@@ -343,57 +371,44 @@ Catalogued honestly, split into *fundamental* (ARC semantics fight the feature)
 and *scope* (just not built yet).
 
 ### Fundamental tensions with ARC
-- **Uncollected reference cycles.** Pure ARC leaks any strong cycle. Mitigated,
-  not solved, by `WeakReference<T>`; the burden moves to the programmer. A real
-  product would need a backup cycle collector (the hard problem GC solves for
-  free).
+- **Uncollected reference cycles.** Closed decision: warn with `ARC3100`,
+  permit the program, and document the leak. A cycle the developer or a
+  library leaves in place is never collected. `WeakReference<T>` breaks it.
+  There is no backup collector.
 - **Multithreaded sharing.** Correct ARC across threads requires *atomic*
   retain/release (or ownership transfer rules). ArcSharp's counts are
   non-atomic, so shared mutable references across threads are unsound. Atomics
   have workload-dependent costs. Safe shared-reference acquisition, weak
   promotion, synchronisation, and reclamation are also required; atomic counts
   alone cannot protect the interval between loading a pointer and retaining it.
-- **`GC.*` / finaliser semantics.** `GC.Collect`, `GC.KeepAlive`,
-  resurrection, the two-phase finaliser queue, and the timing of
-  `WeakReference<T>.TryGetTarget` assume a tracing collector. ArcSharp offers deterministic destructors instead; the GC
-  API surface cannot be honoured.
-- **`async`/`await` & iterator state machines.** Lifetimes that span suspension
-  points must be threaded through a heap-allocated state machine; getting ARC
-  retain/release correct across `await` boundaries (and avoiding cycles in
-  captured continuations) is a substantial design effort. Out of scope.
-- **Closures / lambda capture.** Captured variables become heap closure
-  objects; capturing `this` readily forms cycles. Supportable in principle (with
-  explicit `WeakReference<T>` patterns) but deferred. Preserve C# strong
-  captures and define cycle policy before closures, events, and async.
+- **CLR finalisation.** The CLR runs finalisers later, on another thread, and
+  allows resurrection. ArcSharp's contract is the opposite, and it is
+  documented in the [memory model](memory-model.md#finalisation): synchronous
+  finalisation at the last strong release, no resurrection, no finaliser
+  queue. `GC.Collect` and `GC.WaitForPendingFinalizers` become no-ops.
+  `GC.ReRegisterForFinalize` is rejected. User finalisers are not accepted yet.
+- **`async`/`await` and delegates.** Both are in the [compatibility target](roadmap.md#compatibility-target). A capture or a suspended local is an ARC-managed object. Strong captures stay strong. They wait until the lifetime pass and finalisers exist, because each one creates a lifetime the current emitter does not have.
+- **Closures / lambda capture.** Captured variables become heap closure objects. Capturing `this` can form a cycle, which `ARC3100` warns about and which remains legal. Closures are the lowering for delegates, and they wait with the rest of that target.
 
 - **Interior references.** Calls pin the heap owner of a managed reference for
   the duration of the call. Ref locals, ref returns, and heap-backed spans
   remain rejected: their lifetime is longer than one call, and stack
   confinement does not keep a heap object alive.
 
-### Out of scope for the first pass (no fundamental conflict)
-- **Remaining generic features.** Virtual generic methods, interface generic
-  methods, variance, full overload inference, nested type declarations, and
-  additional constraint forms remain outside the subset.
-- **Reflection / `dynamic` / attributes at runtime**, `unsafe`/pointers,
-  `stackalloc`, pinning.
-- **Exceptions** (`try`/`catch`/`finally`). Every unwinding path must release
-  live locals. The cleanup model anticipates that, and the emitter does not yet
-  emit landing pads.
-- **Still absent from the language subset**: `decimal`, `enum`, nullable value
-  types, indexers, events, delegates, pattern matching, LINQ, operator
-  overloading, partial classes, extension methods, `params`, optional and named
-  arguments, and bitwise operators (`&`, `|`, `^`, shifts). A single `&` or `|`
-  is a lexer error (`ARC0003`).
-- **Null safety.** A trailing `?` is parsed and then ignored.
-- **Namespace identity.** Declarations from every file are flattened into one
-  program, so two types with the same simple name collide.
-- **The BCL**, beyond a hard-coded `Console` shim.
-- **Struct features outside the current subset.** Arrays of structs, struct
-  return values, static struct fields, by-value struct parameters, properties
-  of struct type, printing a struct, `virtual`/`override` members on structs,
-  interfaces on structs, `using` a struct resource, and self-containing
-  structs are rejected as `ARC3001`.
+### In the compatibility target, not built yet
+The [compatibility target](roadmap.md#compatibility-target) is the bound. These items are inside it and absent from the compiler today.
+
+- **Remaining generic features.** Virtual generic methods, interface generic methods, variance, full overload inference, and further constraint forms. Closed types stay specialised.
+- **Reflection, `dynamic`, and `unsafe`.** Limited, as that table says. Reflection is emitted metadata. `dynamic` binds only to members this compiler can lower. A pointer must not outlive the proved lifetime of the object it addresses.
+- **Exceptions** (`try`/`catch`/`finally`). Every unwinding path must release live locals. The cleanup model anticipates that, and the emitter does not yet emit landing pads.
+- **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
+- **Struct forms still rejected.** Arrays of structs, struct return values, static struct fields, by-value struct parameters, properties of struct type, printing a struct, `virtual`/`override` members on structs, interfaces on structs, `using` a struct resource, and self-containing structs are `ARC3001`. They belong to the full struct row.
+- **Enums and indexers.** Absent, and part of the ordinary class surface in section 1 of the roadmap.
+
+### Not part of the target
+- Pattern matching, operator overloading, partial classes, extension methods, `params`, optional and named arguments, bitwise operators, `decimal`, and nullable value types. A single `&` or `|` is a lexer error (`ARC0003`).
+- The rest of the BCL beyond `Console`, the collections and LINQ library in the target, and `WeakReference<T>`.
+- A trailing `?` is parsed and ignored. Namespace names are discarded, so two types with the same simple name collide. Neither behaviour is a target feature.
 
 ---
 
@@ -430,6 +445,7 @@ and *scope* (just not built yet).
 | Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
 | Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |
 | Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
+| Roslyn frontend and the lifetime pass | Planned. The compiler still lexes, parses, and retains every read. See the [Roadmap](roadmap.md). |
 
 See [Verification](verification.md) for the exact set of sample programs that
 compile and run, with ARC alloc/free accounting, and the
@@ -482,34 +498,33 @@ LLVM, currently x86-64-scoped, portable in design.
 
 ---
 
-## 10. Open questions
+## 10. Decisions and remaining questions
 
-1. **Cycle policy.** *(Partly decided.)* A strong cycle still leaks, and the
-   programmer breaks it with `WeakReference<T>`. The compiler and the Roslyn
-   analyser warn with `ARC3100` when strong fields can form one
-   ([Roadmap section 7](roadmap.md#7-roslyn-analyser--warnings-inside-an-ordinary-c-project)).
-   Whether a backup cycle collector is also required stays open; that work is
-   section 2 of the roadmap.
-2. **Threading.** Keep the runtime single-threaded until a concurrent ownership
-   protocol, including atomic counts and safe shared-reference acquisition, is verified.
-3. **BCL strategy.** Build a minimal ARC-aware corelib incrementally, with
-   lifetime tests per API. Full .NET BCL compatibility is a separate objective
-   requiring review of GC-dependent ownership and concurrency assumptions.
-4. **`weak` surface.** *(Resolved.)* ArcSharp lowers the standard
-   `System.WeakReference<T>` so source stays idiomatic and Roslyn-compatible; the
-   old non-standard `weak` keyword is retained only as a legacy alias. Remaining
-   question: do we also want an `unowned` (non-zeroing) variant? Separately,
-   `WeakReference<T>` locals now use the generic-aware declaration parser.
-5. **Value types with reference fields.** *(Resolved.)* Copying a struct
-   retains its reference fields, and dropping a copy releases them. The
-   remaining restrictions (arrays, returns, static fields, by-value parameters,
-   struct-typed properties, printing, `virtual`/`override`, interfaces, and
-   self-containment) are `ARC3001` and are tracked in the
-   [Roadmap](roadmap.md#1-language--close-the-feature-gap).
-6. **Exceptions vs. ARC unwinding.** If exceptions are in scope, every cleanup
-   scope must also be a landing pad. Confirm exceptions are wanted before
-   committing the emitter to DWARF/SEH unwinding.
-7. **Determinism guarantees.** Do we promise deterministic destruction order as
-   part of the language contract (it changes valid optimisations)?
-8. **Optimisation budget.** How much retain/release elision (ownership/borrow
-   analysis) is expected for the PoC vs. a later milestone?
+The memory-model and frontend choices are recorded in the
+[Roadmap](roadmap.md#decisions). In short: Roslyn becomes the frontend before
+any new language feature; every heap object keeps its header; a proved lifetime
+skips retain and release; every other reference uses ARC; there is no backup
+cycle collector. Finalisation runs on the releasing thread when the strong
+count reaches zero, before children are released, and it is not tied to
+lexical scope. `Dispose()` stays separate. Resurrection is rejected. The
+current compiler still rejects `~T()`.
+
+Still open, and not required to start the Roslyn transition:
+
+1. **Threading.** The runtime stays single-threaded until a concurrent
+   ownership protocol, including atomic counts and safe shared-reference
+   acquisition, is verified. That work waits until the lifetime pass exists.
+2. **BCL strategy.** Build a minimal corelib incrementally, with a lifetime
+   test per API, after the lifetime pass. Full .NET BCL compatibility is a
+   separate objective.
+3. **`unowned`.** `WeakReference<T>` is the weak surface. A non-zeroing
+   `unowned` reference is not decided. The legacy `weak` field modifier stays
+   a compatibility alias only.
+4. **Exceptions.** They are wanted eventually, and every cleanup scope will
+   have to be a landing pad. They wait until the lifetime pass exists, so the
+   landing pads are generated for proved and shared values together.
+5. **How precise the first lifetime pass is.** The fallback is ARC, so a weak
+   first proof is safe. The roadmap does not yet fix which escapes the first
+   version must prove (repeated local reads, a call that only borrows, a
+   local-to-local move) and which ones fall back immediately. That is the
+   design note for the pass itself, written when the Roslyn lowering exists.

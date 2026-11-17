@@ -236,8 +236,10 @@ The negative samples under `samples/negative/` exercise this rule.
 
 **Warning. Possible strong reference cycle.** A set of classes can reach each
 other through strong fields, or one class has a strong field of its own type.
-ARC cannot reclaim such a cycle, so the instances leak unless a back-edge is
-changed to `WeakReference<T>` or the legacy `weak` modifier.
+The warning is the architectural response to cycles: the program stays legal.
+ARC cannot reclaim such a cycle, so the instances leak if the developer, or a
+library they compile, leaves the back-edge in place. Change it to
+`WeakReference<T>`, or the legacy `weak` modifier, when the cycle is real.
 
 The analysis looks at declared field types, not at an object graph. It includes
 arrays of a class, static fields, and class references reached through a struct
@@ -250,10 +252,13 @@ false positive. Suppress it with `#pragma warning disable ARC3100` or
 
 ### ARC3200 (reserved)
 
-**Info, planned.** Code whose behaviour differs between ARC and the .NET garbage
-collector: `GC.Collect`, `GC.KeepAlive`, finalisers that assume a collector, and
-`TryGetTarget` used as if it waited for a collection. The id is reserved in the
-shared catalogue but is not reported yet.
+**Info, planned.** Code whose behaviour differs between this runtime and the
+.NET garbage collector. `GC.Collect` and `GC.WaitForPendingFinalizers` are
+no-ops. `GC.KeepAlive`, and `TryGetTarget` used as if it waited for a
+collection, are the other cases. The id is reserved in the shared catalogue
+but is not reported yet. Resurrection and `GC.ReRegisterForFinalize` are
+rejected rather than reported here. The finalisation contract is in the
+[memory model](memory-model.md#finalisation).
 
 ### ARC3300 (reserved)
 

@@ -7,7 +7,9 @@ same source with `dotnet build` and compare the results.
 This page lists what the subset contains, where it behaves differently from
 .NET, and the known issues in the current compiler. Each statement on this page
 was checked against the compiler; the [Known issues](#known-issues) section
-records the behaviour as it is today, not as it is planned.
+records the behaviour as it is today, not as it is planned. The move to a
+Roslyn frontend, and the lifetime pass that follows it, are in the
+[Roadmap](roadmap.md). They do not change what this page describes.
 
 - [Program structure](#program-structure)
 - [Types](#types)
@@ -205,7 +207,7 @@ Supported:
 - Instance and static auto-properties with both accessors:
   `public string Name { get; set; }` and `public static int Count { get; set; }`.
 
-Not supported: `sealed`, `readonly`, `const`, `partial`, static constructors,
+Not supported yet: `sealed`, `readonly`, `const`, `partial`, static constructors,
 nested types, finalisers (`~T()`), expression-bodied members (`=> expr`),
 properties with accessor bodies, get-only auto-properties, indexers, operator
 overloading, extension methods, `params`, and optional or named arguments.
@@ -277,10 +279,11 @@ Not supported: `do`/`while`, `foreach`, `switch`, `break`, `continue`, `goto`,
 
 ### `using` and `IDisposable`
 
-`using` maps a resource to deterministic ARC cleanup. When the statement's
-block is left, the compiler calls the resource's `Dispose()` method and then
-releases it, so the object is destroyed at the same point a garbage-collected
-run would only have scheduled it. Both forms are supported, one resource per
+`using` maps a resource to an explicit `Dispose()` call. When the statement's
+block is left, the compiler calls `Dispose()` and then releases the resource.
+`Dispose()` is not a finaliser. If that release was the last strong reference,
+teardown follows at that moment. A finaliser, once accepted, still runs only
+at the last strong release, and it does not call `Dispose()`. Both forms are supported, one resource per
 statement:
 
 ```csharp
@@ -387,8 +390,11 @@ Write `Console`, not `System.Console`; the fully qualified name is reported as
 
 ## Not supported
 
-These features are not implemented. The [Roadmap](roadmap.md) records the plan
-and priority for each one.
+These features are not implemented. The
+[compatibility target](roadmap.md#compatibility-target) is the surface this
+runtime is aiming at. It is smaller than the whole of C# and the whole of the
+.NET libraries. The list below is what the compiler rejects today, including
+items that target marks as full and items it marks as limited.
 
 - Generic features outside the subset described under [Generics](#generics).
 - Exceptions: `try`, `catch`, `finally`, and `throw`.
@@ -410,13 +416,19 @@ bug; see [Diagnostics](diagnostics.md).
 ## Differences from .NET
 
 These behaviours differ from the same source built with .NET. Most of them are
-deliberate consequences of ARC.
+deliberate consequences of ARC. A row that the compiler does not implement yet
+says so. The finalisation contract is the runtime's compatibility profile, not
+a claim that `~T()` already runs.
 
 | Behaviour | .NET | ArcSharp |
 |---|---|---|
-| When an object is reclaimed | Some time after it becomes unreachable, when the garbage collector runs | Immediately, when its last strong reference is released |
-| Reference cycles | Collected | Leak, unless one edge is a `WeakReference<T>` |
-| `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false` |
+| When an object is reclaimed | Some time after it becomes unreachable, when the garbage collector runs | Immediately, when its last strong reference is released. Leaving a lexical scope finalises the object only when that is also the last strong release |
+| C# finaliser (`~T()`) | Runs later, on the finaliser thread, and may resurrect the object | Specified to run synchronously on the releasing thread, derived class before base, before children are released. Resurrection is prohibited. The current compiler still rejects `~T()` (`ARC3001`). The contract is in the [memory model](memory-model.md#finalisation) |
+| `GC.Collect`, `GC.WaitForPendingFinalizers` | Collect, or wait for the finaliser queue | Will be accepted no-ops, with info `ARC3200`. They are not in the supported library yet |
+| `GC.SuppressFinalize` | Skips the finaliser. The object is still collected later | Will skip the finaliser and still tear the object down at the last strong release. Not implemented yet |
+| `Dispose` and finalisation | Often paired by convention. The finaliser is a backstop | Separate. A finaliser does not call `Dispose`. `using` is an explicit call |
+| Reference cycles | Collected. Finalisers of cyclic objects may still run | Permitted. `ARC3100` warns when the type graph can form one. An ignored warning, including in a library, leaks, and a finaliser in the cycle does not run. `WeakReference<T>` breaks the cycle |
+| `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false`. The weak reference does not keep the object alive |
 | String `==` | Compares contents | Compares references; see [Known issues](#known-issues) |
 | `string.Length` | UTF-16 code units | UTF-8 bytes. `"héllo".Length` is 6, not 5. |
 | Formatting a `double` or `float` | Shortest round-trippable form, such as `0.3333333333333333` | Six significant digits, such as `0.333333` |

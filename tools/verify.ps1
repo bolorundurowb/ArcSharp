@@ -24,7 +24,7 @@ try {
     dotnet build -c Release | Out-Host
     if ($LASTEXITCODE -ne 0) { Write-Host "BUILD FAILED"; exit 1 }
 
-    $dll = Join-Path $root "bin/Release/net8.0/arcsharp.dll"
+    $dll = Join-Path $root "bin/Release/net11.0/arcsharp.dll"
     $runtime = Join-Path $root "runtime/arc_runtime.c"
     $script:pass = 0
     $script:fail = 0
