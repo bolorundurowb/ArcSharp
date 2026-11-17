@@ -194,10 +194,12 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.ImplicitObjectCreationExpression => "target-typed 'new()' is not supported: name the type",
         SyntaxKind.AnonymousObjectCreationExpression => "anonymous types are not supported",
         SyntaxKind.InterpolatedStringExpression => "interpolated strings are not supported: use concatenation",
-        SyntaxKind.RefExpression => "'ref' expressions are not supported",
+        SyntaxKind.RefExpression =>
+            "ref locals and ref returns are not supported: a managed reference must not outlive the call",
         SyntaxKind.DefaultExpression or SyntaxKind.DefaultLiteralExpression =>
             "'default' is not supported: assign an explicit value",
-        SyntaxKind.RefType => "'ref' types are not supported",
+        SyntaxKind.RefType =>
+            "ref locals and ref returns are not supported: a managed reference must not outlive the call",
         SyntaxKind.PointerType => "pointers are not supported",
         SyntaxKind.FunctionPointerType => "function pointers are not supported",
         SyntaxKind.TupleExpression or SyntaxKind.TupleType => "tuples are not supported",
@@ -298,6 +300,14 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
                 Descriptors.UnsupportedConstruct,
                 d.UsingKeyword.GetLocation(),
                 "'using var' is not supported: use a 'using (...)' block"));
+        }
+
+        if (d.Modifiers.Any(m => m.IsKind(SyntaxKind.RefKeyword)))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                Descriptors.UnsupportedConstruct,
+                d.Modifiers.First(m => m.IsKind(SyntaxKind.RefKeyword)).GetLocation(),
+                "ref locals and ref returns are not supported: a managed reference must not outlive the call"));
         }
     }
 

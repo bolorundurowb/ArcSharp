@@ -1456,6 +1456,11 @@ public sealed partial class Binder
                 b2.Virtual = method.IsVirtual || method.IsOverride;
             }
 
+            if (!method.IsStatic)
+            {
+                CheckReadOnlyStructReceiver(recv, inv.Line);
+            }
+
             return c;
         }
 
@@ -1530,6 +1535,7 @@ public sealed partial class Binder
             return Err();
         }
 
+        CheckByRefSlot(lval, br.Kind, br.Line);
         return new BoundByRefArg { Lvalue = lval, Kind = br.Kind, Type = lval.Type };
     }
 
@@ -1546,9 +1552,53 @@ public sealed partial class Binder
         if (lval is not (BoundLocal or BoundParam or BoundFieldAccess or BoundIndex))
         {
             Report(line, "'out' argument must be a variable, field, or element");
+            return lval;
         }
 
+        CheckByRefSlot(lval, RefKind.Out, line);
         return lval;
+    }
+
+    // The slot a managed reference addresses. A weak slot cannot be borrowed:
+    // a store through the pointer would not use the weak primitives. An `in`
+    // parameter's own storage, including fields of an inline struct, is
+    // read-only. A reference reached through that struct is a different object
+    // and stays writable; the call pins it.
+    private void CheckByRefSlot(BoundExpr lval, RefKind kind, int line)
+    {
+        if (lval is BoundFieldAccess { Field.IsWeak: true })
+        {
+            Report(line, "a weak field cannot be passed with 'ref', 'out', or 'in'", "ARC2015");
+            return;
+        }
+
+        if (kind != RefKind.In && IsReadOnlyInSlot(lval, out var name))
+        {
+            Report(line, $"'in' parameter '{name}' is read-only", "ARC2015");
+        }
+    }
+
+    private void CheckReadOnlyStructReceiver(BoundExpr receiver, int line)
+    {
+        if (receiver.Type.Kind == TypeKind.Struct && IsReadOnlyInSlot(receiver, out var name))
+        {
+            Report(line, $"'in' parameter '{name}' is read-only", "ARC2015");
+        }
+    }
+
+    private static bool IsReadOnlyInSlot(BoundExpr lval, out string name)
+    {
+        switch (lval)
+        {
+            case BoundParam p when p.Symbol.RefKind == RefKind.In:
+                name = p.Symbol.Name;
+                return true;
+            case BoundFieldAccess fa when fa.Receiver != null && fa.Receiver.Type.Kind == TypeKind.Struct:
+                return IsReadOnlyInSlot(fa.Receiver, out name);
+            default:
+                name = "";
+                return false;
+        }
     }
 
     private MethodSymbol? FindInterfaceMethod(TypeSymbol iface, string name, int argc)
@@ -1853,6 +1903,10 @@ public sealed partial class Binder
         if (target is BoundParam bp && bp.Symbol.Type.IsReferenceType)
         {
             Report(a.Line, "reassigning a reference-typed parameter is not supported in this first pass");
+        }
+        else if (IsReadOnlyInSlot(target, out var inName))
+        {
+            Report(a.Line, $"'in' parameter '{inName}' is read-only", "ARC2015");
         }
 
         var value = BindExpr(a.Value);
