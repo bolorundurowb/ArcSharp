@@ -246,7 +246,7 @@ together. The header does not change before then.
 
 > This "retain every read to +1, release temporaries per statement, release
 > slots at scope exit" rule over-retains slightly versus the hybrid model in
-> the [Roadmap](roadmap.md#2-memory-model--hybrid-lifetimes). That is
+> the [Roadmap](roadmap.md#m3--lifetime-pass). That is
 > intentional until the lifetime pass exists: it is simple, local, and
 > provably balanced. The pass will skip retain and release where it can prove
 > a lifetime. It will not remove the header, and it will not introduce a
@@ -412,12 +412,15 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 - **Exceptions** (`try`/`catch`/`finally`). Every unwinding path must release live locals. The cleanup model anticipates that, and the emitter does not yet emit landing pads.
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
 - **Struct forms still rejected.** Arrays of structs, struct return values, static struct fields, by-value struct parameters, properties of struct type, printing a struct, `virtual`/`override` members on structs, interfaces on structs, `using` a struct resource, and self-containing structs are `ARC3001`. They belong to the full struct row.
-- **Enums and indexers.** Absent, and part of the ordinary class surface in section 1 of the roadmap.
+- **Enums, indexers, and the rest of ordinary C#.** Enums, indexers, pattern matching, records, operator overloading, partial classes, extension methods, `params`, optional and named arguments, bitwise operators and shifts, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c). A single `&` or `|` is a lexer error (`ARC0003`) today.
+- **Name handling.** A trailing `?` is parsed and ignored. Namespace names are discarded, so two types with the same simple name collide. Both are defects of the hand-written frontend, and Roslyn binding replaces them in [M1](roadmap.md#m1--roslyn-frontend).
 
 ### Not part of the target
-- Pattern matching, operator overloading, partial classes, extension methods, `params`, optional and named arguments, bitwise operators, `decimal`, and nullable value types. A single `&` or `|` is a lexer error (`ARC0003`).
-- The rest of the BCL beyond `Console`, the collections and LINQ library in the target, and `WeakReference<T>`.
-- A trailing `?` is parsed and ignored. Namespace names are discarded, so two types with the same simple name collide. Neither behaviour is a target feature.
+- The rest of the .NET base class library beyond `Console`, the core library in the target, and `WeakReference<T>`.
+- Threads and cross-thread sharing.
+- CLR garbage-collector semantics: a tracing collector, a finaliser thread, and resurrection.
+- Loading code at run time, and consuming CIL or precompiled assemblies.
+- 32-bit, ARM, and big-endian targets.
 
 ---
 
@@ -500,10 +503,11 @@ principle. But the IR it emits is **not** target-independent:
 What this buys today: the emitted IR is portable across targets that share an
 architecture and ABI family, so one module shape covers x86-64 Windows and
 x86-64 Linux. The latest recorded run is Windows x64 ([Verification](verification.md)).
-What it does **not** yet provide: 32-bit, ARM, or big-endian targets. Making those work is the **P1 "Multi-target"** roadmap item
-— parameterise the triple/data layout into a `TargetInfo`, lower ABIs per target,
-and drop the hard-coded 8-byte-slot assumption. In short: GC-less native C# via
-LLVM, currently x86-64-scoped, portable in design.
+What it does **not** provide is 32-bit, ARM, or big-endian targets. Those would
+need the triple and data layout parameterised, ABI lowering per target, and the
+hard-coded 8-byte slot removed. They are outside the compatibility target and
+are listed under [Not scheduled](roadmap.md#not-scheduled). The Linux x64 path
+is scheduled for verification in [M12](roadmap.md#m12--production-backend).
 
 ---
 
@@ -520,9 +524,10 @@ current compiler still rejects `~T()`.
 
 Still open, and not required to start the Roslyn transition:
 
-1. **Threading.** The runtime stays single-threaded until a concurrent
-   ownership protocol, including atomic counts and safe shared-reference
-   acquisition, is verified. That work waits until the lifetime pass exists.
+1. **Threading.** The runtime stays single-threaded. Threads are outside the
+   compatibility target. They would need a verified concurrent ownership
+   protocol, including atomic counts and safe shared-reference acquisition,
+   and the roadmap does not schedule that work.
 2. **Library surface.** The libraries to build are the ones named in the
    compatibility target: collections, LINQ, and the small set of types that
    table already lists. The rest of the .NET BCL is not a target. Each API
@@ -535,7 +540,10 @@ Still open, and not required to start the Roslyn transition:
    pads have to release proved and shared values, and run `using` cleanup and
    finalisers. They come after deterministic finalisers, not before.
 5. **How precise the first lifetime pass is.** The fallback is ARC, so a weak
-   first proof is safe. The roadmap does not yet fix which escapes the first
-   version must prove (repeated local reads, a call that only borrows, a
-   local-to-local move) and which ones fall back immediately. That is the
-   design note for the pass itself, written when the Roslyn lowering exists.
+   first proof is safe. Which escapes the first version must prove (repeated
+   local reads, a call that only borrows, a local-to-local move) and which ones
+   fall back immediately is decided at the start of
+   [M3](roadmap.md#m3--lifetime-pass).
+6. **String representation.** Strings are UTF-8 today, and `Length` counts
+   bytes. Full compatibility needs UTF-16 code units. This is decided at the
+   start of [M8](roadmap.md#m8--core-library-iterators-and-linq).

@@ -1,412 +1,549 @@
 # ArcSharp — Roadmap
 
-ArcSharp's target is a hybrid memory manager behind a Roslyn frontend.
+This is the plan from the compiler that exists today to the end goal. It is a
+sequence of milestones. Each milestone has a goal, small steps, and a
+definition of done. The next milestone starts only when the current one is
+done.
+
+## The end goal
+
+ArcSharp is a separate C# runtime with a documented compatibility profile. It
+is not a garbage collector for the CLR.
 
 ```
 C# source
-    │  existing syntax
+    │  ordinary C# syntax
     ▼
 Roslyn
-    │  parse and semantic analysis
+    │  parsing and semantic analysis
     ▼
-Ownership and lifetime analysis
+Ownership tree
+    │  ArcSharp's own intermediate representation
+    ▼
+Lifetime pass
     │  a proved lifetime skips retain and release;
-    │  anything else uses ARC
+    │  anything else uses ARC on the same object
     ▼
 LLVM
     │  native code
     ▼
 Minimal runtime
-    allocation, reference counts, weak references
+    allocation, reference counts, weak references, finalisation
 ```
 
-The compiler does not do this yet. It still has its own lexer, parser, and
-binder, and every heap object is reference-counted. This document is the plan.
-Behaviour that already ships is marked **[done]**. Nothing else on this page
-is something the compiler does today.
+The program uses standard C# syntax. Its memory is managed by ARC, with no
+tracing collector. Finalisers run deterministically, at the last strong
+release. Weak references are explicit. The language and libraries are bounded
+by the [compatibility target](#compatibility-target).
 
-Items are prioritised as **P0** (required for the next milestone), **P1**
-(expected once that milestone is in place), or **P2** (later quality work).
+The compiler does not do this yet. It has its own lexer, parser, and binder,
+and it retains every reference it reads. [Where we are](#where-we-are) lists
+what has shipped.
 
 ---
 
 ## Decisions
 
-These are settled. Later sections follow them.
+These are settled. The milestones follow them.
 
 | Decision | Choice |
 |---|---|
 | **Fallback** | When a lifetime cannot be proved, the compiler inserts ARC and the program still compiles. There is no new ownership syntax. |
-| **Representation** | Every heap object keeps the header it has today (`strong`, `weak`, `TypeInfo*`). A proved lifetime skips `arc_retain` and `arc_release`. An escape (a store into a field or array, or a call the analysis cannot see) starts using the count on that same object. Identity does not change, so reference equality and weak references stay valid. A second, headerless layout is the wrong shape for C#: promotion would have to copy the object or reserve the header anyway. |
-| **Frontend** | Roslyn parses and binds. The hand-written lexer, parser, and name resolution are removed once the Roslyn path passes the same verification as the compiler does now. Layout, vtables, the lifetime pass, the LLVM emitter, and the C runtime stay ArcSharp's. |
-| **Intermediate representation** | The ownership tree between Roslyn and LLVM. Stock CIL is not a stage in the pipeline. CIL emitted for the CLR no longer says which store escapes or when the last strong reference dies, and both the lifetime pass and deterministic finalisation need those facts. |
-| **Order** | The Roslyn transition comes before any new language feature. The lifetime pass is the next compiler milestone after that transition, and it is written once against the Roslyn tree. |
-
-Also settled, and recorded so they are not relitigated in the backlog:
-
-- **Cycles are permitted.** This is a closed architectural decision. The compiler warns with `ARC3100` when a cycle is visible in the type graph. It does not reject the program. If the developer, or a library they use, ignores that warning, the cycle leaks, its finalisers do not run, and that leak is the documented result. There is no backup collector. `WeakReference<T>` is how a cycle is broken.
-- Finalisation is part of the compatibility profile, specified in the [memory model](memory-model.md#finalisation). It runs synchronously when the last strong reference is released, on that thread, before the object's children are released, derived class before base. Lexical scope is not the trigger. `Dispose()` stays separate. Resurrection and `GC.ReRegisterForFinalize` are rejected. `GC.Collect` and `GC.WaitForPendingFinalizers` are documented no-ops with info `ARC3200`. The compiler may delete a redundant retain, and it must not move a finaliser past that last release.
-- The current compiler does not accept `~T()` yet. The Roslyn transition keeps rejecting it. Implementing the contract is the milestone immediately after the lifetime pass.
-- Threads, atomic counts, exceptions, closures, and `async` wait until the lifetime pass exists. Nullable annotations stay ignored until then.
-- `arc_report()` stays a verification aid. The harness depends on the `live=` line.
-- Stack allocation of a value that never escapes is a later optimisation. It is not part of the lifetime pass, and it must not become a second object representation for values that do escape.
-
-## Sequencing
-
-1. **Roslyn transition.** Port the behaviour the compiler has today. No new language feature until `tools\verify.ps1` is green on that path.
-2. **Lifetime pass.** Single header, ARC only where the proof fails. Destruction stays at the last strong release, so a later finaliser has a fixed point to run.
-3. **Deterministic finalisers.** Implement the [finalisation contract](memory-model.md#finalisation). This is the first language feature after the Roslyn transition, and it follows the lifetime pass.
-4. **The compatibility target below.** Sections 1 to 7 are how that matrix is reached. They are not a plan to implement the whole language or the whole framework. Features that create a hidden lifetime (delegates, `async`, exceptions) are lowered once, under the hybrid rules and the finalisation contract.
-
-## Compatibility target
-
-This is the language and library surface ArcSharp is aiming at. It is not what the compiler accepts today. The [language reference](language-reference.md) is the current subset. Anything outside this table is not scheduled. In particular, the rest of the .NET base class library, a tracing collector, and CLR resurrection are not targets.
-
-| Feature | Target | Today | Notes |
-|---|---|---|---|
-| Classes, structs, records | Full | Classes, and structs with the restrictions in section 1. Records are rejected. | Ordinary C# semantics. A record lowers to a class with the members C# would synthesise. |
-| Interfaces, inheritance | Full | Single inheritance, interfaces, virtual tables, and interface tables. A base interface list is parsed and then ignored. | Native dispatch tables. |
-| Generics | Full | Monomorphisation, basic inference, and constraints for the supported subset. | Each closed type is specialised ahead of time. A single shared representation for all type arguments is not the plan. |
-| Delegates, events | Full | Rejected (`ARC3001`). | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
-| LINQ | Full | Rejected. | A library written against delegates, generics, and the collections in section 3. Query syntax lowers to those methods. |
-| `async` / `await` | Full | Rejected. | A state machine whose suspended locals follow the ARC rules. Continuations stay on the releasing thread until the threading protocol in section 2 exists. |
-| Exceptions | Full | Rejected. | Every unwind path releases live references. Finalisation and `using` both run on that path. |
-| `IDisposable` / `using` | Full | `using` runs `Dispose()` on the normal completion path, then releases the resource. No exception unwinding yet. | Disposal stays an explicit call. A finaliser does not call `Dispose()`. |
-| `Span<T>` / `ref` struct | Full | A `ref` that would outlive the call is rejected. | The existing escape rules stay. Stack storage does not, by itself, keep a heap object alive. |
-| `WeakReference<T>` | Full | Supported, including as a field, a local, and a generic argument. | The native weak reference. It does not keep the target alive. |
-| Reflection | Limited | Not implemented. | Metadata the compiler has already emitted: type names, bases, fields, and methods. Not a runtime that can load or invoke arbitrary framework code. |
-| `dynamic` | Limited | Rejected. | Accepted only when the call binds to a member this compiler can already lower. The CLR runtime binder is not a target. |
-| `unsafe` / pointers | Limited | Rejected. | A pointer into an ARC object must not outlive the lifetime the compiler has proved for that object. Pointer arithmetic does not bypass a retain, a release, or a finaliser. |
-
-Enums, indexers, the remaining struct forms, and checked arithmetic stay in section 1. They are part of making the full rows ordinary C#, not a second target. Threads stay outside this table, gated on the ownership protocol in section 2.
+| **Representation** | Every heap object keeps the header it has today (`strong`, `weak`, `TypeInfo*`). A proved lifetime skips `arc_retain` and `arc_release`. An escape, such as a store into a field or an array, or a call the analysis cannot see, uses the count on that same object. Identity does not change, so reference equality and weak references stay valid. There is no second, headerless layout. |
+| **Frontend** | Roslyn parses and binds. The hand-written lexer, parser, and name resolution are removed once the Roslyn path passes the same verification. Layout, vtables, the lifetime pass, the LLVM emitter, and the C runtime stay ArcSharp's. |
+| **Intermediate representation** | The ownership tree between Roslyn and LLVM. Stock CIL is not a stage in the pipeline. CIL emitted for the CLR no longer records which store escapes or when the last strong reference dies, and both the lifetime pass and deterministic finalisation need those facts. Consuming precompiled assemblies is not a target. |
+| **Cycles** | Closed. `ARC3100` warns when a cycle is visible in the type graph. The program still compiles. If the developer, or a library they use, ignores the warning, the cycle leaks and its finalisers do not run. There is no backup collector. `WeakReference<T>` is how a cycle is broken. |
+| **Finalisation** | Specified in the [memory model](memory-model.md#finalisation). A finaliser runs synchronously when the last strong reference is released, on that thread, derived class before base, before the object's children are released. Lexical scope is not the trigger. `Dispose()` stays separate. Resurrection and `GC.ReRegisterForFinalize` are rejected. `GC.Collect` and `GC.WaitForPendingFinalizers` are documented no-ops. The compiler may delete a redundant retain, and it must not move a finaliser past the last release. |
+| **Order** | Roslyn first, before any new language feature. The lifetime pass and finalisers come before the language features that create hidden lifetimes: exceptions, delegates, iterators, and `async`. |
 
 ---
 
-## Already landed
+## Compatibility target
+
+This is the language and library surface ArcSharp is aiming at. It is not what
+the compiler accepts today; the [language reference](language-reference.md)
+describes that. Anything outside this table is not scheduled. In particular,
+the rest of the .NET base class library, a tracing collector, CLR resurrection,
+and threads are not targets.
+
+| Feature | Target | Today | Milestone | Notes |
+|---|---|---|---|---|
+| Classes, structs, records | Full | Classes, and structs with restrictions. Records are rejected. | [M6](#m6--ordinary-c) | Ordinary C# semantics, including the member forms, statements, and operators that come with them. |
+| Interfaces, inheritance | Full | Single inheritance, interfaces, virtual tables, and interface tables. A base interface list is parsed and then ignored. | [M6](#m6--ordinary-c) | Native dispatch tables. |
+| Generics | Full | Monomorphisation, basic inference, and constraints for a subset. | [M6](#m6--ordinary-c) | Each closed type is specialised ahead of time. A single shared representation for all type arguments is not the plan. |
+| Delegates, events | Full | Rejected (`ARC3001`). | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
+| LINQ | Full | Rejected. | [M8](#m8--core-library-iterators-and-linq) | A library written against delegates, generics, iterators, and the core collections. Query syntax lowers to those methods. |
+| `async` / `await` | Full | Rejected. | [M9](#m9--async-and-await) | A state machine whose suspended locals follow the ARC rules. Continuations run on one thread. |
+| Exceptions | Full | Rejected. | [M5](#m5--exceptions) | Every unwind path releases live references. Finalisation and `using` both run on that path. |
+| `IDisposable` / `using` | Full | `using` runs `Dispose()` on the normal completion path, then releases the resource. | [M5](#m5--exceptions) | Disposal stays an explicit call. A finaliser does not call `Dispose()`. |
+| `Span<T>` / `ref` struct | Full | A `ref` that would outlive the call is rejected. | [M10](#m10--spans-and-ref-structs) | Roslyn's escape rules stay. Stack storage does not, by itself, keep a heap object alive. |
+| `WeakReference<T>` | Full | Supported, including as a field, a local, and a generic argument. | [Shipped](#where-we-are) | The native weak reference. It does not keep the target alive. |
+| Reflection | Limited | Not implemented. | [M11](#m11--limited-surfaces) | Metadata the compiler has already emitted: type names, bases, fields, and methods. Not a runtime that loads or invokes arbitrary framework code. |
+| `dynamic` | Limited | Rejected. | [M11](#m11--limited-surfaces) | Accepted only when the call binds to a member this compiler can already lower. The CLR runtime binder is not a target. |
+| `unsafe` / pointers | Limited | Rejected. | [M11](#m11--limited-surfaces) | A pointer into an ARC object must not outlive the lifetime the compiler has proved for that object. Pointer arithmetic does not bypass a retain, a release, or a finaliser. |
+
+---
+
+## Rules for every milestone
+
+- Work on one milestone at a time. A milestone is done when every item in its
+  definition of done is true, `tools\verify.ps1` has been run, and the actual
+  results are recorded in [Verification](verification.md).
+- Each step leaves `tools\verify.ps1` passing. A step that cannot keep it green
+  is too large and is split.
+- When a construct becomes supported, its `ARC3001` entry is removed from the
+  compiler and from the analyser in the same change, with the analyser tests
+  updated. A stale analyser that rejects a supported construct is a bug.
+- Every new behaviour lands with a sample that checks its observable output and
+  its `[arc]` accounting. A must-fail sample checks every new rejection.
+- The documents named in [`AGENTS.md`](../AGENTS.md) are updated in the same
+  change as the behaviour they describe.
+- Diagnostic codes are never renumbered or reused.
+- The ARC invariants in [`AGENTS.md`](../AGENTS.md) hold at every step. Over-
+  retaining is acceptable. An unbalanced retain or release is not.
+
+---
+
+## Where we are
 
 Each of these was run on Windows x64 with `tools\verify.ps1`. There is no CI
 yet. The latest results are in [Verification](verification.md).
 
-- Diagnostics with stable ids and severities, `-Werror`, and multi-file compilation.
-- Definite-assignment warnings (`ARC2100`).
-- `using` / `IDisposable`, structs with reference fields, `ref` / `out` / `in`, properties, and the integer and floating numeric tower, with the restrictions in section 1.
-- `ARC3001` and `ARC3100`, shared with the Roslyn analyser.
-- Generics for the supported subset: monomorphisation, basic inference, and constraints.
-- Interior-reference owner pins for the duration of a call, and the opt-in leak report.
-
-Owner lifetimes for the managed references that exist today are in place. Allocation stacks in the leak report still wait on debug info.
-
-Status key in the tables below: **[done]** means it has shipped. Unmarked items are planned, and language items are blocked on the Roslyn transition.
+- The pipeline from C# to LLVM IR to a native executable, with ARC accounting
+  on every run.
+- Classes, single inheritance, interfaces, virtual tables, and interface tables.
+- Generics for a subset: monomorphisation, basic inference, and constraints.
+- Structs with reference fields, `ref` / `out` / `in` parameters, and instance
+  and static auto-properties, with the restrictions in the language reference.
+- The integer and floating-point numeric types, strings, single-dimensional
+  arrays, `is`, `as`, and checked array covariance.
+- `using` with an explicit `Dispose()` on the normal completion path.
+- `WeakReference<T>`, the `ARC3100` cycle warning, and the opt-in leak report
+  (`ARC_LEAKS=1`).
+- Interior-reference owner pins for the duration of a call.
+- Diagnostics with stable codes and severities, `-Werror`, definite-assignment
+  warnings (`ARC2100`), and `ARC3001` for unsupported constructs.
+- A Roslyn analyser that reports `ARC3001` and `ARC3100` in an ordinary
+  `dotnet build`, with a shared catalogue and xUnit tests.
+- Multi-file compilation.
 
 ---
 
-## Roslyn transition
+## M1 — Roslyn frontend
 
-This is the current milestone. New language work does not start until it has landed.
+**This is the current milestone.**
 
-The aim is a compiler that accepts today's subset, rejects the same programs with the same diagnostic codes, and produces the same ARC accounting. The emitter still retains every read. The lifetime pass is the following milestone, so this one must not change memory behaviour.
+**Goal.** The same compiler, with Roslyn at the front. It accepts today's
+subset, rejects the same programs, and produces the same output and the same
+ARC accounting. Memory behaviour does not change.
 
-| Step | What changes |
+**Steps.**
+
+1. Reference `Microsoft.CodeAnalysis.CSharp` from the compiler, on the same 4.8
+   line the analyser already uses. This is the one package the compiler is
+   allowed to take. The shared catalogue in `analyzers/ArcSharp.Diagnostics`
+   stays free of Roslyn.
+2. Add a reference assembly that describes exactly the surface ArcSharp
+   implements: `object`, `string`, the numeric types, arrays,
+   `Console.Write` and `WriteLine`, `WeakReference<T>`, and a parameterless
+   `Dispose()`. Roslyn binds against that assembly, not the real base class
+   library, so it cannot accept an API this compiler cannot lower.
+3. Add the Roslyn path beside the existing one, behind a temporary driver
+   option, so the two can be compared on every sample.
+4. Lower declarations from Roslyn's symbols into the existing symbols: types,
+   fields, methods, properties, and generic instantiations. Layout, virtual
+   tables, and interface tables do not change.
+5. Lower method bodies from `IOperation` into the existing bound tree. Every
+   operation kind the lowering does not handle reports `ARC3001`. An unhandled
+   node must not become an empty block or a silent null, which is the main
+   pitfall of the current binder.
+6. Reach diagnostic parity. ArcSharp rules keep their codes (`ARC2xxx`,
+   `ARC3001`, `ARC3100`). Syntax and name errors now come from Roslyn with its
+   own `CS` codes. The must-fail samples that expected a lexer or parser code
+   are updated to expect the Roslyn error. The retired `ARC0xxx` and `ARC1xxx`
+   codes stay reserved and are not reused.
+7. Make the Roslyn path the default. Delete the hand-written lexer, parser, and
+   name resolution, and remove the temporary option. Definite assignment, cycle
+   analysis, layout, and emission stay until each has a checked replacement.
+
+**Done when.**
+
+- `tools\verify.ps1` passes with only the Roslyn path in the compiler.
+- Every sample prints the same output with the same `alloc`, `dead`, `freed`,
+  and `live` counts as before the milestone.
+- Every must-fail sample fails with its documented code.
+- The analyser tests still pass.
+- The architecture, contributor guide, diagnostics, and language reference
+  describe the Roslyn pipeline.
+
+**Not in this milestone.** New language features, changes to retain and
+release, and `~T()`. A parser defect that disappears because Roslyn binds
+correctly, such as namespace identity, is fixed here and removed from the
+known issues. Ignored field initialisers are an emitter defect and wait for M2.
+
+---
+
+## M2 — Verification baseline
+
+**Goal.** Tests strong enough that the lifetime pass cannot introduce a double
+release, a use after free, or a moved destruction without the harness noticing.
+
+**Steps.**
+
+1. Add a runtime checking mode that traps a retain or a release of a dead
+   object, a strong count that goes below zero, and a weak load of freed
+   memory. The harness runs every sample with it switched on.
+2. Add an opt-in statistics line with the number of retains and releases each
+   run performs. It is separate from the `[arc]` accounting line, whose format
+   the harness depends on. Record the baseline for every sample.
+3. Check exact `alloc`, `dead`, and `freed` counts for every sample, not only
+   `live`.
+4. Add samples that observe destruction points directly: a `WeakReference<T>`
+   that must turn `false` at a specific statement. These become the evidence
+   that later milestones keep destruction in place.
+5. Fix the known emitter defects, each with a sample: ignored field
+   initialisers, abstract methods that produce invalid IR, string `==`
+   comparing references, get-only auto-properties that cannot be assigned,
+   inherited auto-property lookup, rejected small integer casts, and reference
+   temporaries on short-circuit paths. Defects that need exceptions, such as an
+   unchecked class cast, wait for M5.
+6. Run `tools\verify.ps1` in CI on Windows x64.
+
+**Done when.** The checking mode is on in the harness and every sample passes
+under it. The retain and release baseline is in Verification. The fixed
+defects are gone from the known issues. CI runs the harness on every change.
+
+---
+
+## M3 — Lifetime pass
+
+**Goal.** ARC only where a lifetime cannot be proved, on the existing header.
+
+**Steps.**
+
+1. Classify every reference value in the ownership tree as owned, borrowed, or
+   shared. The emitter ignores the classification at first. A debug option
+   prints it. Output does not change.
+2. Skip the retain and release for a borrowed read of a local or parameter
+   whose slot cannot change during the use: repeated reads, a call receiver,
+   and an argument the callee does not store.
+3. Turn the last use of a local into a move when it is stored, passed, or
+   returned, instead of a retain and a later release.
+4. Let an object that is created and never escapes skip count traffic until its
+   proved end. That end is exactly where its last strong release used to be,
+   so destruction does not move.
+5. Treat everything else as shared. A store to a field or an array, a call the
+   pass cannot see, or a capture is the promotion point. The pass never guesses.
+
+**Done when.** Every sample prints the same output with the same accounting.
+The checking mode reports nothing. Every destruction-point sample from M2 sees
+the object die at the same statement. Retain and release counts are below the
+M2 baseline, and the actual numbers are recorded in Verification.
+
+**Not in this milestone.** Stack allocation, a headerless object, and LLVM
+optimisation passes. Which cases the first version must prove is decided at
+the start of this milestone. Because the fallback is ARC, a weak first proof
+is safe.
+
+---
+
+## M4 — Deterministic finalisers
+
+**Goal.** The [finalisation contract](memory-model.md#finalisation), in the
+compiler and the runtime.
+
+**Steps.**
+
+1. Accept `~T()`. Remove it from `ARC3001` in the compiler and the analyser.
+2. Generate the finaliser chain, derived class before base, at the start of the
+   generated teardown, before strong fields are released.
+3. Replace the recursive release in the runtime with a worklist, so a very deep
+   object graph cannot overflow the stack.
+4. Support `GC.SuppressFinalize` with a flag on the object. The flag skips the
+   user finaliser only. Where the flag sits in the header is decided in this
+   step, and the emitter, the runtime, and the layout documentation change
+   together.
+5. Reject resurrection. A finaliser that stores `this`, or a reference derived
+   from it, into a longer-lived location is a compile-time error. A strong
+   count above zero when the finaliser returns aborts the process.
+6. Accept `GC.Collect` and `GC.WaitForPendingFinalizers` as no-ops that report
+   info `ARC3200`. Reject `GC.ReRegisterForFinalize`.
+
+**Done when.** Samples show the derived-then-base order, children still
+reachable inside the finaliser, a graph deep enough to overflow the old
+recursive release, `GC.SuppressFinalize`, and a cycle whose finaliser never
+runs. A must-fail sample shows resurrection is rejected. The "Compiler today"
+column of the memory model matches the compiler.
+
+**Not in this milestone.** A finaliser cannot throw yet, because `throw` is
+not accepted. The report-and-continue policy for finaliser exceptions lands in
+M5.
+
+---
+
+## M5 — Exceptions
+
+**Goal.** `try`, `catch`, `finally`, and `throw`, with deterministic ARC
+cleanup on every unwind path.
+
+**Steps.**
+
+1. Add a minimal `Exception` hierarchy to the reference surface.
+2. Emit Windows structured exception handling through LLVM. Every cleanup scope
+   becomes a landing pad that releases live temporaries and locals, so a
+   release that reaches zero still finalises on the unwind path.
+3. Run `using` cleanup and `finally` on both the normal and the unwind path.
+4. Teach the lifetime pass that an unwind edge is a use. A value whose lifetime
+   ends on that edge is destroyed there.
+5. Turn the runtime checks into exceptions: an index out of range, an invalid
+   class cast, a null dereference, and division by zero. An unhandled exception
+   prints a message, prints the accounting line, and exits with a documented
+   code.
+6. A finaliser that throws is reported, and teardown continues. The exception
+   does not reach the code that released the last reference.
+
+**Done when.** Samples show cleanup on every unwind path with `live=0`, each
+runtime exception caught, `using` disposal during unwinding, and a throwing
+finaliser. The differences from .NET in the language reference are updated.
+
+---
+
+## M6 — Ordinary C#
+
+**Goal.** The full rows for classes, structs, records, interfaces, and
+generics: the member forms, statements, and operators that ordinary C# code
+uses. Each step below ships on its own.
+
+**Steps.**
+
+1. Statements: `foreach` over arrays, `switch`, `break`, `continue`,
+   `do`/`while`, `++`, `--`, and compound assignment.
+2. Operators: bitwise operators and shifts, operator overloading, and
+   `checked` / `unchecked`, which uses the exceptions from M5.
+3. Member forms: `const`, `readonly`, static constructors, nested types,
+   expression-bodied members, accessor bodies, `params`, and optional and named
+   arguments.
+4. Enums and indexers.
+5. The remaining struct forms: arrays of structs, struct returns, static struct
+   fields, by-value struct parameters, struct-typed properties,
+   `virtual`/`override` and interfaces on structs, and printing a struct.
+6. Base interface lists, records with the members C# synthesises, and pattern
+   matching.
+7. The rest of generics: virtual and interface generic methods, variance, full
+   inference, and the remaining constraint forms.
+8. Nullable value types and `decimal`.
+
+**Done when.** Each step has samples and must-fail samples, its `ARC3001`
+entries are gone from the compiler and the analyser, and the language reference
+lists it as supported.
+
+---
+
+## M7 — Delegates, lambdas, and events
+
+**Goal.** Delegates, lambdas, local functions, and events, with captures as
+ordinary ARC objects.
+
+**Steps.**
+
+1. Lower a lambda or local function to a closure object that owns its captured
+   variables. Strong captures stay strong, including `this`.
+2. Add single and multicast delegates that hold a target reference and a
+   function pointer.
+3. Add events as delegate fields with `add` and `remove` accessors.
+4. Teach the lifetime pass that a capture is an escape unless it is proved not
+   to outlive the frame.
+5. Extend `ARC3100` to the cycles a capture makes visible, such as a handler
+   that captures `this` and is stored in a field of the same object. The
+   program stays legal.
+
+**Done when.** Samples cover capture, multicast invocation, event subscription
+and removal, and a capture cycle that warns and leaks as documented.
+
+---
+
+## M8 — Core library, iterators, and LINQ
+
+**Goal.** The libraries named in the compatibility target, written in ArcSharp
+C# against the ARC rules. The rest of the .NET base class library is not built.
+
+**Steps.**
+
+1. Create `corelib/`, compiled with every program, and extend the reference
+   surface from M1 to match it.
+2. Strings: the common methods, `ToString()` for the primitive types,
+   formatting, and `StringBuilder`.
+3. Collections: `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`,
+   `Queue<T>`, and `Stack<T>`.
+4. Iterators: `yield`, `IEnumerable<T>`, and `foreach` over any enumerable.
+   The state machine is an ARC object. Its lowering is the base for `async` in
+   M9.
+5. LINQ to objects, in method syntax and query syntax.
+
+**Done when.** Every API has a lifetime test that checks its accounting. LINQ
+samples run with `live=0`. Reusing an algorithm from the base class library is
+allowed only when it does not assume a garbage collector.
+
+**Decided at the start of this milestone.** String representation. Today a
+string is UTF-8 and `Length` counts bytes. Full compatibility needs UTF-16 code
+units for `Length`, indexing, and `char`.
+
+---
+
+## M9 — `async` and `await`
+
+**Goal.** `async` and `await` on one thread, with ARC-managed state machines.
+
+**Steps.**
+
+1. Lower `async` methods to a state machine object, reusing the iterator
+   lowering from M8. Suspended locals are fields of that object and follow the
+   ARC rules.
+2. Add a minimal `Task`, `Task<T>`, and a single-threaded scheduler.
+3. Carry exceptions across `await`, using M5.
+4. Add `IAsyncDisposable` and `await using`, kept separate from finalisation.
+
+**Done when.** Samples show suspension and resumption, exceptions across
+`await`, and `await using`, each with `live=0`.
+
+---
+
+## M10 — Spans and ref structs
+
+**Goal.** `Span<T>`, `ReadOnlySpan<T>`, `ref` structs, ref locals, ref returns,
+and `stackalloc`.
+
+**Steps.**
+
+1. Accept Roslyn's ref-safety rules as the escape rules for spans and ref
+   structs.
+2. Extend the owner pin from one call to the proved scope of the span or the
+   ref local, so the heap object behind it stays alive for that whole scope.
+3. Add `Memory<T>` as an ordinary struct that holds a strong reference to its
+   owner.
+
+**Done when.** Samples show a span over an array, a ref local, and a ref
+return. Must-fail samples show each escape Roslyn or the lifetime pass rejects.
+
+---
+
+## M11 — Limited surfaces
+
+**Goal.** The three limited rows of the compatibility target.
+
+**Steps.**
+
+1. Reflection: `typeof`, `GetType()`, and a `Type` with its name, base, fields,
+   and methods, from metadata the compiler already emits.
+2. `dynamic`, accepted only when the call binds to a member this compiler can
+   already lower. Every other use is rejected.
+3. `unsafe` code, pointers, and `fixed`. A pointer into an ARC object is pinned
+   by a retain for the pointer's proved scope. Pointer arithmetic cannot skip a
+   retain, a release, or a finaliser.
+
+**Done when.** Each surface has samples, and every unsupported use has a
+must-fail sample.
+
+---
+
+## M12 — Production backend
+
+**Goal.** A backend fit for real programs, without changing the memory
+contract.
+
+**Steps.**
+
+1. Build modules through the LLVM C API (LLVMSharp) instead of text, and emit
+   object files directly.
+2. Emit debug information, including PDB files on Windows, and allocation
+   stacks in the leak report.
+3. Run the LLVM optimisation pipeline. `arc_retain` and `arc_release` stay
+   opaque side effects, so LLVM cannot move or delete a release the lifetime
+   pass kept. That release is what runs a finaliser.
+4. Make the accounting counters and `arc_report()` part of debug and
+   verification builds only.
+5. Verify the Linux x64 target that the compiler can already emit.
+
+**Done when.** The harness passes with optimisation switched on. A debugger
+steps through a sample on Windows. The Linux x64 run is recorded in
+Verification.
+
+---
+
+## M13 — Tooling
+
+**Goal.** ArcSharp as an ordinary project experience.
+
+**Steps.**
+
+1. Ship `ArcSharp.Sdk`, used in place of `Microsoft.NET.Sdk`, so `dotnet build`
+   and `dotnet run` invoke ArcSharp and produce the native executable.
+2. Publish the analyser package, with its rules generated from the shared
+   catalogue.
+3. Add incremental compilation.
+4. Add a language server on Roslyn's workspace.
+
+**Done when.** A new project builds and runs through `dotnet run`, and the
+analyser package matches the compiler release it describes.
+
+---
+
+## Not scheduled
+
+These are outside the compatibility target, or closed. They are recorded so
+they are not reopened by accident.
+
+| Item | Status |
 |---|---|
-| **Dependency** | Reference `Microsoft.CodeAnalysis.CSharp` from the compiler, at the same 4.8 line the analyser already uses. This is the NuGet dependency the compiler is allowed to take. The shared catalogue stays in `analyzers/ArcSharp.Diagnostics`, which has no Roslyn reference. |
-| **Reference surface** | Give Roslyn metadata for the types ArcSharp actually implements (`object`, `string`, the numeric types, arrays, `Console`, `WeakReference<T>`, and a parameterless `Dispose()`). Binding against the real BCL would accept APIs this compiler cannot lower. |
-| **Lowering** | Drive the driver from Roslyn's syntax tree and semantic model. Lower `IOperation` into the existing bound tree, which remains the ownership representation. Do not emit CIL and read it back. Keep the emitter, the runtime, layouts, and vtables. |
-| **Diagnostics** | Roslyn reports parse errors. The negative samples still expect ArcSharp codes (`ARC3001`, `ARC3100`, `ARC2015`, and the others the harness checks). Re-emit those codes from the lowering. |
-| **Removal** | When `tools\verify.ps1` passes on this path, delete the hand-written lexer, parser, and name-resolution binder. Keep definite assignment, cycle analysis, layout, and emission until each has a checked replacement. |
-
-During this milestone:
-
-- Do not add a language feature to the hand-written parser. That work would be thrown away.
-- A defect in the emitter or the runtime may still be fixed. That code survives the port.
-- A defect in the lexer or the parser is fixed in the Roslyn lowering instead.
+| Threads, atomic reference counts, and `ARC3300` | Outside the target. They need a verified concurrent ownership protocol, not only atomic counts. `async` continuations stay on one thread until then. |
+| A tracing or backup cycle collector | Closed. See [Decisions](#decisions). |
+| CIL as an input or an intermediate stage | Closed. See [Decisions](#decisions). |
+| A headerless object layout | Closed. See [Decisions](#decisions). |
+| Stack allocation of a non-escaping object | Possible after M12, as an optimisation on the same object identity. Not planned. |
+| A global weak table and a non-zeroing `unowned` reference | Not decided. `WeakReference<T>` meets the target as it is. |
+| The rest of the .NET base class library | Outside the target. |
+| 32-bit, ARM, and big-endian targets | Outside the target. They need the 8-byte slot assumption removed. |
 
 ---
 
-## 1. Language — close the feature gap
+## Appendix: diagnostics policy
 
-This backlog is how the [compatibility target](#compatibility-target) is reached. It resumes after the [Roslyn transition](#roslyn-transition), the lifetime pass, and deterministic finalisers. Do not implement these rows on the hand-written parser, and do not add language or library surface that the target leaves out.
+The compiler and the Roslyn analyser report the same `ARC3xxx` rules from one
+shared catalogue, `analyzers/ArcSharp.Diagnostics`. The analyser lets a
+developer see the problems inside an ordinary `dotnet build`. The compiler
+still reports them itself, because the analyser is optional and can be older
+than the compiler.
 
-| Feature                                            | Priority         | Decision / approach                                                                                                                                                                                                                                                                                                                                                                                                                               |
-|----------------------------------------------------|------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Generics**                                       | P0 **[done]**    | Implemented **monomorphisation** for the supported subset. Every closed generic type (`Box<int>`, `Pair<string>`) gets its own `TypeInfo`, vtable, and `__deinit`. The current "uniform 8-byte slot" object model stays; generic value-type arguments are specialised by size. Generic methods are instantiated at call sites. Constraint checking (`where T : class`, `where T : IFoo`) is enforced in the binder. |
-| **Exception handling (`try`/`catch`/`finally`)**   | P0               | Use **DWARF on Linux/macOS** and **SEH/Table-based exception handling on Windows**. Every cleanup scope (statement temps + locals) must emit a landing pad that releases live reference-typed locals and temporaries. `finally` blocks are inlined on both normal and unwind paths. `catch` requires RTTI (Section 5). `Exception` becomes the root class of a small exception hierarchy.                                                         |
-| **Closures / lambdas**                             | P1               | Lower lambdas to **heap-allocated closure objects** that capture variables by reference into fields. ARC owns the closure. Preserve ordinary C# strong captures, including `this`; do not add weak-by-default captures or non-standard syntax. The cycle policy is already settled: strong captures stay strong, `ARC3100` warns, and `WeakReference<T>` is how a cycle is broken. There is no backup collector. Anonymous methods and expression-bodied lambdas (`x => x + 1`) are parsed and bound to delegate-compatible types.                                                                    |
-| **`async`/`await`**                                | P1               | Lower to a **state machine class** (like Roslyn). The compiler generates `IAsyncStateMachine`-like machinery manually. ARC retain/release must be threaded across suspension points: every captured local/reference field in the state machine is managed, and the state machine itself is ARC-owned. Initially target single-threaded continuations; thread-pool dispatch is P2.                                                                 |
-| **Value types with reference fields**              | P0 **[done]**    | Struct code generation copies value fields and **retains** reference fields; assignment and teardown **release** them. Struct methods receive `this` by managed reference. The remaining restrictions (arrays of structs, struct return values, static struct fields, by-value struct parameters, struct-typed properties, printing, `virtual`/`override` members, interfaces, and self-containment) are reported as `ARC3001`. |
-| **Properties, indexers, events, delegates, enums** | P0/P1            | **Properties** (P0) **[done]** lower to backing field + getter/setter method calls; auto-properties are implemented. **Indexers** (P1) are instance properties with parameters. **Events** (P1) are multicast delegate fields with `add`/`remove` accessors. **Delegates** (P1) are single/multicast function objects carrying a target reference and function pointer. **Enums** (P1) are integer-typed with named constants.                    |
-| **`using` / `IDisposable`**                        | P0 **[done]**    | Lowered to deterministic ARC cleanup without full `try`/`finally`: the resource value is owned by a scoped local, `Dispose()` runs at scope exit (block completion and `return`, innermost first when nested) guarded against `null`, then the resource is released. `IDisposable` is structural — any type with a parameterless instance `void Dispose()` method can be a resource; an interface-typed resource dispatches through the itable. When exception handling lands, unwinding will adopt the same cleanup paths (Section 1). |
-| **`ref` / `out` / `in` parameters**                | P0 **[done]**    | Generalised to **managed references** (`T&`) in the bound tree and LLVM IR. `ref` allows read/write aliasing of variables/fields/elements; `in` is read-only `ref`; `out` supports both existing-lvalue and declaration-via-inference (`out var` in `WeakReference<T>.TryGetTarget`). Reference-typed `ref` parameters do not change ownership — they borrow the slot.                                                                            |
-| **Full numeric tower**                             | P0/P1 **[done]** | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong` added. `float`/`double` already present. Integer conversions (`trunc`/`sext`/`zext`) and signed/unsigned arithmetic/comparisons operational. `decimal` remains emulated (omitted until BCL). Overflow-checked arithmetic (`checked`/`unchecked`, Section 5) is follow-up work.                                                                                                                     |
-
-### Concrete first steps for language features
-
-1. **Add `byte`, `short`, `float`, `double` literals and operators** — **[done]** lexer, binder, emitter, runtime formatters.
-2. **Generalise `out` to `ref`/`in`** — **[done]** introduced `ByRefArgExpr`/`BoundByRefArg`, by-ref parameter emission via `T*` / `T&`.
-3. **Properties** — **[done]** added `PropertyDecl` to AST/binder; lowered auto-properties to private backing field + `get_Prop`/`set_Prop` methods.
-4. **`using`** — **[done]** added `UsingStmt` to the parser; lowered to
-   scoped-ownership cleanup: dispose at scope exit and on `return`, then
-   release (`ARC2011` when the resource is not disposable).
-5. **Generics** — **[done]** generic parameter lists, syntax substitution, cached
-   closed types and methods, basic inference, and constraints. Remaining work:
-   virtual/interface generic methods, variance, full overload inference, and
-   additional constraint forms.
-
----
-
-## 2. Memory model — hybrid lifetimes
-
-The Roslyn transition keeps today's rule: every evaluated reference is retained to +1. This section is the milestone after that transition. It does not change the object header.
-
-| Change                          | Priority | Decision / approach                                                                                                                                                                                                                                                                                                                                                                                                           |
-|---------------------------------|----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Interior-reference owner lifetimes** | P0 **[done]** | A `ref`/`out`/`in` argument, and a struct method's `this`, retains the heap object that contains the slot until the call returns, including when the callee drops every named reference to that owner. Stack slots, static fields, and borrows from the caller are not pinned. A weak slot is rejected (`ARC2015`). An `in` parameter's own storage is read-only. Ref locals, ref returns, and any other reference that would outlive the call are rejected (`ARC3001`) until a proof covers that longer lifetime. Stack confinement alone does not keep heap storage alive. |
-| **Lifetime pass** | P0       | After the Roslyn transition, add a dataflow pass over the bound tree. A reference whose lifetime is proved is borrowed: the emitter skips `arc_retain` and `arc_release` for it, and destroys it at the end of that lifetime. Anything the pass cannot prove is shared: the existing +1 rules apply, and the object dies when its strong count reaches zero. A store to a field or array, or a call the pass cannot see, is the promotion point, and it uses the count already in the header. There is one layout. The pass must keep `live=0` on the existing samples. It may retain less. It must not release twice. It must not move a destruction past the release that drops the last strong reference, because that release is the finalisation point in the [memory model](memory-model.md#finalisation). Stack allocation and a headerless unique object are out of scope. |
-| **Deterministic finalisers** | P0       | Immediately after the lifetime pass. Accept `~T()` and run it when the strong count reaches zero, on the releasing thread, derived class before base, before strong children are released. Then release those children through a worklist, not by recursion. `GC.SuppressFinalize` skips the user finaliser only. Reject resurrection and `GC.ReRegisterForFinalize`. `GC.Collect` and `GC.WaitForPendingFinalizers` compile as no-ops and report `ARC3200`. A finaliser exception is reported and does not stop teardown or propagate to the releaser. The generated field release in `__deinit` stays, and it runs after the user finaliser. `~T()` stays rejected through the Roslyn transition. |
-| **Atomic refcounts**            | P1       | After the lifetime pass, and only as part of the threading protocol. Make `ObjHeader.strong` and `ObjHeader.weak` atomic (`_Atomic intptr_t` / `stdatomic.h`, lowered to `lock xadd`/`cmpxchg` on x64). Provide a compile-time or runtime flag to disable atomics for single-threaded programs. Atomic ops are used for all retain/release. Atomic counts alone do not protect a shared pointer between loading and retaining it. Require a verified protocol for shared-reference acquisition, weak promotion, memory ordering, synchronisation, and reclamation before threading; an atomic swap alone is insufficient.                                                                                                          |
-| **Runtime leak detector**      | P0 **[done]** | Opt-in with `ARC_LEAKS=1`. The runtime records each allocation without retaining it, then prints survivors with type, address, strong and weak counts, and a source site (`file:line`, or `<runtime>` for strings built inside the runtime). Static roots are distinguished from unreachable objects, and unreachable strong cycles are printed from emitted field and root metadata, including references nested in structs and reference arrays. The report does not reclaim objects. Allocation stacks remain future work, once debug info exists (section 4). |
-| **Backup cycle collector**      | —        | Closed: there will not be one. A statically visible cycle is warning `ARC3100`, and the program still compiles. A cycle that the developer or a library leaves in place leaks, including its finalisers. `WeakReference<T>` is the break. The leak report documents what survived. |
-| **Optimised weak table**        | P1       | Replace per-object weak-field slots with a **global weak table** keyed by target object address. On dealloc, zero all weak entries pointing to the object. This avoids the current "weak count keeps the allocation alive" design and enables safer `WeakReference<T>` semantics at scale.                                                                                                                                    |
-
-### Concrete first steps for ARC safety and efficiency
-
-1. Add the debug allocation registry and survivor reports, then field/root metadata and cycle diagnostics. Verify against deliberate cycle samples and static-root cases. — **[done]** `ARC_LEAKS=1`, checked by `samples/leaks.cs`, `cycle_strong`, `cycle_struct`, and `cycle_weak`.
-2. Audit existing managed-reference calls, including owner reassignment during a call. Add regression cases and define owner tracking and escape rules before expanding support. — **[done]** `samples/owners.cs` reads a field, an array element, a nested reference, and a struct `this` after the callee clears the named owner. `ref_escape` and `ref_owner` must fail.
-3. Cycle policy is a closed decision: `ARC3100` warns, the cycle is legal, and an ignored warning leaks. `WeakReference<T>` breaks the edge. There is no collector to add later. Closures, events, and async still preserve C# strong captures when they arrive, after the lifetime pass.
-4. After the lifetime pass, define the concurrent ownership protocol, then add `ARC_ATOMIC` and verify shared-reference acquisition, weak promotion, synchronisation, and reclamation before enabling threads.
-5. Design the weak-table API (`arc_weak_table_add`, `arc_weak_table_remove`, `arc_weak_table_get`) and switch `WeakReference<T>` lowering to use it.
-6. After the Roslyn transition, implement the lifetime pass in section 2 before LLVM emission. A borrowed value still needs a proved owner for its whole lifetime. Skipping a retain because a value is not stored is not that proof.
-
----
-
-## 3. Runtime / BCL — standard library
-
-This resumes after the lifetime pass. New library APIs should be written against the hybrid rules, with a lifetime test for each one.
-
-| Component                   | Priority | Decision / approach                                                                                                                                                                                                                                                                    |
-|-----------------------------|----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Collections**             | P0       | Implement `List<T>`, `Dictionary<K,V>`, `HashSet<T>`, `Stack<T>`, `Queue<T>` as ArcSharp-source libraries under ARC rules. Internally use arrays (`T[]`) and weak/strong references as appropriate. These live in a new `corelib/` directory and are compiled together with user code. |
-| **String operations**       | P0       | Expand the runtime string API: `Substring`, `Split`, `IndexOf`, `Replace`, `ToString()` for primitives, culture-invariant comparisons. Eventually implement `StringBuilder`.                                                                                                           |
-| **I/O**                     | P1       | File streams, networking, and a `Stream` abstraction. Initially shim to C stdio / sockets; later provide pure ArcSharp wrappers.                                                                                                                                                       |
-| **`Span<T>` / `Memory<T>`** | P1       | `Span<T>` is a stack-only `byref`-like struct; heap-backed spans require proven owner lifetimes or hidden owner retention, beyond pointer + length. `Memory<T>` is an ordinary struct retaining its backing owner. Gate both on owner-lifetime tracking (section 2). This is critical for high-performance code and interop.                                                                             |
-| **Reflection / `Type`**     | P1       | Embed enough metadata in `TypeInfo` to support `typeof(T)`, `GetType()`, basic `is`/`as`, and enumeration of fields/methods. Keep it minimal; full reflection is expensive under ARC.                                                                                                  |
-| **Threading**               | P1       | Only after the concurrent ownership protocol in section 2 is specified and verified, add `Thread`, `Task<T>`, `Monitor`/`lock`, and basic synchronisation. Define ARC lifetime rules for cross-thread sharing (prefer move/unique ownership; shared references require atomic counts).                                                           |
-
-### Strategy choice
-
-**Re-implement the libraries named in the compatibility target in ArcSharp C#**, with a thin C runtime shim for platform calls such as the console. Collections and LINQ are in that target. The rest of the .NET base class library is not. Reuse a BCL algorithm only when it does not assume a garbage collector, and give each API a lifetime test.
-
-### Concrete first steps for BCL
-
-1. Create `corelib/` directory with `System.String`, `System.Collections.Generic.List<T>`, `System.IDisposable`.
-2. Extend `runtime/arc_runtime.c` with string helpers (`arc_str_substring`, `arc_str_index_of`, etc.).
-3. Add `typeof(T)` intrinsic and runtime type metadata in `TypeInfo`.
-
----
-
-## 4. Code generation — production backend
-
-This waits until the Roslyn transition and the lifetime pass have landed. Until then, textual LLVM IR and clang remain the verified backend. The lifetime pass is written against that emitter.
-
-| Change                                          | Priority | Decision / approach                                                                                                                                                                                                                                                                           |
-|-------------------------------------------------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **LLVM C API / object emission**                | P0       | Replace textual IR string-building with the **LLVMSharp / libLLVM C API** to construct modules and emit `.ll`, `.bc`, or `.obj` directly. Eliminate the `llc` subprocess dependency.                                                                                                          |
-| **Debug info (DWARF/PDB)**                      | P0       | Emit `llvm.dbg.cu`, `DILocation`, `DILocalVariable`, and line tables so source-level debugging works in WinDbg/VS Code/lldb. Map ArcSharp source files, lines, and columns to LLVM debug metadata.                                                                                            |
-| **Optimisation pipeline**                       | P0       | Run the standard LLVM pass pipeline (`PassBuilder` `-O2`/`-O3`) on generated modules. `arc_retain` and `arc_release` stay side effects. LLVM may delete a redundant load. It must not reorder or delete a release the lifetime pass kept, because that release is what runs a destructor.                                                                                   |
-| **Multi-target**                                | P1       | Parameterise target triple and data layout: Windows (`x86_64-pc-windows-msvc`), Linux (`x86_64-pc-linux-gnu`), macOS (`x86_64-apple-macosx` / `arm64-apple-macosx`). Use LLVM target machine for code generation. ABI lowering (Windows x64 vs System V AMD64) must match calling convention. |
-| **Remove `arc_report()` accounting in release** | P1       | Make accounting conditional on a debug/verification build. In release, omit `arc_report()` and the global counters to remove overhead and binary bloat.                                                                                                                                       |
-
-### Concrete first steps for code generation
-
-1. Spike LLVMSharp integration: build a module in memory and emit `.ll` text, then `.obj`.
-2. Add `DILocation` emission tied to `Node.Line`/`Column` in the bound tree.
-3. Add `--opt` / `-O` CLI flag that runs the LLVM pass pipeline.
-4. Refactor target selection into a `TargetInfo` record (triple, data layout, ABI).
-
----
-
-## 5. Correctness & safety
-
-| Gap                     | Priority      | Decision / approach                                                                                                                                                                                                                                                                                                                                                 |
-|-------------------------|---------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Null safety**         | P0            | Enforce the existing `?` annotation. Reference types without `?` are non-null; assign `null` only to nullable types. Add definite-assignment checks (below) to ensure non-null locals are initialised.                                                                                                                                                              |
-| **Type soundness**      | P0 **[done]** | Runtime type checks for `is`/`as` implemented via `arc_is_instance()` with parent-chain walk in `TypeInfo`. Interface downcasts unchecked at runtime; array casts verify `TypeInfo` compatibility via `arc_array_store_check`. `TypeInfo` extended with `base` pointer.                                                                                             |
-| **Array covariance**    | P0 **[done]** | Arrays store their element `TypeInfo` at offset 32 (offset 40 for elements). Every store to a reference-type array performs a runtime assignability check via `arc_array_store_check` that throws `ArrayTypeMismatchException` on mismatch. Value-type arrays are invariant. `S[]` → `T[]` binder conversion allowed when `S` is reference-compatible with `T`.     |
-| **Definite assignment** | P0 **[done]** | A conservative structured flow pass (`DefiniteAssignment.cs`) tracks whether each local is definitely assigned before use, with completes-normally tracking so `if`/loop joins don't false-positive. Currently reports `ARC2100` as a warning (promotable via `-Werror`); tightening to a hard error and extending to `out`-parameter exit paths is follow-up work. |
-| **Overflow checking**   | P1            | Support `checked`/`unchecked` contexts. Integer arithmetic in `checked` emits `llvm.sadd.with.overflow` / `smul.with.overflow` and branches to an overflow exception. `unchecked` uses plain LLVM integer ops.                                                                                                                                                      |
-| **Known defects**       | P0            | Fix the defects recorded in [Known issues](language-reference.md#known-issues): ignored field initialisers, abstract methods that produce invalid IR, unchecked class casts, reference equality for `string ==`, inherited auto-property lookup, and reference temporaries in short-circuit expressions. Each fix lands with a sample that checks its output. |
-| **Verification suite**  | P0 **[partly done]** | The harness now runs 30 samples, 4 leak-report checks, 25 must-fail diagnostics, 3 command-line checks, 4 cycle checks, and 68 analyser unit tests. Grow to a **thousands-of-tests conformance suite**. Adopt or write a test harness that runs ArcSharp output against expected output and ARC accounting. Target the C# spec incrementally; include negative tests (must-fail diagnostics), which the harness supports. |
-
-### Concrete first steps for correctness
-
-1. Implement definite-assignment analysis in the binder. — **[done]**
-2. Add `is`/`as` operators and runtime type-check helper in `arc_runtime.c`. — **[done]**
-3. Add array-store type check for reference-element arrays. — **[done]**
-4. Set up an xUnit/NUnit test project with golden-file tests for samples and targeted unit tests for binder diagnostics. — **[partly done]** the analyser has an xUnit project; binder and golden-file tests remain.
-
----
-
-## 6. Tooling
-
-| Tool                        | Priority             | Decision / approach                                                                                                                                                                                                           |
-|-----------------------------|----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Incremental compilation** | P1                   | Cache per-type and per-method compiled LLVM modules on disk keyed by source hash. Only recompile changed files/methods.                                                                                                       |
-| **Multi-file projects**     | P0 **[done]**        | The driver accepts several `.cs` inputs and the binder merges their type declarations before binding. The compiler keeps taking that explicit file list. A consumer project discovers the files through the SDK below.                                                                        |
-| **Consumer SDK**            | P1                   | Ship a NuGet SDK, `ArcSharp.Sdk`, that a project uses in place of `Microsoft.NET.Sdk`. MSBuild still globs the `.cs` files and tracks which inputs are out of date. The SDK replaces `CoreCompile` and `Run`, so `dotnet build` and `dotnet run` invoke ArcSharp and produce the native executable. Replacing `csc` through `CscToolPath` does not fit: the `Csc` task writes a Roslyn response file, and the rest of `Microsoft.NET.Sdk` expects a managed assembly. `PackageReference` stays out until ArcSharp can consume a referenced assembly. |
-| **Diagnostic quality**      | P0 **[partly done]** | Error codes (`ARC0001`…) and severity levels (error/warning/info) are implemented, with error-count gating and `-Werror`. Richer messages with source snippets and column tracking through every phase remain follow-up work. |
-| **IDE integration (LSP)**   | P2                   | After the Roslyn transition, implement a **Language Server Protocol** server on Roslyn's workspace: document symbols, diagnostics, go-to-definition, and autocomplete.                                                                 |
-
-### Concrete first steps for tooling
-
-1. Accept multiple input files in the driver. — **[done]** The remaining consumption step is `ArcSharp.Sdk`: a NuGet package whose targets replace `CoreCompile` and `Run` and pass `@(Compile)` to the compiler.
-2. Introduce a `DiagnosticDescriptor` with id/severity/message-template.
-3. Expose a `--verify` mode that compares output and ARC accounting against expected files.
-4. Begin an LSP server project that hosts the lexer/parser/binder as a library.
-
----
-
-## 7. Roslyn analyser — warnings inside an ordinary C# project
-
-### Decision
-
-Ship both, with one shared set of rules. A NuGet analyser is not a replacement
-for compiler diagnostics, and compiler diagnostics are not a replacement for
-the analyser.
-
-ArcSharp source is meant to stay valid C#, so the program people actually
-edit is built by Roslyn (`dotnet build`, Visual Studio, VS Code). That build
-accepts `try`, `async`, lambdas, and a strong parent/child cycle,
-then produces a program ArcSharp will reject, ignore, or leak. The author
-finds out only later, by running `arcsharp`. An analyser referenced from the
-project reports the same problems as squiggles and `dotnet build` warnings,
-before anyone invokes the native compiler.
-
-The compiler still has to report them itself. The analyser is optional, it can
-be missing or older than the compiler, and only the compiler knows what this
-version will lower. Before this rule the compiler was the weaker of the two at
-this job: an unhandled statement became an empty block and an unhandled
-expression became an error value with no diagnostic
-([`AGENTS.md`](../AGENTS.md)). A strong cycle compiled cleanly and leaked, which
-`samples/cycle_strong.cs` records on purpose. Warning only in an analyser would
-leave `arcsharp` itself silent, so both report `ARC3001` and `ARC3100`.
-
-So the rule catalogue lives in one place, and both tools emit it. The
-analyser package version matches the compiler it describes. When a feature in
-this roadmap is marked **[done]**, the matching rule is removed or downgraded
-in the same release. A stale analyser that warns about a feature the compiler
-now accepts is a bug.
-
-Cycles are a closed decision, not an open follow-up. `ARC3100` warns when the
-type graph can form one. The program is still legal. `WeakReference<T>` breaks
-the edge. If the developer or a library ignores the warning, the objects leak
-and their finalisers do not run. That leak is the architecture, not a defect
-waiting for a collector.
-
-### What each rule is for
-
-| Rule | Severity | Where it fires | Why |
+| Rule | Severity | Status | Purpose |
 |---|---|---|---|
-| **Unsupported construct** | Error (`ARC3001` and following) | Compiler and analyser — implemented | Virtual/interface generic methods, `try`/`catch`/`finally`, `throw`, `async`/`await`, `yield`, lambdas, local functions, delegates, events, enums, indexers, records, pattern matching, LINQ, `lock`, `unsafe`, `stackalloc`, bitwise operators, `params`, optional and named arguments, and the struct restrictions. The compiler must stop dropping these on the floor. |
-| **Possible strong cycle** | Warning (`ARC3100`) | Compiler and analyser — implemented | A set of classes whose strong fields reach each other can form a runtime cycle. ARC leaks it. `WeakReference<T>` and the legacy `weak` modifier are not edges in this graph. |
-| **ARC and CLR disagree** | Info (`ARC3200`) | Planned | `GC.Collect` and `GC.WaitForPendingFinalizers` are no-ops. `GC.KeepAlive` and a `TryGetTarget` check that assumes a future collection are the other cases. The code compiles on both runtimes, and the timing does not match. Resurrection and `GC.ReRegisterForFinalize` are errors, not this info. |
-| **Threads** | Warning (`ARC3300`) | Planned | `Thread`, `Task`, `lock`, and other shared cross-thread use. Refcounts are non-atomic, so this is unsound rather than merely unimplemented. |
+| Unsupported construct (`ARC3001`) | Error | Implemented | A construct this compiler cannot lower. Each milestone removes the entries it makes supported. |
+| Possible strong cycle (`ARC3100`) | Warning | Implemented | Classes whose strong fields can reach each other. The program stays legal, and an ignored warning leaks. `WeakReference<T>` is not an edge. |
+| ARC and CLR disagree (`ARC3200`) | Info | M4 | `GC.Collect` and `GC.WaitForPendingFinalizers` are no-ops. `GC.KeepAlive`, and a `TryGetTarget` check that waits for a collection, behave differently. |
+| Threads (`ARC3300`) | Warning | Reserved | Cross-thread sharing, which the non-atomic counts make unsound. Not scheduled. |
 
-`ARC3xxx` is the shared catalogue. Do not spend those codes on ordinary
-lexer, parser, or binder errors.
-
-Unsupported constructs are errors because the program cannot mean what it says
-under ArcSharp. A possible cycle is a warning because the program is legal and
-sometimes intentional: `cycle_strong` documents the leak, and the harness does
-not pass `-Werror`. A tree or a singly linked list is also legal and does not
-leak. The warning has to say so.
+`ARC3xxx` is reserved for this catalogue. Ordinary compiler errors use the code
+range of the stage that reports them.
 
 ### What a cycle warning can and cannot know
 
 The check looks at declared field types, including arrays of a class, static
 fields, and class references reached through a struct field. It builds a graph
 of strong edges and warns once per strongly connected component. That is a
-statement about *types*, not about a particular object graph.
+statement about types, not about one object graph.
 
-It will warn on a real back-edge (`Parent.child` and `Child.owner` both
-strong), which is the leak in `cycle_strong`. It will also warn on a binary
-tree (`Node` with `left` and `right`) and on a singly linked list (`Node`
-with `next`), which do not leak unless some instance is later wired into a
-loop. Those are false positives. The message says that, and the suppression is
-a normal `#pragma warning disable ARC3100` or `[SuppressMessage]` on the type.
-There is no separate "tree" heuristic: a self-typed field is exactly how both
-a tree and a doubly linked list are written, and a doubly linked list does
-leak.
+It warns on a real back-edge, such as `Parent.child` and `Child.owner` both
+strong, which is the leak in `cycle_strong`. It also warns on a binary tree and
+on a singly linked list, which do not leak unless an instance is later wired
+into a loop. Those are false positives. The suppression is an ordinary
+`#pragma warning disable ARC3100` or `[SuppressMessage]` on the type. There is
+no separate tree heuristic, because a self-typed field is how both a tree and a
+doubly linked list are written, and a doubly linked list does leak.
 
-It will miss a cycle that is only visible at run time: a field typed as
-`object` or as a base class, a collection that does not exist yet, or two
-objects assigned into each other through locals with no long-lived field. No
-static check proves that a cycle will happen, and no static check proves that
-one will not. The runtime accounting line remains the evidence.
+It misses a cycle that only exists at run time: a field typed as `object` or as
+a base class, or two objects assigned into each other through locals. No static
+check proves that a cycle will happen, and none proves that it will not. The
+accounting line and the leak report are the evidence.
 
-A suggested fix belongs in the message ("make the back-edge a
-`WeakReference<T>`"), not in an automatic rewrite. Changing a field to
-`WeakReference<T>` changes its type and every reader. A code fix can come
-after the diagnostic is trustworthy.
-
-### Package
-
-`analyzers/ArcSharp.Analyzers`, packaged as a Roslyn analyser. A consumer adds
-it with a `PackageReference` and an analyser asset, and keeps building with
-the normal SDK. It does not invoke the native toolchain and it does not change
-the program's semantics.
-
-The analyser project is separate and references the Roslyn analyser packages,
-because an analyser cannot be loaded without them. Target `netstandard2.0` so
-Visual Studio and `dotnet build` can both load it.
-
-The shared catalogue, `analyzers/ArcSharp.Diagnostics`, stays free of Roslyn
-so the id, severity, and message cannot drift, and so the compiler can
-reference it without taking an analyser dependency. The compiler itself gains
-`Microsoft.CodeAnalysis.CSharp` in the Roslyn transition, and no other package
-unless this roadmap says so. This section is the specification of the
-analyser; the implementation should not grow a further copy of its own.
-
-### Concrete first steps
-
-1. Make the binder and the parser report `ARC3001` (and a distinct code per
-   construct once the messages settle) for syntax they currently drop. A
-   sample that must fail to compile belongs next to `tools/verify.ps1`; the
-   harness today only checks programs that run. — **[done]**
-2. Add `ARC3100` in the binder from the strong-field graph. `cycle_strong`
-   should warn; `cycle_weakref` and `cycle_weak` should not. Keep the warning
-   out of `-Werror` for those samples. — **[done]**
-3. Create `ArcSharp.Analyzers` with the unsupported-syntax rules and
-   `ARC3100`, plus unit tests that feed Roslyn a small compilation. This can
-   be the repository's first test project; it does not need clang. — **[done]**
-4. Publish the package only when its rule list is generated from the same
-   catalogue as the compiler.
-
----
-
-## Suggested execution order
-
-1. **Correctness, language subset, diagnostics, generics, and the ARC safety foundation** — **[done]**. See [Already landed](#already-landed).
-2. **Roslyn transition** — the current milestone. Port today's subset. Keep the same samples, diagnostic codes, and `live=` counts. Remove the hand-written lexer, parser, and name resolution only after `tools\verify.ps1` passes. No new language feature during this step.
-3. **Lifetime pass** — section 2. One header. ARC where the proof fails. Destruction stays at the last strong release. Textual LLVM IR and clang remain the verified backend.
-4. **Deterministic finalisers** — the [finalisation contract](memory-model.md#finalisation). `~T()` stays rejected until this step.
-5. **Language backlog** — section 1, on the Roslyn frontend, under the hybrid rules and that contract. Exceptions, closures, and `async` come after finalisers.
-6. **Backend upgrade** — LLVM C API, debug info, optimisations, multi-target. LLVM must treat `arc_retain` and `arc_release` as side effects, so a later pass cannot reorder or delete a release the lifetime pass kept. That release is what runs a finaliser.
-7. **Minimal corelib, then concurrency** — ARC-aware APIs. Spans wait on a lifetime proof longer than one call. Threads wait on the concurrent ownership protocol.
-8. **Tooling** — `ArcSharp.Sdk`, incremental build, and a language service. The language service should sit on Roslyn's workspace once the frontend has moved.
-
----
-
-## Files touched by this roadmap
-
-- The compiler project file — `Microsoft.CodeAnalysis.CSharp` during the Roslyn transition.
-- A reference assembly for the supported surface — new, consumed by Roslyn and not by the real BCL.
-- `src/Driver/Compilation.cs` — host Roslyn and lower `IOperation` into the bound tree.
-- `src/Lexing/` and `src/Syntax/` — frozen, then removed when the Roslyn path is verified.
-- `src/Binding/` — name resolution moves to Roslyn. Layout, vtables, definite assignment, and cycle analysis remain until replaced.
-- `src/CodeGen/Emitter.cs` — unchanged ARC rules through the transition. The lifetime pass then skips proved retains and releases.
-- `runtime/arc_runtime.c` — the header stays through the Roslyn transition. Finalisers add a suppress flag, a non-recursive release worklist, and the user-finaliser call before field release. Later: atomics, the weak table, and string helpers. No cycle collector.
-- `corelib/` — new ArcSharp standard library, after the lifetime pass.
-- `tests/` — conformance suite (planned).
-- `analyzers/ArcSharp.Diagnostics/` — shared `ARC3xxx` ids and messages.
-- `analyzers/ArcSharp.Analyzers/` — Roslyn analyser for ordinary `dotnet build` (section 7). It does not become the compiler.
-- `analyzers/ArcSharp.Analyzers.Tests/` — xUnit tests for the analyser.
-- `sdk/ArcSharp.Sdk/` — NuGet SDK a consumer uses in place of `Microsoft.NET.Sdk` (section 6).
+The suggested fix belongs in the message, which is to make the back-edge a
+`WeakReference<T>`. It is not an automatic rewrite, because changing a field's
+type changes every reader.

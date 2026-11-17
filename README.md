@@ -124,7 +124,7 @@ profile. It is not a collector dropped into the CLR.
 | [Diagnostics](docs/diagnostics.md) | Every error and warning code |
 | [Troubleshooting](docs/troubleshooting.md) | Build failures, crashes, and leaks |
 | [Architecture](docs/architecture.md) | Compiler internals, object layout, and the ARC rules |
-| [Roadmap](docs/roadmap.md) | Roslyn frontend first, then hybrid lifetimes, then the language backlog |
+| [Roadmap](docs/roadmap.md) | Thirteen milestones, in order: the Roslyn frontend, a verification baseline, the lifetime pass, finalisers, exceptions, and then the rest of the compatibility target |
 
 Contributors should read [`AGENTS.md`](AGENTS.md), which lists the invariants
 the compiler and runtime depend on.

@@ -205,7 +205,7 @@ What runs today, for every class, is a generated teardown. It releases strong
 reference fields and drops struct fields when the strong count reaches zero.
 It is not a user finaliser, and there is no `~T()` body in it. The compiler
 still rejects a finaliser. The contract above is the semantics that teardown
-will grow into. It is specified in the [Roadmap](roadmap.md#2-memory-model--hybrid-lifetimes).
+will grow into. It is scheduled in [M4](roadmap.md#m4--deterministic-finalisers) of the Roadmap.
 
 ## Why cycles leak
 
@@ -416,8 +416,9 @@ builds two unreachable cycles.
 
 Reference counts are updated without atomic instructions, so ArcSharp is safe
 only for single-threaded programs. Threads are not supported, and sharing
-objects between threads would corrupt the counts. Atomic counts are on the
-[Roadmap](roadmap.md#2-memory-model--hybrid-lifetimes).
+objects between threads would corrupt the counts. Threads are outside the
+compatibility target and are listed under
+[Not scheduled](roadmap.md#not-scheduled) in the Roadmap.
 
 ## Managed references
 
@@ -466,7 +467,7 @@ Every read of a reference into a local or temporary increments its count, and
 the matching release decrements it later. This is the compiler's behaviour
 today. It is simple to prove, and it does more work than the planned model.
 
-The [lifetime pass](roadmap.md#2-memory-model--hybrid-lifetimes) will skip a
+The [lifetime pass](roadmap.md#m3--lifetime-pass) will skip a
 retain and its release when it can prove the lifetime, and it will keep using
 the count everywhere else. The object header does not change. A value that
 escapes into a field, an array, or a call the compiler cannot see stays

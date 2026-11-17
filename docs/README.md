@@ -30,7 +30,7 @@ before you rely on it for anything beyond experiments.
 | Document | What it covers |
 |---|---|
 | [Architecture](architecture.md) | The pipeline as it is today, the object layout, the ARC rules, and the decisions that bound the direction |
-| [Roadmap](roadmap.md) | Roslyn first, then hybrid lifetimes, then the compatibility target. That target is a subset of C# and the libraries, not the whole framework |
+| [Roadmap](roadmap.md) | Thirteen milestones from today's compiler to the end goal, one at a time: Roslyn first, then a verification baseline, the lifetime pass, finalisers, and the rest of the compatibility target. That target is a subset of C# and the libraries, not the whole framework |
 | [Verification](verification.md) | The test harness and the results of the latest recorded run |
 | [`analyzers/`](../analyzers/) | The Roslyn analyser, the shared `ARC3xxx` catalogue, and their xUnit tests |
 | [`AGENTS.md`](../AGENTS.md) | Contributor guide: the invariants you must preserve and the change checklist |

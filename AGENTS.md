@@ -208,16 +208,17 @@ These rules are what keep every sample at `live=0`. They are described in
   releases each strong reference field and clears each weak field.
   `arc_release` calls it when the strong count reaches zero. This is generated
   teardown, not a C# finaliser. `~T()` stays rejected until the finalisation
-  milestone in `docs/roadmap.md`. When that lands, the user finaliser runs
+  milestone (M4 in `docs/roadmap.md`). When that lands, the user finaliser runs
   before those field releases, on the releasing thread, and a worklist replaces
   the recursive release. Do not implement `~T()` on the current parser.
 - **Counts are non-atomic and the model is single-threaded.** Do not introduce
-  threads or shared state without the atomic-refcount work from the roadmap.
+  threads or shared state. Threads are outside the compatibility target, and
+  the roadmap lists them as not scheduled.
 
 Over-retaining is acceptable; an unbalanced retain or release is not. Do not
 remove or skip retain and release pairs in the current emitter. The lifetime
 pass that will do that is a later milestone
-(`docs/roadmap.md` section 2). It keeps this header on every heap object and
+(M3 in `docs/roadmap.md`). It keeps this header on every heap object and
 uses ARC wherever it cannot prove a lifetime. It does not add a second layout.
 
 ### Object layout
@@ -396,13 +397,14 @@ for tools that look for it there.
 | `docs/diagnostics.md` | A diagnostic code or message is added or changed |
 | `docs/troubleshooting.md` | A new failure mode and its fix are known |
 | `docs/architecture.md` | The lowering of the subset (section 6), the unsupported list (section 7), the status table (section 8), the object model, or the ARC rules change |
-| `docs/roadmap.md` | A roadmap item is delivered (mark it **[done]**) or the plan changes |
+| `docs/roadmap.md` | A milestone is done (move it to "Where we are"), or the plan changes |
 | `docs/verification.md` | Samples are added or changed, or the harness is re-run with different results |
 
 Every example program in the user guides must compile and run with the
 current compiler. When you change behaviour, re-run the affected examples and
 update the output shown on the page. When a known issue is fixed, remove it
-from `docs/language-reference.md` and from the roadmap's known-defects row.
+from `docs/language-reference.md` and from the defect list in the roadmap's
+M2 milestone.
 
 Write prose in UK English (for example "finalisation", "behaviour",
 "recognise"). Keep established identifiers and external API names as they are
@@ -435,7 +437,8 @@ because the analyser is optional. `ARC3xxx` is the shared catalogue.
 The defects found outside this list, such as ignored field initialisers, are
 recorded in the known-issues table of `docs/language-reference.md`.
 
-See `docs/roadmap.md` for the priority and the planned design of each item.
+See `docs/roadmap.md` for the milestone that delivers each item and the order
+of the milestones.
 
 ## Git workflow
 
