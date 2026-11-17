@@ -237,6 +237,7 @@ try {
     Invoke-Sample charprint      0 "concat=B direct=A"          @("charprint")        # char prints as a character
     Invoke-Sample staticprop     0 "count=4"                    @("staticprop")       # static auto-property
     Invoke-Sample leaks          6 "leaks reported"             @("leaks")            # static root plus unreachable cycles; ARC_LEAKS report checked below
+    Invoke-Sample owners         0 "owners=4,7,5,6,5,2"         @("owners")           # interior refs stay valid when the callee drops the owner
 
     Write-Host "--- leak detector (ARC_LEAKS=1) ---"
     Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(
@@ -262,7 +263,7 @@ try {
     ) @("root=static")
     Invoke-LeakCheck cycle_weak 0 "done (weak cycle)" @("cycle_weak") @() @("\[arc\] survivor")
 
-    Write-Host "--- unsupported constructs must be rejected (ARC3001 / ARC0003 / ARC0004 / ARC2011 / ARC2012) ---"
+    Write-Host "--- unsupported constructs must be rejected (ARC3001 / ARC0003 / ARC0004 / ARC2011 / ARC2012 / ARC2015) ---"
     Invoke-MustFail break           "ARC3001" @("break")
     Invoke-MustFail try             "ARC3001" @("try")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
@@ -286,6 +287,8 @@ try {
     Invoke-MustFail using_bad       "ARC2011" @("using_bad")
     Invoke-MustFail bad_escape      "ARC0004" @("bad_escape")
     Invoke-MustFail abstract_new    "ARC2012" @("abstract_new")
+    Invoke-MustFail ref_escape      "ARC3001" @("ref_escape")
+    Invoke-MustFail ref_owner       "ARC2015" @("ref_owner")
 
     Write-Host "--- command line must report an error instead of crashing ---"
     Invoke-Usage missing_option "requires a value" @((Join-Path $root "samples/fib.cs"), "-o")
