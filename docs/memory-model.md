@@ -197,7 +197,7 @@ run. Breaking the cycle with `WeakReference<T>` is what allows finalisation.
 | Object resurrection | Unsupported. A store of `this` out of the finaliser is rejected. A strong count above zero when the finaliser returns aborts the process. | Not applicable yet. |
 | `GC.Collect` | Documented no-op, with info `ARC3200`. | Not in the supported library. |
 | `GC.WaitForPendingFinalizers` | Documented no-op, with info `ARC3200`. | Not in the supported library. |
-| `IDisposable` | Separate from finalisation. `Dispose()` runs only when the program calls it, including through `using`. | `using` is supported, with the limits in the [language reference](language-reference.md#using-and-idisposable). `Dispose` is structural. There is no library `IDisposable` type yet. |
+| `IDisposable` | Separate from finalisation. `Dispose()` runs only when the program calls it, including through `using`. | `using` is supported, with the limits in the [language reference](language-reference.md#using-and-idisposable). `Dispose` is structural. The compiler has no library `IDisposable` type. The reference assembly declares one so the Roslyn frontend can bind `using`. |
 | `IAsyncDisposable` | The same separation. `await using` disposes at the end of the statement. It is not a finaliser. | Not supported. `async` is not implemented. |
 | `WeakReference<T>` | Does not keep the target alive. The allocation outlives the object only for weak bookkeeping. | Supported. |
 

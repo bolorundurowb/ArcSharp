@@ -10,7 +10,8 @@ compiles each sample in `samples/` to LLVM IR, uses `clang` to lower the IR and
 link it with `runtime/arc_runtime.c` into a native Windows x64 `.exe`
 (`x86_64-pc-windows-msvc`), runs it, and checks both program output **and** ARC
 accounting. It also compiles the must-fail samples, checks the `ARC3100` cycle
-warnings, and runs the analyser unit tests. The compiler can also emit the Linux
+warnings, runs the analyser unit tests, and checks the reference assembly
+surface. The compiler can also emit the Linux
 x64 triple (`x86_64-pc-linux-gnu`); the table below is a Windows x64 run. On
 Linux only the triple, data layout, and the C runtime build differ.
 
@@ -19,12 +20,13 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (30 samples, Windows x64, 17 November 2026)
+## Results (30 samples, Windows x64, 18 November 2026)
 
-`tools\verify.ps1` reported **67 passed, 0 failed** with the .NET 11.0.100 SDK:
+`tools\verify.ps1` reported **68 passed, 0 failed** with the .NET 11.0.100 SDK:
 30 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
-diagnostics, 3 command-line checks, 4 cycle checks, and one run of the analyser
-unit tests (68 cases). `live=0` means every object was reclaimed.
+diagnostics, 3 command-line checks, 4 cycle checks, one run of the analyser
+unit tests (68 cases), and one reference-surface check. `live=0` means every
+object was reclaimed.
 `numerics` and `byref` allocate nothing because they use only value types.
 `cycle_strong` and `cycle_struct` are the leaks the harness asserts on purpose.
 

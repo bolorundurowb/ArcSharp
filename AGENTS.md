@@ -101,6 +101,8 @@ how `tools/verify.ps1` captures both streams.
 | `src/Binding/CycleAnalysis.cs` | Strong-field graph and strongly connected components (warning `ARC3100`) |
 | `src/CodeGen/Emitter.cs` | Bound tree to LLVM IR, with every ARC operation woven in |
 | `runtime/arc_runtime.c` | Object header, retain and release, weak references, arrays, strings, type tests, console, accounting |
+| `ref/ArcSharp.References/` | Reference assembly for the Roslyn frontend. Not loaded by the compiler yet |
+| `ref/ArcSharp.References.Check/` | Checks what Roslyn accepts and rejects against that assembly |
 | `analyzers/ArcSharp.Diagnostics/` | Shared `ARC3xxx` ids and messages, with no Roslyn dependency |
 | `analyzers/ArcSharp.Analyzers/` | Roslyn analyser for `ARC3001` and `ARC3100` |
 | `analyzers/ArcSharp.Analyzers.Tests/` | xUnit tests that run the analyser over in-memory compilations |
@@ -112,8 +114,9 @@ how `tools/verify.ps1` captures both streams.
 | `README.md` | Landing page |
 | `docs/` | User guides, architecture, roadmap, verification results, and the logo (see "Documentation" below) |
 
-`ArcSharp.csproj` excludes `samples/**/*.cs` from compilation, so samples are
-never built as part of the compiler. Keep it that way.
+`ArcSharp.csproj` excludes `samples/**/*.cs`, `analyzers/**/*.cs`, and
+`ref/**/*.cs` from compilation, so those files are never built as part of the
+compiler. The reference assembly is its own project. Keep it that way.
 
 ## The compiler pipeline
 
@@ -305,7 +308,8 @@ checks two things:
 
 It also compiles the must-fail samples and checks the expected diagnostic code,
 checks that `ARC3100` appears for the leaking cycle samples and not for the
-broken ones, and runs the analyser's xUnit project with `dotnet test`.
+broken ones, runs the analyser's xUnit project with `dotnet test`, and runs
+`ref/ArcSharp.References.Check` against the reference assembly.
 
 Run it after every change to the compiler or the runtime. All samples must
 pass. `cycle_strong` and `cycle_struct` are expected to report `live=2`; those
@@ -366,10 +370,10 @@ Follow `.editorconfig`. The points that matter most:
 - Nullable reference types are enabled. Do not suppress warnings with `!`
   unless the value is guaranteed non-null.
 - Target C# 12 and .NET 11. Do not use C# syntax newer than C# 12.
-- The compiler has no NuGet dependencies today. The Roslyn transition in
-  `docs/roadmap.md` adds `Microsoft.CodeAnalysis.CSharp`, matched to the
-  analyser. Do not add any other package unless the roadmap says so.
-  LLVMSharp stays a later roadmap item, after the lifetime pass.
+- The compiler references `Microsoft.CodeAnalysis.CSharp` 4.8.0, the same
+  version as the analyser. Do not add any other package unless the roadmap
+  says so. LLVMSharp stays a later roadmap item, after the lifetime pass.
+  `analyzers/ArcSharp.Diagnostics` stays free of Roslyn.
 
 Match the surrounding code. The emitter builds IR with string interpolation
 through the helpers `Inst`, `Do`, `Term`, and `Lbl`. Use them, because they

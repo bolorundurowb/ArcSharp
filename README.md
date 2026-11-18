@@ -137,6 +137,7 @@ the compiler and runtime depend on.
 | `runtime/` | `arc_runtime.c`, the object model and ARC primitives |
 | `samples/` | Test programs, each run by the harness |
 | `analyzers/` | The Roslyn analyser, the shared `ARC3xxx` catalogue, and their xUnit tests |
+| `ref/` | The reference assembly the Roslyn frontend will bind against, and the check that guards its surface |
 | `tools/` | Build and verification scripts |
 | `docs/` | Documentation and the logo |
 
