@@ -142,7 +142,8 @@ ARC accounting. Memory behaviour does not change.
 1. Reference `Microsoft.CodeAnalysis.CSharp` from the compiler, on the same 4.8
    line the analyser already uses. This is the one package the compiler is
    allowed to take. The shared catalogue in `analyzers/ArcSharp.Diagnostics`
-   stays free of Roslyn.
+   stays free of Roslyn. **Landed.** The compiler project references 4.8.0.
+   Nothing calls Roslyn yet.
 2. Add a reference assembly that describes exactly the surface ArcSharp
    implements: `object`, `string`, the numeric types, arrays,
    `Console.Write` and `WriteLine`, `WeakReference<T>`, and a parameterless

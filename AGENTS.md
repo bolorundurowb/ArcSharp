@@ -366,10 +366,10 @@ Follow `.editorconfig`. The points that matter most:
 - Nullable reference types are enabled. Do not suppress warnings with `!`
   unless the value is guaranteed non-null.
 - Target C# 12 and .NET 11. Do not use C# syntax newer than C# 12.
-- The compiler has no NuGet dependencies today. The Roslyn transition in
-  `docs/roadmap.md` adds `Microsoft.CodeAnalysis.CSharp`, matched to the
-  analyser. Do not add any other package unless the roadmap says so.
-  LLVMSharp stays a later roadmap item, after the lifetime pass.
+- The compiler references `Microsoft.CodeAnalysis.CSharp` 4.8.0, the same
+  version as the analyser. Do not add any other package unless the roadmap
+  says so. LLVMSharp stays a later roadmap item, after the lifetime pass.
+  `analyzers/ArcSharp.Diagnostics` stays free of Roslyn.
 
 Match the surrounding code. The emitter builds IR with string interpolation
 through the helpers `Inst`, `Do`, `Term`, and `Lbl`. Use them, because they
