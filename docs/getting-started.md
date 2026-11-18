@@ -39,7 +39,10 @@ dotnet build -c Release
 ```
 
 The compiler is written to `bin/Release/net11.0/arcsharp.dll`. You run it with
-`dotnet`; there is no installed `arcsharp` command yet.
+`dotnet`; there is no installed `arcsharp` command yet. The build restores
+`Microsoft.CodeAnalysis.CSharp` 4.8.0 and also builds `ref/ArcSharp.References`,
+the library surface the Roslyn frontend will bind against. The compiler does
+not load that assembly yet.
 
 ## Write a program
 

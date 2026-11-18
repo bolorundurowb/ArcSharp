@@ -17,10 +17,15 @@
     <None Include="samples/**/*.cs" />
     <Compile Remove="analyzers/**/*.cs" />
     <None Include="analyzers/**/*.cs" />
+    <Compile Remove="ref/**/*.cs" />
+    <None Include="ref/**/*.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="analyzers/ArcSharp.Diagnostics/ArcSharp.Diagnostics.csproj" />
+    <ProjectReference Include="ref/ArcSharp.References/ArcSharp.References.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>

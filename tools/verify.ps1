@@ -208,6 +208,20 @@ try {
         $script:fail++
     }
 
+    Write-Host "--- reference surface ---"
+    $surfaceDll = Join-Path $root "ref/ArcSharp.References/bin/Release/net11.0/ArcSharp.References.dll"
+    $surfaceProject = Join-Path $root "ref/ArcSharp.References.Check/ArcSharp.References.Check.csproj"
+    $surface = Invoke-Captured @("run", "--project", $surfaceProject, "-c", "Release", "-v", "q", "--", $surfaceDll)
+    if ($surface.ExitCode -eq 0) {
+        Write-Host "PASS  reference surface"
+        $script:pass++
+    }
+    else {
+        Write-Host "FAIL  reference surface"
+        Write-Host ($surface.Out + $surface.Err)
+        $script:fail++
+    }
+
     Invoke-Sample generics 0 "generics PASS" @("generics", "generics_lib")
     Invoke-Sample generic_structs 0 "layout=20,30,99,40" @("generic_structs")
     Invoke-Sample inherit       0 "sum=42"                     @("inherit")

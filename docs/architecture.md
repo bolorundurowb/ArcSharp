@@ -99,6 +99,22 @@ lifetime pass require. The emitter, the object header, and the C runtime stay.
 That transition is the current milestone. Until it lands, the diagram above is
 the compiler.
 
+`ref/ArcSharp.References` is the library Roslyn will bind against instead of
+the .NET base class library. `dotnet build` builds it, and the compiler does
+not load it yet. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
+`System.Array`, global `Console`, `System.WeakReference<T>`, and
+`System.IDisposable`. `Console` is global so `Console.WriteLine` binds without
+`using System`, and `System.Console` does not exist. `String.Concat` and
+`Object.ToString` are public because Roslyn lowers `+` through them; a direct
+call is not a supported library feature. `string` has no equality operator, so
+`==` stays reference equality. `System.Enum` and `System.Attribute` exist
+because the C# compiler cannot emit the assembly without them, so an enum or a
+custom attribute binds here even though the language reference rejects both.
+A `using` on a type that has `Dispose()` but does not implement `IDisposable`
+is rejected; the hand-written compiler still treats `Dispose` as structural.
+The lowering has to close those gaps. Method bodies in the assembly are never
+run.
+
 Source layout:
 
 | Path                    | Responsibility                                                                                                            |
@@ -110,6 +126,8 @@ Source layout:
 | `src/Driver/`           | `Compilation` — orchestrates the stages and invokes `clang`, or `llc` and a linker                                        |
 | `src/Program.cs`        | Command-line parsing                                                                                                      |
 | `runtime/arc_runtime.c` | Object header, retain/release, weak table, type info, strings, arrays, console                                            |
+| `ref/ArcSharp.References/` | Library surface the Roslyn frontend binds against. Built with the compiler, and not loaded yet |
+| `ref/ArcSharp.References.Check/` | Snippets compiled against that assembly alone. The harness runs them |
 | `samples/`              | Example `.cs` programs used as tests                                                                                      |
 
 ---
@@ -457,7 +475,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
 | Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |
 | Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
-| Roslyn frontend and the lifetime pass | Planned. The compiler still lexes, parses, and retains every read. See the [Roadmap](roadmap.md). |
+| Roslyn frontend and the lifetime pass | The compiler references Roslyn 4.8.0 and builds `ref/ArcSharp.References`. It still lexes, parses, and retains every read. See the [Roadmap](roadmap.md). |
 
 See [Verification](verification.md) for the exact set of sample programs that
 compile and run, with ARC alloc/free accounting, and the

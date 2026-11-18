@@ -148,7 +148,13 @@ ARC accounting. Memory behaviour does not change.
    implements: `object`, `string`, the numeric types, arrays,
    `Console.Write` and `WriteLine`, `WeakReference<T>`, and a parameterless
    `Dispose()`. Roslyn binds against that assembly, not the real base class
-   library, so it cannot accept an API this compiler cannot lower.
+   library, so it cannot accept an API this compiler cannot lower. **Landed.**
+   The assembly is `ref/ArcSharp.References`. The compiler builds it and does
+   not load it yet. `String.Concat`, `Object.ToString`, `System.Enum`, and
+   `System.Attribute` are visible because the C# compiler requires them; a
+   direct use is still not part of the language surface. The architecture
+   describes those gaps. `tools/verify.ps1` runs
+   `ref/ArcSharp.References.Check` against the assembly.
 3. Add the Roslyn path beside the existing one, behind a temporary driver
    option, so the two can be compared on every sample.
 4. Lower declarations from Roslyn's symbols into the existing symbols: types,
