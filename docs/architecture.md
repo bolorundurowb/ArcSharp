@@ -102,9 +102,9 @@ the compiler.
 `ref/ArcSharp.References` is the library Roslyn will bind against instead of
 the .NET base class library. `dotnet build` builds it, and the compiler does
 not load it yet. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
-`System.Array`, global `Console`, `System.WeakReference<T>`, and
-`System.IDisposable`. `Console` is global so `Console.WriteLine` binds without
-`using System`, and `System.Console` does not exist. `String.Concat` and
+`System.Array`, `System.Console`, `System.WeakReference<T>`, and
+`System.IDisposable`. A call written `System.Console.WriteLine` binds to that
+type, and so does `Console.WriteLine` after `using System`. `String.Concat` and
 `Object.ToString` are public because Roslyn lowers `+` through them; a direct
 call is not a supported library feature. `string` has no equality operator, so
 `==` stays reference equality. `System.Enum` and `System.Attribute` exist

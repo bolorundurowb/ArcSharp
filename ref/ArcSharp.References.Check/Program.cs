@@ -59,6 +59,7 @@ return 0;
 static SurfaceCase[] Cases() =>
 [
     new("console", """
+        using System;
         class P
         {
             static void M()
@@ -145,6 +146,7 @@ static SurfaceCase[] Cases() =>
         }
         """),
     new("concat", """
+        using System;
         class P
         {
             static void M()
@@ -196,10 +198,24 @@ static SurfaceCase[] Cases() =>
         {
             static void M()
             {
-                System.Console.WriteLine("no");
+                System.Console.WriteLine("hi");
+                System.Console.Write(1);
+                System.String text = "hi";
+                System.Int32 n = text.Length;
+                System.Object value = text;
+                var weak = new System.WeakReference<System.String>(text);
+                System.String target;
+                weak.TryGetTarget(out target);
+                weak.SetTarget(target);
             }
         }
-        """, "CS0234"),
+        class R : System.IDisposable
+        {
+            public void Dispose()
+            {
+            }
+        }
+        """),
     new("to-string-visible", """
         class P
         {
@@ -272,6 +288,7 @@ static SurfaceCase[] Cases() =>
         }
         """, "CS1729"),
     new("print-class", """
+        using System;
         class Box
         {
         }

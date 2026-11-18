@@ -8,8 +8,9 @@
 // direct call is not a supported library feature. There is no equality
 // operator on String, so == stays reference equality.
 //
-// Console is in the global namespace. Programs call Console.Write and
-// Console.WriteLine without a using directive, and System.Console is not a type.
+// Every type in this assembly is in namespace System, including Console.
+// System.Console.WriteLine and a using System directive both bind. There is
+// no global Console.
 
 namespace System
 {
@@ -220,119 +221,119 @@ namespace System
     {
         void Dispose();
     }
-}
 
-public static class Console
-{
-    public static void Write()
+    public static class Console
     {
-    }
+        public static void Write()
+        {
+        }
 
-    public static void Write(string value)
-    {
-    }
+        public static void Write(string value)
+        {
+        }
 
-    public static void Write(bool value)
-    {
-    }
+        public static void Write(bool value)
+        {
+        }
 
-    public static void Write(char value)
-    {
-    }
+        public static void Write(char value)
+        {
+        }
 
-    public static void Write(byte value)
-    {
-    }
+        public static void Write(byte value)
+        {
+        }
 
-    public static void Write(sbyte value)
-    {
-    }
+        public static void Write(sbyte value)
+        {
+        }
 
-    public static void Write(short value)
-    {
-    }
+        public static void Write(short value)
+        {
+        }
 
-    public static void Write(ushort value)
-    {
-    }
+        public static void Write(ushort value)
+        {
+        }
 
-    public static void Write(int value)
-    {
-    }
+        public static void Write(int value)
+        {
+        }
 
-    public static void Write(uint value)
-    {
-    }
+        public static void Write(uint value)
+        {
+        }
 
-    public static void Write(long value)
-    {
-    }
+        public static void Write(long value)
+        {
+        }
 
-    public static void Write(ulong value)
-    {
-    }
+        public static void Write(ulong value)
+        {
+        }
 
-    public static void Write(float value)
-    {
-    }
+        public static void Write(float value)
+        {
+        }
 
-    public static void Write(double value)
-    {
-    }
+        public static void Write(double value)
+        {
+        }
 
-    public static void WriteLine()
-    {
-    }
+        public static void WriteLine()
+        {
+        }
 
-    public static void WriteLine(string value)
-    {
-    }
+        public static void WriteLine(string value)
+        {
+        }
 
-    public static void WriteLine(bool value)
-    {
-    }
+        public static void WriteLine(bool value)
+        {
+        }
 
-    public static void WriteLine(char value)
-    {
-    }
+        public static void WriteLine(char value)
+        {
+        }
 
-    public static void WriteLine(byte value)
-    {
-    }
+        public static void WriteLine(byte value)
+        {
+        }
 
-    public static void WriteLine(sbyte value)
-    {
-    }
+        public static void WriteLine(sbyte value)
+        {
+        }
 
-    public static void WriteLine(short value)
-    {
-    }
+        public static void WriteLine(short value)
+        {
+        }
 
-    public static void WriteLine(ushort value)
-    {
-    }
+        public static void WriteLine(ushort value)
+        {
+        }
 
-    public static void WriteLine(int value)
-    {
-    }
+        public static void WriteLine(int value)
+        {
+        }
 
-    public static void WriteLine(uint value)
-    {
-    }
+        public static void WriteLine(uint value)
+        {
+        }
 
-    public static void WriteLine(long value)
-    {
-    }
+        public static void WriteLine(long value)
+        {
+        }
 
-    public static void WriteLine(ulong value)
-    {
-    }
+        public static void WriteLine(ulong value)
+        {
+        }
 
-    public static void WriteLine(float value)
-    {
-    }
+        public static void WriteLine(float value)
+        {
+        }
 
-    public static void WriteLine(double value)
-    {
+        public static void WriteLine(double value)
+        {
+        }
     }
 }

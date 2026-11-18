@@ -386,8 +386,11 @@ directly:
 | `weak.TryGetTarget(out T target)` | Returns `true` and a strong reference if the target is alive |
 | `weak.SetTarget(target)` | |
 
-Write `Console`, not `System.Console`; the fully qualified name is reported as
-`unknown name 'System'`. Nothing else from .NET exists: no collections, no
+The compiler that runs today recognises the simple names and reports `System`
+as an unknown name, so `System.Console` does not compile yet. The reference
+assembly declares these types in `System`, so `System.Console.WriteLine`,
+`System.WeakReference<T>`, and the same calls after `using System` bind when
+Roslyn uses that assembly. Nothing else from .NET exists: no collections, no
 `Math`, no string methods, no `ToString()`, and no file or network access.
 
 ## Not supported
