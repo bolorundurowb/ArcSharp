@@ -34,6 +34,9 @@ public sealed class TypeSymbol
     public InterfaceDecl? InterfaceSyntax;
     public bool LayoutDone;
     public bool LayoutInProgress;
+    public bool IsAbstract;
+    public int DeclarationLine;
+    public string SourceFile = "";
     public string? GenericDefinition;
     public List<TypeSymbol> TypeArguments = [];
 
@@ -180,6 +183,7 @@ public sealed class MethodSymbol
     public bool IsAbstract;
     public bool IsConstructor;
     public int VtableSlot = -1;
+    public int DeclarationLine;
     public MethodDecl? Syntax;
 
     public string SignatureId

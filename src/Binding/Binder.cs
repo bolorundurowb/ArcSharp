@@ -110,7 +110,10 @@ public sealed partial class Binder
             var sym = new TypeSymbol
             {
                 Name = td.Name,
-                Kind = td switch { ClassDecl => TypeKind.Class, StructDecl => TypeKind.Struct, _ => TypeKind.Interface }
+                Kind = td switch { ClassDecl => TypeKind.Class, StructDecl => TypeKind.Struct, _ => TypeKind.Interface },
+                DeclarationLine = td.Line,
+                SourceFile = td.File,
+                IsAbstract = td is ClassDecl { IsAbstract: true }
             };
             if (td is ClassDecl cd)
             {
@@ -381,6 +384,7 @@ public sealed partial class Binder
                 IsOverride = md.IsOverride,
                 IsAbstract = md.IsAbstract,
                 IsConstructor = md.IsConstructor,
+                DeclarationLine = md.Line,
                 Syntax = md
             };
             var pi = 0;

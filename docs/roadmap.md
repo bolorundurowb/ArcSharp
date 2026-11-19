@@ -155,10 +155,12 @@ ARC accounting. Memory behaviour does not change.
    describes those gaps. `tools/verify.ps1` runs
    `ref/ArcSharp.References.Check` against the assembly.
 3. Add the Roslyn path beside the existing one, behind a temporary driver
-   option, so the two can be compared on every sample.
+   option, so the two can be compared on every sample. **Landed.** The option
+   is `--frontend roslyn`. The hand-written path stays the default.
 4. Lower declarations from Roslyn's symbols into the existing symbols: types,
    fields, methods, properties, and generic instantiations. Layout, virtual
-   tables, and interface tables do not change.
+   tables, and interface tables do not change. **Landed.** Method bodies are
+   the next step, so this path rejects every body with `ARC3001`.
 5. Lower method bodies from `IOperation` into the existing bound tree. Every
    operation kind the lowering does not handle reports `ARC3001`. An unhandled
    node must not become an empty block or a silent null, which is the main

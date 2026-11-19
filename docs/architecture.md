@@ -101,9 +101,10 @@ the compiler.
 
 `ref/ArcSharp.References` is the library Roslyn binds against instead of
 the .NET base class library. `dotnet build` builds it and copies it beside
-the compiler. `--frontend roslyn` loads that copy, reports Roslyn's
-diagnostics, and does not lower a program yet. The hand-written frontend
-remains the default. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
+the compiler. `--frontend roslyn` loads that copy and lowers declarations
+into the existing symbols. Method bodies are not lowered yet: each one is
+reported as `ARC3001`, so the path cannot emit a program that runs the wrong
+code. The hand-written frontend remains the default. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
 `System.Array`, `System.Console`, `System.WeakReference<T>`, and
 `System.IDisposable`. A call written `System.Console.WriteLine` binds to that
 type, and so does `Console.WriteLine` after `using System`. `String.Concat` and

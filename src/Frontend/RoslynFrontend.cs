@@ -5,19 +5,16 @@ using Microsoft.CodeAnalysis.CSharp;
 
 namespace ArcSharp.Frontend;
 
-// Hosts a Roslyn compilation of the program against ArcSharp.References.
-// Declaration and body lowering land in the following steps. Until then this
-// reports Roslyn's own diagnostics and refuses to emit, so a half-lowered
-// program cannot run.
 public static class RoslynFrontend
 {
     public static BoundProgram Bind(IReadOnlyList<string> inputs, List<(string file, Diagnostic d)> diags)
     {
+        var program = new BoundProgram();
         var reference = ReferenceAssembly();
         if (reference == null)
         {
             diags.Add(("", Error(0, 0, "ARC2001", "the reference assembly ArcSharp.References.dll was not found next to the compiler")));
-            return new BoundProgram();
+            return program;
         }
 
         var parse = CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.CSharp12);
@@ -47,31 +44,12 @@ public static class RoslynFrontend
             [MetadataReference.CreateFromFile(reference)],
             options);
 
-        var failed = false;
-        foreach (var diagnostic in compilation.GetDiagnostics())
-        {
-            if (diagnostic.Severity is DiagnosticSeverity.Hidden or DiagnosticSeverity.Info || diagnostic.IsSuppressed)
-            {
-                continue;
-            }
-
-            failed |= diagnostic.Severity == DiagnosticSeverity.Error;
-            var severity = diagnostic.Severity == DiagnosticSeverity.Warning
-                ? Lexing.DiagnosticSeverity.Warning
-                : Lexing.DiagnosticSeverity.Error;
-            var span = diagnostic.Location.GetLineSpan();
-            var line = span.StartLinePosition.Line + 1;
-            var column = span.StartLinePosition.Character + 1;
-            var file = diagnostic.Location.SourceTree == null ? "" : diagnostic.Location.SourceTree.FilePath;
-            diags.Add((file, Error(line, column, diagnostic.Id, diagnostic.GetMessage(), severity)));
-        }
-
-        if (!failed)
-        {
-            diags.Add(("", Error(0, 0, "ARC2001", "the Roslyn frontend does not lower programs yet")));
-        }
-
-        return new BoundProgram();
+        var lowering = new RoslynLowering(compilation, diags);
+        lowering.CopyRoslynDiagnostics();
+        lowering.ReportUnsupportedSyntax();
+        lowering.ReportLifetimeRules();
+        lowering.Lower(program);
+        return program;
     }
 
     private static string? ReferenceAssembly()
@@ -86,14 +64,12 @@ public static class RoslynFrontend
         return File.Exists(path) ? path : null;
     }
 
-    private static Diagnostic Error(
-        int line, int column, string id, string message,
-        Lexing.DiagnosticSeverity severity = Lexing.DiagnosticSeverity.Error) => new()
+    internal static Diagnostic Error(int line, int column, string id, string message) => new()
     {
         Line = line,
         Column = column,
         Id = id,
         Message = message,
-        Severity = severity
+        Severity = Lexing.DiagnosticSeverity.Error
     };
 }

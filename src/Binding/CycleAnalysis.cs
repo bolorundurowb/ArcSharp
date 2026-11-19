@@ -37,17 +37,20 @@ public static class CycleAnalysis
         {
             if (scc.Count > 1)
             {
-                var line = scc.Min(t => t.ClassSyntax?.Line ?? 0);
+                var line = scc.Min(LineOf);
                 var sccNames = scc.Select(t => t.Name).ToList();
                 report(line, DiagnosticCatalog.PossibleStrongCycleMessage(sccNames));
             }
             else if (edges[scc[0]].Contains(scc[0]))
             {
                 var t = scc[0];
-                report(t.ClassSyntax?.Line ?? 0, DiagnosticCatalog.SelfCycleMessage(t.Name));
+                report(LineOf(t), DiagnosticCatalog.SelfCycleMessage(t.Name));
             }
         }
     }
+
+    private static int LineOf(TypeSymbol t) =>
+        t.DeclarationLine != 0 ? t.DeclarationLine : t.ClassSyntax?.Line ?? 0;
 
     private static List<TypeSymbol> StrongTargets(TypeSymbol t, HashSet<string> classNames)
     {

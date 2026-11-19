@@ -129,6 +129,8 @@ public sealed partial class Binder
             var type = new TypeSymbol
             {
                 Name = name, GenericDefinition = syntax.Name, TypeArguments = args,
+                DeclarationLine = template.Line, SourceFile = template.File,
+                IsAbstract = template is ClassDecl { IsAbstract: true },
                 Kind = template switch { ClassDecl => TypeKind.Class, StructDecl => TypeKind.Struct, _ => TypeKind.Interface },
                 ClassSyntax = declaration as ClassDecl, StructSyntax = declaration as StructDecl,
                 InterfaceSyntax = declaration as InterfaceDecl
@@ -352,6 +354,7 @@ public sealed partial class Binder
             {
                 Name = SpecialisedName(template.Name + "`" + Declaration(owner).Members.IndexOf(template), args),
                 Owner = owner, ReturnType = ResolveType(syntax.ReturnType!), IsStatic = template.IsStatic,
+                DeclarationLine = template.Line,
                 Syntax = syntax, GenericDefinition = template, TypeArguments = args
             };
             for (var i = 0; i < syntax.Parameters.Count; i++)
