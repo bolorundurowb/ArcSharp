@@ -29,9 +29,6 @@ public sealed class TypeSymbol
     public List<PropertySymbol> Properties = []; // declared in this type
     public List<MethodSymbol> Vtable = []; // virtual slot order (incl inherited)
     public Dictionary<int, MethodSymbol> InterfaceImpl = []; // selector -> implementing method
-    public ClassDecl? ClassSyntax;
-    public StructDecl? StructSyntax;
-    public InterfaceDecl? InterfaceSyntax;
     public bool LayoutDone;
     public bool LayoutInProgress;
     public bool IsAbstract;
@@ -171,7 +168,6 @@ public sealed class PropertySymbol
 
 public sealed class MethodSymbol
 {
-    public MethodDecl? GenericDefinition;
     public List<TypeSymbol> TypeArguments = [];
     public required string Name;
     public required TypeSymbol Owner;
@@ -184,7 +180,6 @@ public sealed class MethodSymbol
     public bool IsConstructor;
     public int VtableSlot = -1;
     public int DeclarationLine;
-    public MethodDecl? Syntax;
 
     public string SignatureId
     {

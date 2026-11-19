@@ -226,11 +226,10 @@ interpolated strings, `default`, `checked`/`unchecked`, top-level statements,
 attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,
 `params`, optional and named arguments, `base.` access, and the struct
 restrictions listed in the [Language reference](language-reference.md#structs).
-The hand-written frontend reports bitwise and shift operators as `ARC0003`.
-`--frontend roslyn` reports them as `ARC3001`, and it reports a bad Unicode
-escape as Roslyn's `CS1009` rather than `ARC0004`. A missing type such as
-`List<T>`, a wrong generic arity, and a failed constraint are Roslyn `CS`
-codes on that path. `ARC0xxx` and `ARC1xxx` stay reserved either way.
+Bitwise and shift operators are `ARC3001`. A bad Unicode escape is Roslyn's
+`CS1009`. A missing type such as `List<T>`, a wrong generic arity, and a
+failed constraint are Roslyn `CS` codes. `ARC0xxx` and `ARC1xxx` stay reserved
+and the compiler does not emit them.
 
 The negative samples under `samples/negative/` exercise this rule.
 `tools/verify.ps1` checks that each one fails with the expected code.

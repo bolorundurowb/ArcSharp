@@ -338,7 +338,9 @@ sealed partial class RoslynLowering
         var file = location?.SourceTree == null ? "" : Path.GetFileName(location.SourceTree.FilePath);
         return new TypeSymbol
         {
-            Name = symbol.Name,
+            Name = symbol.ContainingNamespace is { IsGlobalNamespace: false } ns
+                ? ns.ToDisplayString() + "." + symbol.Name
+                : symbol.Name,
             Kind = kind,
             IsAbstract = symbol.IsAbstract,
             DeclarationLine = line,

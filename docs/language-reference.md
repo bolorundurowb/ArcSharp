@@ -31,11 +31,11 @@ A program is one or more `.cs` files passed to the compiler together. Their
 type declarations are merged into one program, so a class declared in one file
 can be used from another.
 
-- `using` directives are accepted and ignored. You can keep `using System;` so
-  the file still builds with Roslyn.
-- Block-scoped and file-scoped `namespace` declarations are accepted, but the
-  namespace name is discarded. Two types with the same simple name collide even
-  when they are in different namespaces.
+- `using` directives are honoured. The compiler also adds a global
+  `using System`, so `Console` resolves without one.
+- Block-scoped and file-scoped `namespace` declarations are part of a type's
+  identity. Two types with the same simple name in different namespaces are
+  different types.
 - Only type declarations may appear at the top level. Top-level statements are
   not supported.
 - The entry point must be a static method named `Main` with **no parameters**,
@@ -294,15 +294,12 @@ using (var log = new Logger("a")) { ... }      // with 'var'
 using (log) { ... }                            // expression form
 ```
 
-On the hand-written frontend, `IDisposable` is structural: no interface needs
-to be declared or implemented, and any type with a parameterless instance
-`void Dispose()` method can be a resource. `--frontend roslyn` binds
-`System.IDisposable` from the reference assembly and requires the resource
-type to implement it. When the resource's static type is an interface,
-`Dispose` is dispatched through the itable; otherwise a `virtual` `Dispose`
-dispatches through the vtable. The resource type must be a reference type,
-and the resource must have an initialiser. The compiler reports
-[`ARC2011`](diagnostics.md#arc2011) when the resource is not disposable.
+The resource type must implement `System.IDisposable`. When the resource's
+static type is an interface, `Dispose` is dispatched through the itable;
+otherwise a `virtual` `Dispose` dispatches through the vtable. The resource
+type must be a reference type, and the resource must have an initialiser.
+The compiler reports [`ARC2011`](diagnostics.md#arc2011) when the resource is
+not disposable.
 
 Differences from .NET:
 
@@ -335,8 +332,8 @@ operators (`&`, `|`, `^`, `~`, `<<`, `>>`), `??` and `?.`, `typeof`, `sizeof`,
 a plain `is T`, `switch` expressions, object and collection initialisers, and
 interpolated strings (`$"..."`).
 
-A single `&` or `|` is rejected by the lexer with
-[`ARC0003`](diagnostics.md#arc0003).
+A single `&` or `|`, and the shift operators, are rejected with
+[`ARC3001`](diagnostics.md#arc3001).
 
 ### Conversions
 

@@ -49,8 +49,7 @@ public static class CycleAnalysis
         }
     }
 
-    private static int LineOf(TypeSymbol t) =>
-        t.DeclarationLine != 0 ? t.DeclarationLine : t.ClassSyntax?.Line ?? 0;
+    private static int LineOf(TypeSymbol t) => t.DeclarationLine;
 
     private static List<TypeSymbol> StrongTargets(TypeSymbol t, HashSet<string> classNames)
     {

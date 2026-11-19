@@ -71,7 +71,7 @@ try {
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/$Name"
-        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--frontend", "roslyn", "--run")
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
         $run = Invoke-Captured (@($dll) + $a)
         $out = $run.Out
         $err = $run.Err
@@ -101,7 +101,7 @@ try {
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/leak_$Name"
-        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--frontend", "roslyn", "--run")
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
         $run = Invoke-Captured -Arguments (@($dll) + $a) -Environment @{ ARC_LEAKS = "1" }
         $out = $run.Out
         $err = $run.Err
@@ -131,7 +131,7 @@ try {
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/negative/$_.cs" })
         $outBase = Join-Path $build "out/neg_$Name"
-        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--frontend", "roslyn", "--emit-llvm")
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--emit-llvm")
         $run = Invoke-Captured (@($dll) + $a)
         $text = $run.Out + $run.Err
         $ok = ($run.ExitCode -ne 0) -and ($text -match [regex]::Escape($Code))
@@ -175,7 +175,7 @@ try {
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/warn_$Name"
-        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--frontend", "roslyn", "--emit-llvm")
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--emit-llvm")
         $run = Invoke-Captured (@($dll) + $a)
         $text = $run.Out + $run.Err
         $found = $text -match [regex]::Escape($Code)

@@ -36,8 +36,8 @@ tracing collector. Finalisers run deterministically, at the last strong
 release. Weak references are explicit. The language and libraries are bounded
 by the [compatibility target](#compatibility-target).
 
-The compiler does not do this yet. It has its own lexer, parser, and binder,
-and it retains every reference it reads. [Where we are](#where-we-are) lists
+The compiler parses and binds with Roslyn, and it retains every reference it
+reads. [Where we are](#where-we-are) lists
 what has shipped.
 
 ---
@@ -50,7 +50,7 @@ These are settled. The milestones follow them.
 |---|---|
 | **Fallback** | When a lifetime cannot be proved, the compiler inserts ARC and the program still compiles. There is no new ownership syntax. |
 | **Representation** | Every heap object keeps the header it has today (`strong`, `weak`, `TypeInfo*`). A proved lifetime skips `arc_retain` and `arc_release`. An escape, such as a store into a field or an array, or a call the analysis cannot see, uses the count on that same object. Identity does not change, so reference equality and weak references stay valid. There is no second, headerless layout. |
-| **Frontend** | Roslyn parses and binds. The hand-written lexer, parser, and name resolution are removed once the Roslyn path passes the same verification. Layout, vtables, the lifetime pass, the LLVM emitter, and the C runtime stay ArcSharp's. |
+| **Frontend** | Roslyn parses and binds. Layout, vtables, the lifetime pass, the LLVM emitter, and the C runtime stay ArcSharp's. |
 | **Intermediate representation** | The ownership tree between Roslyn and LLVM. Stock CIL is not a stage in the pipeline. CIL emitted for the CLR no longer records which store escapes or when the last strong reference dies, and both the lifetime pass and deterministic finalisation need those facts. Consuming precompiled assemblies is not a target. |
 | **Cycles** | Closed. `ARC3100` warns when a cycle is visible in the type graph. The program still compiles. If the developer, or a library they use, ignores the warning, the cycle leaks and its finalisers do not run. There is no backup collector. `WeakReference<T>` is how a cycle is broken. |
 | **Finalisation** | Specified in the [memory model](memory-model.md#finalisation). A finaliser runs synchronously when the last strong reference is released, on that thread, derived class before base, before the object's children are released. Lexical scope is not the trigger. `Dispose()` stays separate. Resurrection and `GC.ReRegisterForFinalize` are rejected. `GC.Collect` and `GC.WaitForPendingFinalizers` are documented no-ops. The compiler may delete a redundant retain, and it must not move a finaliser past the last release. |
@@ -126,12 +126,15 @@ yet. The latest results are in [Verification](verification.md).
 - A Roslyn analyser that reports `ARC3001` and `ARC3100` in an ordinary
   `dotnet build`, with a shared catalogue and xUnit tests.
 - Multi-file compilation.
+- Roslyn is the frontend. The hand-written lexer, parser, and name resolution
+  are gone. Layout, definite assignment, cycle analysis, and emission are
+  unchanged.
 
 ---
 
 ## M1 — Roslyn frontend
 
-**This is the current milestone.**
+**Landed.**
 
 **Goal.** The same compiler, with Roslyn at the front. It accepts today's
 subset, rejects the same programs, and produces the same output and the same
@@ -149,31 +152,31 @@ ARC accounting. Memory behaviour does not change.
    `Dispose()`. Roslyn binds against that assembly, not the real base class
    library, so it cannot accept an API this compiler cannot lower. **Landed.**
    The assembly is `ref/ArcSharp.References`. The compiler builds it and copies
-   it beside `arcsharp.dll`. `--frontend roslyn` loads that copy. `String.Concat`, `Object.ToString`, `System.Enum`, and
+   it beside `arcsharp.dll`, and the compiler loads that copy. `String.Concat`, `Object.ToString`, `System.Enum`, and
    `System.Attribute` are visible because the C# compiler requires them; a
    direct use is still not part of the language surface. The architecture
    describes those gaps. `tools/verify.ps1` runs
    `ref/ArcSharp.References.Check` against the assembly.
 3. Add the Roslyn path beside the existing one, behind a temporary driver
-   option, so the two can be compared on every sample. **Landed.** The option
-   is `--frontend roslyn`. The hand-written path stays the default.
+   option, so the two can be compared on every sample. **Landed.** The
+   temporary option was removed in step 7.
 4. Lower declarations from Roslyn's symbols into the existing symbols: types,
    fields, methods, properties, and generic instantiations. Layout, virtual
    tables, and interface tables do not change. **Landed.**
 5. Lower method bodies from `IOperation` into the existing bound tree. Every
    operation kind the lowering does not handle reports `ARC3001`. An unhandled
    node must not become an empty block or a silent null, which is the main
-   pitfall of the current binder. **Landed.** `--frontend roslyn` produces the
-   same output and ARC accounting as the hand-written path.
+   pitfall of the current binder. **Landed.** The lowering produces the same
+   output and ARC accounting the hand-written path did.
 6. Reach diagnostic parity. ArcSharp rules keep their codes (`ARC2xxx`,
    `ARC3001`, `ARC3100`). Syntax and name errors now come from Roslyn with its
    own `CS` codes. The must-fail samples that expected a lexer or parser code
    are updated to expect the Roslyn error. The retired `ARC0xxx` and `ARC1xxx`
-   codes stay reserved and are not reused. **Landed.** `tools\verify.ps1`
-   compiles and runs every sample with `--frontend roslyn`.
+   codes stay reserved and are not reused. **Landed.**
 7. Make the Roslyn path the default. Delete the hand-written lexer, parser, and
    name resolution, and remove the temporary option. Definite assignment, cycle
    analysis, layout, and emission stay until each has a checked replacement.
+   **Landed.** `tools\verify.ps1` runs the Roslyn path alone.
 
 **Done when.**
 
@@ -193,6 +196,8 @@ known issues. Ignored field initialisers are an emitter defect and wait for M2.
 ---
 
 ## M2 — Verification baseline
+
+**This is the current milestone.**
 
 **Goal.** Tests strong enough that the lifetime pass cannot introduce a double
 release, a use after free, or a moved destruction without the harness noticing.

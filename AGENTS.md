@@ -20,15 +20,14 @@ clever", choose simple and correct, and record the optimisation in
 `docs/roadmap.md`.
 
 The direction of the project is that roadmap, not an open-ended C# compiler.
-Roslyn replaces the hand-written frontend before any new language feature.
-The ownership tree is the intermediate representation; stock CIL is not a
-stage, because it drops the lifetime facts the memory model needs. A proved
-lifetime skips retain and release on the existing header, and everything else
-stays reference-counted. Finalisers run at the last strong release.
-`ARC3100` warns on a visible cycle, the program still compiles, and an ignored
-warning leaks. The compatibility target bounds the language and libraries.
-Do not start work outside that target, and do not extend the hand-written
-parser while the Roslyn transition is the current milestone.
+Roslyn is the frontend. A new language feature is lowered from Roslyn, not by
+growing a parser. The ownership tree is the intermediate representation; stock
+CIL is not a stage, because it drops the lifetime facts the memory model
+needs. A proved lifetime skips retain and release on the existing header, and
+everything else stays reference-counted. Finalisers run at the last strong
+release. `ARC3100` warns on a visible cycle, the program still compiles, and
+an ignored warning leaks. The compatibility target bounds the language and
+libraries. Do not start work outside that target.
 
 ## Quick start
 
@@ -74,7 +73,6 @@ Compiler command-line options (see `src/Program.cs`):
 | `-o <base>` | Output base path, without an extension |
 | `--target windows\|host` | `windows` (default) or the Linux x64 triple |
 | `--emit-llvm` | Stop after writing the `.ll` file |
-| `--frontend handwritten\|roslyn` | `handwritten` (default) or the Roslyn lowering. Both produce the same sample output |
 | `--clang <path>` | Build the `.exe` in one step with clang (the path used on Windows) |
 | `--run` | Run the produced executable |
 | `--runtime <path>` | C runtime source, default `runtime/arc_runtime.c` |
@@ -92,17 +90,17 @@ how `tools/verify.ps1` captures both streams.
 | Path | Responsibility |
 |---|---|
 | `src/Program.cs` | Command-line parsing |
-| `src/Driver/Compilation.cs` | Orchestrates lexing, parsing, binding, emission, and the clang or llc invocation |
-| `src/Lexing/Lexer.cs` | `TokenKind`, keywords, literals, `Diagnostic`, `DiagnosticSeverity` |
-| `src/Syntax/Ast.cs`, `src/Syntax/Parser.cs` | AST node classes and the recursive-descent parser |
+| `src/Driver/Compilation.cs` | Orchestrates lowering, emission, and the clang or llc invocation |
+| `src/Frontend/` | Roslyn compilation and the lowering into the bound tree |
+| `src/Lexing/Diagnostic.cs`, `src/Lexing/TokenKind.cs` | Diagnostic records and the token kinds the emitter still names |
+| `src/Syntax/Kinds.cs` | `LiteralKind` and `RefKind` |
 | `src/Binding/Symbols.cs` | `TypeSymbol`, `FieldSymbol`, `MethodSymbol`, layout and name mangling |
-| `src/Binding/Binder.cs` | Name and type resolution, layout, vtables, interface selectors, property expansion, conversions |
 | `src/Binding/BoundTree.cs` | Typed bound-tree nodes consumed by the emitter |
 | `src/Binding/DefiniteAssignment.cs` | Conservative read-before-assignment analysis (warning `ARC2100`) |
 | `src/Binding/CycleAnalysis.cs` | Strong-field graph and strongly connected components (warning `ARC3100`) |
 | `src/CodeGen/Emitter.cs` | Bound tree to LLVM IR, with every ARC operation woven in |
 | `runtime/arc_runtime.c` | Object header, retain and release, weak references, arrays, strings, type tests, console, accounting |
-| `ref/ArcSharp.References/` | Reference assembly for the Roslyn frontend. Not loaded by the compiler yet |
+| `ref/ArcSharp.References/` | Reference assembly Roslyn binds against. Copied beside the compiler |
 | `ref/ArcSharp.References.Check/` | Checks what Roslyn accepts and rejects against that assembly |
 | `analyzers/ArcSharp.Diagnostics/` | Shared `ARC3xxx` ids and messages, with no Roslyn dependency |
 | `analyzers/ArcSharp.Analyzers/` | Roslyn analyser for `ARC3001` and `ARC3100` |
@@ -122,59 +120,51 @@ compiler. The reference assembly is its own project. Keep it that way.
 ## The compiler pipeline
 
 ```
-.cs files -> Lexer -> Parser (AST) -> Binder (bound tree, layouts, vtables)
+.cs files -> Roslyn -> lowering (bound tree, layouts, vtables)
           -> DefiniteAssignment (warnings) -> Emitter (.ll)
           -> clang (.ll + arc_runtime.c -> .exe) -> run -> [arc] accounting on stderr
 ```
 
-Every file is lexed and parsed separately. The binder merges the type
-declarations from all files into one flat program before binding. `using`
-directives are skipped, and `namespace` names are discarded, so two types with
-the same simple name collide even in different namespaces.
+Roslyn parses and binds every file against `ref/ArcSharp.References`, and the
+lowering in `src/Frontend` builds the bound tree. `using` directives are
+honoured, and a namespace is part of a type's identity. A global
+`using System` is added so `Console` resolves without one.
 
-The [Roadmap](docs/roadmap.md) freezes this frontend. The next milestone ports
-today's behaviour onto Roslyn and then deletes the hand-written lexer, parser,
-and name resolution once `tools/verify.ps1` passes. Do not add a language
-feature to the lexer or the parser while that transition is the milestone. A
-defect in the emitter or the runtime may still be fixed, because that code
-survives the port. A defect in the lexer or the parser is fixed in the Roslyn
-lowering instead.
+The current milestone is the verification baseline in the
+[Roadmap](docs/roadmap.md). Do not add a language feature ahead of that. A
+defect in the emitter or the runtime may still be fixed. A defect in binding
+is fixed in the Roslyn lowering.
 
 ### Adding or changing a language feature
 
 Do this only for a change the roadmap still allows on the current compiler,
-which today means an emitter or runtime defect. A new language feature waits
-until the Roslyn transition has landed, and it is then lowered from Roslyn
-rather than from `Parser.cs`.
+which today means an emitter or runtime defect. A new language feature is
+lowered from a Roslyn operation in `src/Frontend`, not by adding a parser.
 
 When a change does touch the current pipeline, work through this list in order:
 
-1. **Lexer**: add the `TokenKind` and, for a keyword, the `Keywords` entry.
-2. **AST and parser**: add the node class to `Ast.cs` and parse it in
-   `Parser.cs`.
-3. **Binder**: add a case to `BindStatement` or `BindExpr`, produce a bound
-   node from `BoundTree.cs`, and type-check it. Report errors with a diagnostic
-   code (see "Diagnostics").
-4. **Definite assignment**: if the feature reads or writes locals, or changes
+1. **Lowering**: handle the Roslyn symbol or `IOperation` in `src/Frontend`,
+   produce a bound node from `BoundTree.cs`, and type-check it. An operation
+   the lowering does not handle reports `ARC3001`. Report other errors with a
+   diagnostic code (see "Diagnostics").
+2. **Definite assignment**: if the feature reads or writes locals, or changes
    control flow, update `DefiniteAssignment.cs` so the analysis stays
    conservative.
-5. **Emitter**: add a case to `EmitStmt` or `EmitR` and follow the ARC rules
+3. **Emitter**: add a case to `EmitStmt` or `EmitR` and follow the ARC rules
    below exactly.
-6. **Runtime**: if new runtime support is needed, add the C function **and**
+4. **Runtime**: if new runtime support is needed, add the C function **and**
    its matching `declare` line in `Emitter.EmitRuntimeDecls`.
-7. **Sample and harness**: add a sample and an `Invoke-Sample` line (see
+5. **Sample and harness**: add a sample and an `Invoke-Sample` line (see
    "Testing").
-8. **Documentation**: update `docs/language-reference.md`, the status in
+6. **Documentation**: update `docs/language-reference.md`, the status in
    `docs/architecture.md` and `docs/roadmap.md`, `docs/verification.md`, and
    `README.md` (see "Documentation").
 
 **Unhandled nodes fail silently. This is the most important pitfall in the
 codebase.**
 
-- `Binder.BindStatement` turns an unknown statement into an empty
-  `BoundBlock`. The statement disappears.
-- `Binder.BindExpr` turns an unknown expression into `Err()`, which is an
-  error-typed null literal **with no diagnostic**.
+- The lowering's unknown-operation path must report `ARC3001`. A missing case
+  that returns an empty block or a null literal drops the statement.
 - `Emitter.EmitR` returns the constant `"0"` for an unknown bound expression,
   and `Emitter.EmitStmt` has no default case.
 
@@ -283,7 +273,7 @@ samples, and do not invent new non-standard syntax.
 ### Diagnostics
 
 Each diagnostic has a stable code and a severity (`Diagnostic` in
-`Lexer.cs`). The driver fails compilation when the error count is non-zero;
+`src/Lexing/Diagnostic.cs`). The driver fails compilation when the error count is non-zero;
 warnings fail it only with `-Werror`.
 
 | Range | Stage | Codes in use |

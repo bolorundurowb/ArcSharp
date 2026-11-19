@@ -4,7 +4,6 @@ using ArcSharp.Binding;
 using ArcSharp.CodeGen;
 using ArcSharp.Frontend;
 using ArcSharp.Lexing;
-using ArcSharp.Syntax;
 
 namespace ArcSharp.Driver;
 
@@ -21,7 +20,6 @@ public sealed class Options
     public string Llc = "llc";
     public string Cc = "gcc";
     public string Clang = ""; // if set, used as a one-shot .ll+runtime -> exe driver
-    public string Frontend = "handwritten"; // handwritten | roslyn; roslyn is temporary until it replaces the other
 }
 
 public static class Compilation
@@ -44,15 +42,7 @@ public static class Compilation
             }
         }
 
-        BoundProgram program;
-        if (o.Frontend == "roslyn")
-        {
-            program = RoslynFrontend.Bind(o.Inputs, diags);
-        }
-        else
-        {
-            program = BindHandwritten(o.Inputs, diags);
-        }
+        var program = RoslynFrontend.Bind(o.Inputs, diags);
 
         foreach (var (file, d) in diags)
         {
@@ -147,46 +137,6 @@ public static class Compilation
         }
 
         return 0;
-    }
-
-    // The handwritten frontend does not know System.IDisposable. The prelude
-    // keeps samples that implement it compiling on this path. The Roslyn path
-    // binds the interface from the reference assembly instead.
-    private static BoundProgram BindHandwritten(List<string> inputs, List<(string file, Diagnostic d)> diags)
-    {
-        var units = new List<CompilationUnit>();
-        var prelude = new Lexer("interface IDisposable { void Dispose(); }");
-        var preludeParser = new Parser(prelude.Lex());
-        var preludeUnit = preludeParser.ParseCompilationUnit();
-        preludeUnit.File = "";
-        units.Add(preludeUnit);
-        foreach (var d in prelude.Diagnostics.Concat(preludeParser.Diagnostics))
-        {
-            diags.Add(("", d));
-        }
-
-        foreach (var input in inputs)
-        {
-            var src = File.ReadAllText(input);
-            var lexer = new Lexer(src);
-            var parser = new Parser(lexer.Lex());
-            var unit = parser.ParseCompilationUnit();
-            unit.File = Path.GetFileName(input);
-            units.Add(unit);
-            foreach (var d in lexer.Diagnostics.Concat(parser.Diagnostics))
-            {
-                diags.Add((input, d));
-            }
-        }
-
-        var binder = new Binder();
-        var program = binder.Bind(units);
-        foreach (var d in program.Diagnostics)
-        {
-            diags.Add(("", d));
-        }
-
-        return program;
     }
 
     private static int Exec(string file, string[] args)

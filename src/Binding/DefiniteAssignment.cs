@@ -17,7 +17,7 @@ public static class DefiniteAssignment
     {
         foreach (var body in program.MethodBodies)
         {
-            new Analyzer(body.Method.DeclarationLine != 0 ? body.Method.DeclarationLine : body.Method.Syntax?.Line ?? 0, report).Run(body.Body);
+            new Analyzer(body.Method.DeclarationLine, report).Run(body.Body);
         }
     }
 
