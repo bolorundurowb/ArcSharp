@@ -266,9 +266,7 @@ destructors are `@<Type>__deinit`.
 
 ArcSharp source should also be valid C# that the normal .NET toolchain
 accepts. Cycle breaking uses the standard `System.WeakReference<T>` for this
-reason. The old `weak` field modifier still works only as a legacy alias, for
-`samples/cycle_weak.cs` and `samples/weak_null.cs`. Do not use it in new code or
-samples, and do not invent new non-standard syntax.
+reason. Do not invent non-standard syntax.
 
 ### Diagnostics
 

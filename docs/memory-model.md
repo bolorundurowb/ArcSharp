@@ -355,9 +355,6 @@ The `parent` local is a strong reference. It keeps the parent alive until
   reference is gone. Under .NET it usually returns `true` for a while longer.
   Code that is correct under ArcSharp is also correct under .NET, but the
   reverse is not always true.
-- Older samples use a non-standard `weak` field modifier
-  (`public weak Parent owner;`). It still works, but it is not valid C#, so
-  Roslyn rejects it. Use `WeakReference<T>` in new code.
 
 ## Finding leaks
 
@@ -432,9 +429,7 @@ is released afterwards. A local, a by-value parameter, a static field, and a
 storage already outlives the call.
 
 A managed reference that would outlive the call is rejected. Ref locals and
-ref returns are [`ARC3001`](diagnostics.md#arc3001). A weak field cannot be
-passed by `ref`, `out`, or `in` ([`ARC2015`](diagnostics.md#arc2015)), because a
-store through that pointer would not use the weak primitives. An `in`
+ref returns are [`ARC3001`](diagnostics.md#arc3001). An `in`
 parameter is read-only, including the fields of an inline struct. Assigning
 that storage, passing it as `ref` or `out`, or calling an instance method on
 an `in` struct is also `ARC2015`. A reference loaded from that struct is a

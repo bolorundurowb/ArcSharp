@@ -3,9 +3,9 @@
 // Builds a graph over the program's class types: an edge C -> T exists when C
 // declares a strong field of class type T, including arrays of a class (T[]),
 // static fields, and class references reached through a struct field (a class
-// holding a struct that holds a class is still a strong path). WeakReference<T>
-// fields and the legacy `weak` modifier are not edges: both are ways of
-// breaking a cycle. A strongly connected component with more than one class,
+// holding a struct that holds a class is still a strong path). A
+// WeakReference<T> field is not an edge: it is how a cycle is broken. A
+// strongly connected component with more than one class,
 // or a single class with a self-edge, means objects of those types can form a
 // reference cycle at run time, which ARC leaks. That is a warning, not an
 // error: the program is legal and the leak may be intentional

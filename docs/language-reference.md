@@ -257,7 +257,6 @@ error.
   Assigning that storage, passing it as `ref` or `out`, or calling an instance
   method on an `in` struct is [`ARC2015`](diagnostics.md#arc2015). A reference
   loaded from the struct is a different object and can still be written.
-- A weak field cannot be passed by `ref`, `out`, or `in` (`ARC2015`).
 - Ref locals and ref returns are rejected ([`ARC3001`](diagnostics.md#arc3001)).
   A managed reference must not outlive the call that created it.
 

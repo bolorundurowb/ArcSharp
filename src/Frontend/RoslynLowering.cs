@@ -514,12 +514,6 @@ sealed partial class RoslynLowering
     private FieldSymbol CreateField(TypeSymbol owner, IFieldSymbol field)
     {
         var mapped = MapType(field.Type, field.Locations.FirstOrDefault());
-        var weak = IsWeak(field);
-        if (weak && !mapped.IsReferenceType && mapped != _error)
-        {
-            Report(field.Locations.FirstOrDefault(), "'weak' may only be applied to reference-typed fields", "ARC2001");
-        }
-
         if (field.IsStatic && mapped.Kind == BoundKind.Struct)
         {
             ReportOnce(field, "static struct fields are not supported");
@@ -530,8 +524,7 @@ sealed partial class RoslynLowering
             Name = field.Name,
             Type = mapped,
             Owner = owner,
-            IsStatic = field.IsStatic,
-            IsWeak = weak
+            IsStatic = field.IsStatic
         };
         _fields[new MemberKey(field.OriginalDefinition, owner)] = created;
         return created;
@@ -1110,11 +1103,6 @@ sealed partial class RoslynLowering
     private static bool IsDisposable(INamedTypeSymbol named) =>
         named.SpecialType == SpecialType.System_IDisposable
         || (named.Name == "IDisposable" && named.ContainingNamespace?.ToDisplayString() == "System");
-
-    private static bool IsWeak(IFieldSymbol field) =>
-        field.GetAttributes().Any(attribute =>
-            attribute.AttributeClass?.Name == "WeakAttribute"
-            && attribute.AttributeClass.ContainingNamespace?.ToDisplayString() == "ArcSharp.Runtime");
 
     private static RefKind MapRef(Microsoft.CodeAnalysis.RefKind kind) => kind switch
     {

@@ -1,8 +1,10 @@
+using System;
+
 class Parent {
     public Child child;
 }
 class Child {
-    public weak Parent owner;   // WEAK back-reference -> breaks the cycle
+    public WeakReference<Parent> owner;   // weak back-reference: breaks the cycle
     public int id;
 }
 class Program {
@@ -11,7 +13,7 @@ class Program {
         Child c = new Child();
         c.id = 7;
         p.child = c;
-        c.owner = p;            // no cycle: owner is weak
+        c.owner = new WeakReference<Parent>(p);
     }
     static void Main() {
         Link();

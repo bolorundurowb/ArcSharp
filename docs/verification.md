@@ -38,9 +38,9 @@ object was reclaimed.
 | `statics` | static fields and static methods, `int Main()` exit code | alloc=3 dead=3 **live=0** | `count=3` |
 | `fib` | recursion, `long` return, `while`, `Console.Write` | alloc=22 dead=22 **live=0** | `fib(10)=55` |
 | `floats` | `float`/`double` literals, arithmetic, comparisons, string concat | alloc=7 dead=7 **live=0** | `area=19.6349` |
-| `weak_null` | a `weak` field whose target is destroyed, so a load yields `null` | alloc=3 dead=3 **live=0** | `weak-after-death is null: PASS` |
-| `cycle_weak` | parent/child graph with a **weak** back-reference | alloc=3 dead=3 **live=0** | `done (weak cycle)` |
-| `cycle_weakref` | the same cycle, broken with idiomatic **`WeakReference<T>`** | alloc=4 dead=4 **live=0** | `done (WeakReference cycle)` |
+| `weak_null` | a `WeakReference<T>` whose target is destroyed, so `TryGetTarget` returns false | alloc=4 dead=4 **live=0** | `weak-after-death is null: PASS` |
+| `cycle_weak` | parent/child graph broken with `WeakReference<T>` | alloc=4 dead=4 **live=0** | `done (weak cycle)` |
+| `cycle_weakref` | the same cycle, also broken with `WeakReference<T>` | alloc=4 dead=4 **live=0** | `done (WeakReference cycle)` |
 | `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 **live=0** | `false (PASS under ARC)` |
 | `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 **live=2** | `done (strong cycle)` |
 | `cycle_struct` | a **strong** cycle that runs through an inline struct field | alloc=3 dead=1 **live=2** | `done (struct cycle)` |
@@ -92,8 +92,7 @@ locals and ref returns, `ARC0003` for shift operators, `ARC0004` for an invalid
 Unicode escape, `ARC2011` for an invalid `using` resource, `ARC2012` for `new`
 on an abstract class, `ARC2013` for missing generic definitions, wrong arity, or
 expanding specialisations, `ARC2014` for unsatisfied type/method constraints,
-and `ARC2015` for a weak field passed by `ref` or a write through an `in`
-parameter. It
+and `ARC2015` for a write through an `in` parameter. It
 checks that `-o` with no value, and a missing `clang` or `llc`, are reported
 as errors and exit with code 2. It checks
 `ARC3100` in both directions: `cycle_strong` and `cycle_struct` warn, while
@@ -111,19 +110,19 @@ check.
 
 ## The headline result: ARC + cycle breaking
 
-`cycle_strong` and `cycle_weak` are identical except for one keyword on the
-back-reference field:
+`cycle_strong` and `cycle_weak` are the same parent and child graph. The
+back-reference is the only difference:
 
 ```
-cycle_strong:  public Parent owner;        ->  alloc=3 dead=1 live=2   (LEAK)
-cycle_weak:    public weak Parent owner;   ->  alloc=3 dead=3 live=0   (reclaimed)
+cycle_strong:  public Parent owner;                         ->  alloc=3 dead=1 live=2   (LEAK)
+cycle_weak:    public WeakReference<Parent> owner;         ->  alloc=4 dead=4 live=0   (reclaimed)
 ```
 
 This is exactly the fundamental ARC trade-off made concrete: pure reference
-counting cannot reclaim a strong cycle (two objects leak), and the `weak`
-modifier breaks the cycle so deterministic reclamation succeeds.
-`cycle_weakref` shows the same result with standard `WeakReference<T>`
-(alloc=4 dead=4 live=0); its extra allocation is the `WeakReference<T>` object.
+counting cannot reclaim a strong cycle (two objects leak), and
+`WeakReference<T>` breaks the cycle so deterministic reclamation succeeds.
+The extra allocation is the `WeakReference<T>` object. `cycle_weakref` is the
+same shape (alloc=4 dead=4 live=0).
 `cycle_struct` shows that a cycle through an inline struct field leaks in the
 same way, and that `ARC3100` sees the class reference inside the struct. The
 leaks in `cycle_strong` and `cycle_struct` are **expected and asserted** by the
@@ -142,17 +141,13 @@ with `dotnet run`.
 | `cycle_weakref` | Succeeded | `done (WeakReference cycle)` | `done (WeakReference cycle)`, `live=0` |
 | `weakref_get` | Succeeded | `target v=99` | `TryGetTarget after death: false (PASS under ARC)` |
 | `interface` | Succeeded | `rect=12`, `circle=75` | `rect=12`, `circle=75` |
-| `inherit` | Failed (`CS1002`) | | |
 
 `weakref_get` shows the intended behavioural difference. It calls
 `TryGetTarget` right after the target's last strong reference is dropped.
 ArcSharp returns `false` immediately, because destruction is deterministic.
 Under .NET the target is still in memory because no collection has run, so the
 call returns `true`. That divergence is the point of the project.
-
-`inherit` fails under Roslyn because it uses the legacy `weak` field modifier,
-which is not C#. `cycle_weak` and `weak_null` use it too. Those three samples
-are kept to test the legacy alias; new samples use `WeakReference<T>`.
+`cycle_weak` and `weak_null` use `WeakReference<T>` as well.
 
 ## Windows x64 target check
 

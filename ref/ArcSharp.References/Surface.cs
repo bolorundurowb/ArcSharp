@@ -10,9 +10,7 @@
 //
 // Every type a program names through `using System` is in namespace System,
 // including Console. System.Console.WriteLine and a using System directive
-// both bind. There is no global Console. The legacy `weak` modifier is
-// rewritten to ArcSharp.Runtime.WeakAttribute, which is not part of the
-// language surface.
+// both bind. There is no global Console.
 
 namespace System
 {
@@ -345,18 +343,6 @@ namespace System
         }
 
         public static void WriteLine(double value)
-        {
-        }
-    }
-}
-
-namespace ArcSharp.Runtime
-{
-    // The legacy `weak` field modifier is rewritten to this attribute before
-    // Roslyn sees the file. It is not a supported attribute to write by hand.
-    public sealed class WeakAttribute : System.Attribute
-    {
-        public WeakAttribute()
         {
         }
     }

@@ -25,7 +25,7 @@ public static class RoslynFrontend
         };
         foreach (var input in inputs)
         {
-            var text = LegacyWeak.Rewrite(File.ReadAllText(input));
+            var text = File.ReadAllText(input);
             trees.Add(CSharpSyntaxTree.ParseText(text, parse, path: Path.GetFullPath(input)));
         }
 

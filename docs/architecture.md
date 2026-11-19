@@ -308,12 +308,8 @@ To support this the compiler also gained minimal **generic-type parsing**
 
 This is the mechanism that lets parent⇄child and other cyclic graphs be reclaimed.
 The verification suite includes a cycle that leaks under plain strong references
-and is fully reclaimed once the back-edge is a `WeakReference<T>`.
-
-> A legacy, non-standard `weak` **field modifier** also still works (it lowers to
-> the same `arc_store_weak`/`arc_load_weak` primitives) but is not idiomatic C# and
-> will not compile with Roslyn; `WeakReference<T>` is the recommended form. Weak
-> *locals* and an `unowned` (non-zeroing) variant remain future work.
+and is fully reclaimed once the back-edge is a `WeakReference<T>`. Weak locals
+and an `unowned` (non-zeroing) variant remain future work.
 
 ---
 
@@ -551,8 +547,7 @@ Still open, and not required to start the Roslyn transition:
    still needs a lifetime test, and that work waits until the lifetime pass
    exists.
 3. **`unowned`.** `WeakReference<T>` is the weak surface. A non-zeroing
-   `unowned` reference is not decided. The legacy `weak` field modifier stays
-   a compatibility alias only.
+   `unowned` reference is not decided.
 4. **Exceptions.** They are a full row of the compatibility target. Landing
    pads have to release proved and shared values, and run `using` cleanup and
    finalisers. They come after deterministic finalisers, not before.

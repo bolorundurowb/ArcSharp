@@ -211,12 +211,7 @@ sealed partial class RoslynLowering
 
         public override void VisitAttribute(AttributeSyntax node)
         {
-            var name = node.Name.ToString();
-            if (!name.Contains("Weak", StringComparison.Ordinal))
-            {
-                Reject(node, "attributes are not supported");
-            }
-
+            Reject(node, "attributes are not supported");
             base.VisitAttribute(node);
         }
 
@@ -324,16 +319,10 @@ sealed partial class RoslynLowering
         public override void VisitArgument(ArgumentSyntax node)
         {
             var kind = node.RefKindKeyword.Kind();
-            if (kind is SyntaxKind.RefKeyword or SyntaxKind.OutKeyword or SyntaxKind.InKeyword)
+            if (kind is SyntaxKind.RefKeyword or SyntaxKind.OutKeyword
+                && IsReadOnlyIn(node.Expression))
             {
-                if (_model.GetSymbolInfo(node.Expression).Symbol is IFieldSymbol field && IsWeak(field))
-                {
-                    _lowering.Report(node, "a weak field cannot be passed with 'ref', 'out', or 'in'", "ARC2015");
-                }
-                else if (kind != SyntaxKind.InKeyword && IsReadOnlyIn(node.Expression))
-                {
-                    _lowering.Report(node, ReadOnlyMessage(node.Expression), "ARC2015");
-                }
+                _lowering.Report(node, ReadOnlyMessage(node.Expression), "ARC2015");
             }
 
             base.VisitArgument(node);
