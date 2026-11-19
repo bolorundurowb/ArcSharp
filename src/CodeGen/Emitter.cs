@@ -425,7 +425,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                     fns.AppendLine($"  %v{n} = load i8*, i8** {src}");
                     if (f.IsWeak)
                     {
-                        // A legacy `weak` field slot copies weakly.
+                        // A weak field slot copies weakly.
                         fns.AppendLine($"  call void @arc_store_weak(i8** {dst}, i8* %v{n})");
                     }
                     else

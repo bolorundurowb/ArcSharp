@@ -10,7 +10,7 @@ struct Point
 
 class Node
 {
-    public weak Node Other;
+    public Node Other;
 }
 
 class Program

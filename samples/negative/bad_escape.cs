@@ -1,4 +1,4 @@
-// Expected: ARC0004 invalid Unicode escape.
+// Expected: CS1009 invalid Unicode escape.
 class Program
 {
     static void Main()

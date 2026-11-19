@@ -103,11 +103,11 @@ analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See
 [Verification](docs/verification.md) for the latest results.
 
-The present compiler reference-counts every heap object and parses C# with its
-own lexer and parser. It rejects C# finalisers. The [Roadmap](docs/roadmap.md)
-moves the frontend to Roslyn before any new language feature, then adds a
-lifetime pass that uses ARC only where a lifetime cannot be proved, then
-implements deterministic finalisation. That contract is in the
+The present compiler reference-counts every heap object. Roslyn parses and
+binds the source. The compiler rejects C# finalisers. The
+[Roadmap](docs/roadmap.md) adds a lifetime pass that uses ARC only where a
+lifetime cannot be proved, then implements deterministic finalisation. That
+contract is in the
 [memory model](docs/memory-model.md#finalisation): a finaliser runs when the
 last strong reference is released, not when a variable leaves scope, and
 `Dispose()` stays a separate call. ArcSharp is a separate runtime with that

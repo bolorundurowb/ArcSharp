@@ -13,9 +13,9 @@ namespace ArcSharp.Analyzers;
 //
 // The graph has one node per class declared in this compilation. An edge C -> T
 // exists when C declares a strong field of class type T, including T[], static
-// fields, and class references reached through a struct field. WeakReference<T>
-// fields and the legacy `weak` modifier are not edges: both are how a cycle is
-// broken. Strongly connected components are reported once each, which makes
+// fields, and class references reached through a struct field. A
+// WeakReference<T> field is not an edge: it is how a cycle is broken.
+// Strongly connected components are reported once each, which makes
 // the warning a statement about types, not about a particular object graph. A
 // tree or a singly linked list warns too; that is the documented false
 // positive.

@@ -121,7 +121,6 @@ problem. The most common messages are:
 | `Console has no method 'X'`, `Console.Write/WriteLine takes 0 or 1 argument` | Only `Write` and `WriteLine` with at most one argument exist. Build the text with `+`. |
 | `WeakReference<T> requires a reference type argument` | `T` must be a class. |
 | `TryGetTarget expects a single 'out' argument`, `SetTarget(target) takes one argument` | |
-| `'weak' may only be applied to reference-typed fields` | The legacy `weak` modifier needs a class-typed field. Prefer `WeakReference<T>`. |
 
 ### ARC2002
 
@@ -188,7 +187,6 @@ use would break the rules for that slot.
 
 | Message | What to do |
 |---|---|
-| `a weak field cannot be passed with 'ref', 'out', or 'in'` | Pass a strong field, or load the weak field into a local and pass that. A store through the pointer would not update the weak count. |
 | `'in' parameter 'p' is read-only` | Do not assign `p`, pass it as `ref` or `out`, or call an instance method on it when `p` is an `in` struct. Copy it into a local first. A reference loaded from the struct can still be written. |
 
 ### ARC2050
@@ -226,8 +224,10 @@ interpolated strings, `default`, `checked`/`unchecked`, top-level statements,
 attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,
 `params`, optional and named arguments, `base.` access, and the struct
 restrictions listed in the [Language reference](language-reference.md#structs).
-Bitwise and shift operators report `ARC0003`. Adjacent `>` tokens close nested
-generic arguments; `>>` in an expression is rejected by the parser.
+Bitwise and shift operators are `ARC3001`. A bad Unicode escape is Roslyn's
+`CS1009`. A missing type such as `List<T>`, a wrong generic arity, and a
+failed constraint are Roslyn `CS` codes. `ARC0xxx` and `ARC1xxx` stay reserved
+and the compiler does not emit them.
 
 The negative samples under `samples/negative/` exercise this rule.
 `tools/verify.ps1` checks that each one fails with the expected code.
@@ -239,7 +239,7 @@ other through strong fields, or one class has a strong field of its own type.
 The warning is the architectural response to cycles: the program stays legal.
 ARC cannot reclaim such a cycle, so the instances leak if the developer, or a
 library they compile, leaves the back-edge in place. Change it to
-`WeakReference<T>`, or the legacy `weak` modifier, when the cycle is real.
+`WeakReference<T>` when the cycle is real.
 
 The analysis looks at declared field types, not at an object graph. It includes
 arrays of a class, static fields, and class references reached through a struct

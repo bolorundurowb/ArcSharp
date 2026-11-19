@@ -32,4 +32,11 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
   </ItemGroup>
 
+  <Target Name="CopyArcSharpReferences" AfterTargets="Build">
+    <PropertyGroup>
+      <_ArcSharpReferencesDll>$(MSBuildThisFileDirectory)ref\ArcSharp.References\bin\$(Configuration)\net11.0\ArcSharp.References.dll</_ArcSharpReferencesDll>
+    </PropertyGroup>
+    <Copy SourceFiles="$(_ArcSharpReferencesDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="Exists('$(_ArcSharpReferencesDll)')" />
+  </Target>
+
 </Project>

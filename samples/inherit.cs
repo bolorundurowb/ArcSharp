@@ -14,7 +14,7 @@ class Square : Shape {
 
 class Node {
     public Node next;
-    public weak Node owner;
+    public Node owner;
     public int value;
 }
 

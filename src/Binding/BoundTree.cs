@@ -235,3 +235,12 @@ public sealed class BoundMethodBody
     public required BoundBlock Body;
     public List<LocalSymbol> AllLocals = [];
 }
+
+public sealed class BoundProgram
+{
+    public List<TypeSymbol> Types = [];
+    public List<BoundMethodBody> MethodBodies = [];
+    public int InterfaceSelectorCount;
+    public MethodSymbol? Entry;
+    public List<Diagnostic> Diagnostics = [];
+}

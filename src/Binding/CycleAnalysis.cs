@@ -3,9 +3,9 @@
 // Builds a graph over the program's class types: an edge C -> T exists when C
 // declares a strong field of class type T, including arrays of a class (T[]),
 // static fields, and class references reached through a struct field (a class
-// holding a struct that holds a class is still a strong path). WeakReference<T>
-// fields and the legacy `weak` modifier are not edges: both are ways of
-// breaking a cycle. A strongly connected component with more than one class,
+// holding a struct that holds a class is still a strong path). A
+// WeakReference<T> field is not an edge: it is how a cycle is broken. A
+// strongly connected component with more than one class,
 // or a single class with a self-edge, means objects of those types can form a
 // reference cycle at run time, which ARC leaks. That is a warning, not an
 // error: the program is legal and the leak may be intentional
@@ -37,17 +37,19 @@ public static class CycleAnalysis
         {
             if (scc.Count > 1)
             {
-                var line = scc.Min(t => t.ClassSyntax?.Line ?? 0);
+                var line = scc.Min(LineOf);
                 var sccNames = scc.Select(t => t.Name).ToList();
                 report(line, DiagnosticCatalog.PossibleStrongCycleMessage(sccNames));
             }
             else if (edges[scc[0]].Contains(scc[0]))
             {
                 var t = scc[0];
-                report(t.ClassSyntax?.Line ?? 0, DiagnosticCatalog.SelfCycleMessage(t.Name));
+                report(LineOf(t), DiagnosticCatalog.SelfCycleMessage(t.Name));
             }
         }
     }
+
+    private static int LineOf(TypeSymbol t) => t.DeclarationLine;
 
     private static List<TypeSymbol> StrongTargets(TypeSymbol t, HashSet<string> classNames)
     {

@@ -1,9 +1,9 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using ArcSharp.Lexing;
-using ArcSharp.Syntax;
 using ArcSharp.Binding;
 using ArcSharp.CodeGen;
+using ArcSharp.Frontend;
+using ArcSharp.Lexing;
 
 namespace ArcSharp.Driver;
 
@@ -33,7 +33,6 @@ public static class Compilation
         }
 
         var diags = new List<(string file, Diagnostic d)>();
-        var units = new List<CompilationUnit>();
         foreach (var input in o.Inputs)
         {
             if (!File.Exists(input))
@@ -41,25 +40,9 @@ public static class Compilation
                 Console.Error.WriteLine($"error: input not found: {input}");
                 return 2;
             }
-
-            var src = File.ReadAllText(input);
-            var lexer = new Lexer(src);
-            var parser = new Parser(lexer.Lex());
-            var unit = parser.ParseCompilationUnit();
-            unit.File = Path.GetFileName(input);
-            units.Add(unit);
-            foreach (var d in lexer.Diagnostics.Concat(parser.Diagnostics))
-            {
-                diags.Add((input, d));
-            }
         }
 
-        var binder = new Binder();
-        var program = binder.Bind(units);
-        foreach (var d in program.Diagnostics)
-        {
-            diags.Add(("", d));
-        }
+        var program = RoslynFrontend.Bind(o.Inputs, diags);
 
         foreach (var (file, d) in diags)
         {

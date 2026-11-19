@@ -62,9 +62,9 @@ What the compiler does today:
  .cs source
     │
     ▼
-┌───────────┐   tokens     ┌──────────┐   AST       ┌──────────┐
-│  Lexer    │ ───────────▶ │  Parser  │ ─────────▶ │  Binder  │
-└───────────┘              └──────────┘             └────┬─────┘
+┌───────────┐   symbols    ┌────────────┐  bound tree ┌──────────┐
+│  Roslyn   │ ───────────▶ │  Lowering  │ ──────────▶ │ Layout   │
+└───────────┘              └────────────┘             └────┬─────┘
                                                          │ typed bound tree
                                                          │ + type layouts, vtables
                                                          ▼
@@ -89,19 +89,18 @@ the `--clang` path and the only one in the current verification. Without
 stops and prints the link command; with `--target host` it links the object and
 the runtime with `gcc`.
 
-The [Roadmap](roadmap.md) replaces the front of this picture. Roslyn will parse
-and bind, a lifetime pass will sit between that bound tree and the emitter, and
-the hand-written lexer, parser, and name resolution will be removed once the
-Roslyn path passes the same verification. The bound tree stays the ownership
-representation. Stock CIL is not inserted in front of it: the CLR's IL has
-already dropped the escape and last-release facts that finalisation and the
-lifetime pass require. The emitter, the object header, and the C runtime stay.
-That transition is the current milestone. Until it lands, the diagram above is
-the compiler.
+Roslyn parses and binds, and the lowering builds the same bound tree the
+emitter already consumes. A lifetime pass will sit between that tree and the
+emitter. The bound tree stays the ownership representation. Stock CIL is not
+inserted in front of it: the CLR's IL has already dropped the escape and
+last-release facts that finalisation and the lifetime pass require. The
+emitter, the object header, and the C runtime stay. The lifetime pass is the
+current milestone.
 
-`ref/ArcSharp.References` is the library Roslyn will bind against instead of
-the .NET base class library. `dotnet build` builds it, and the compiler does
-not load it yet. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
+`ref/ArcSharp.References` is the library Roslyn binds against instead of
+the .NET base class library. `dotnet build` builds it and copies it beside
+the compiler. The compiler loads that copy and lowers declarations and
+method bodies into the existing bound tree. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
 `System.Array`, `System.Console`, `System.WeakReference<T>`, and
 `System.IDisposable`. A call written `System.Console.WriteLine` binds to that
 type, and so does `Console.WriteLine` after `using System`. `String.Concat` and
@@ -111,22 +110,21 @@ call is not a supported library feature. `string` has no equality operator, so
 because the C# compiler cannot emit the assembly without them, so an enum or a
 custom attribute binds here even though the language reference rejects both.
 A `using` on a type that has `Dispose()` but does not implement `IDisposable`
-is rejected; the hand-written compiler still treats `Dispose` as structural.
-The lowering has to close those gaps. Method bodies in the assembly are never
-run.
+is rejected. Method bodies in the assembly are never run.
 
 Source layout:
 
 | Path                    | Responsibility                                                                                                            |
 |-------------------------|---------------------------------------------------------------------------------------------------------------------------|
-| `src/Lexing/`           | `Token`, `TokenKind`, `Diagnostic`, `Lexer` — text → token stream                                                         |
-| `src/Syntax/`           | AST node classes + `Parser` (recursive descent)                                                                           |
-| `src/Binding/`          | `TypeSymbol`, `MethodSymbol`, `FieldSymbol`, `Binder` — name/type resolution, layout, vtables, type checking → bound tree; `DefiniteAssignment` warnings |
+| `src/Frontend/`         | Roslyn compilation, declaration and body lowering, ArcSharp diagnostic rules                                              |
+| `src/Lexing/`           | `TokenKind` and `Diagnostic`, the kinds and messages the lowering and the emitter share                                   |
+| `src/Syntax/`           | `LiteralKind` and `RefKind`                                                                                               |
+| `src/Binding/`          | `TypeSymbol`, `MethodSymbol`, `FieldSymbol`, the bound tree, definite assignment, and cycle analysis                      |
 | `src/CodeGen/`          | `Emitter` — bound tree → LLVM IR, with ARC ops woven in                                                                   |
 | `src/Driver/`           | `Compilation` — orchestrates the stages and invokes `clang`, or `llc` and a linker                                        |
 | `src/Program.cs`        | Command-line parsing                                                                                                      |
 | `runtime/arc_runtime.c` | Object header, retain/release, weak table, type info, strings, arrays, console                                            |
-| `ref/ArcSharp.References/` | Library surface the Roslyn frontend binds against. Built with the compiler, and not loaded yet |
+| `ref/ArcSharp.References/` | Library surface Roslyn binds against. Built with the compiler and loaded from beside `arcsharp.dll` |
 | `ref/ArcSharp.References.Check/` | Snippets compiled against that assembly alone. The harness runs them |
 | `samples/`              | Example `.cs` programs used as tests                                                                                      |
 
@@ -310,12 +308,8 @@ To support this the compiler also gained minimal **generic-type parsing**
 
 This is the mechanism that lets parent⇄child and other cyclic graphs be reclaimed.
 The verification suite includes a cycle that leaks under plain strong references
-and is fully reclaimed once the back-edge is a `WeakReference<T>`.
-
-> A legacy, non-standard `weak` **field modifier** also still works (it lowers to
-> the same `arc_store_weak`/`arc_load_weak` primitives) but is not idiomatic C# and
-> will not compile with Roslyn; `WeakReference<T>` is the recommended form. Weak
-> *locals* and an `unowned` (non-zeroing) variant remain future work.
+and is fully reclaimed once the back-edge is a `WeakReference<T>`. Weak locals
+and an `unowned` (non-zeroing) variant remain future work.
 
 ---
 
@@ -431,7 +425,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
 - **Struct forms still rejected.** Arrays of structs, struct return values, static struct fields, by-value struct parameters, properties of struct type, printing a struct, `virtual`/`override` members on structs, interfaces on structs, `using` a struct resource, and self-containing structs are `ARC3001`. They belong to the full struct row.
 - **Enums, indexers, and the rest of ordinary C#.** Enums, indexers, pattern matching, records, operator overloading, partial classes, extension methods, `params`, optional and named arguments, bitwise operators and shifts, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c). A single `&` or `|` is a lexer error (`ARC0003`) today.
-- **Name handling.** A trailing `?` is parsed and ignored. Namespace names are discarded, so two types with the same simple name collide. Both are defects of the hand-written frontend, and Roslyn binding replaces them in [M1](roadmap.md#m1--roslyn-frontend).
+- **Name handling.** A trailing `?` is accepted and ignored. A namespace is part of the type's identity.
 
 ### Not part of the target
 - The rest of the .NET base class library beyond `Console`, the core library in the target, and `WeakReference<T>`.
@@ -446,7 +440,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 
 | Area                                                   | Status                                |
 |--------------------------------------------------------|---------------------------------------|
-| Lexer, parser, AST                                     | Implemented                           |
+| Roslyn frontend                                        | Implemented                           |
 | Binder: classes, inheritance, fields, methods, statics | Implemented                           |
 | Type checking (core)                                   | Implemented (lightweight)             |
 | Virtual / override dispatch (vtables)                  | Implemented                           |
@@ -475,7 +469,8 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
 | Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |
 | Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
-| Roslyn frontend and the lifetime pass | The compiler references Roslyn 4.8.0 and builds `ref/ArcSharp.References`. It still lexes, parses, and retains every read. See the [Roadmap](roadmap.md). |
+| Roslyn frontend | Landed. Roslyn parses and binds, and the lowering builds the bound tree. |
+| Lifetime pass | Not started. The emitter still retains every read. See the [Roadmap](roadmap.md). |
 
 See [Verification](verification.md) for the exact set of sample programs that
 compile and run, with ARC alloc/free accounting, and the
@@ -552,8 +547,7 @@ Still open, and not required to start the Roslyn transition:
    still needs a lifetime test, and that work waits until the lifetime pass
    exists.
 3. **`unowned`.** `WeakReference<T>` is the weak surface. A non-zeroing
-   `unowned` reference is not decided. The legacy `weak` field modifier stays
-   a compatibility alias only.
+   `unowned` reference is not decided.
 4. **Exceptions.** They are a full row of the compatibility target. Landing
    pads have to release proved and shared values, and run `using` cleanup and
    finalisers. They come after deterministic finalisers, not before.

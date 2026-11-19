@@ -1,0 +1,412 @@
+using ArcSharp.Diagnostics;
+using ArcSharp.Lexing;
+using RoslynKind = Microsoft.CodeAnalysis.TypeKind;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace ArcSharp.Frontend;
+
+sealed partial class RoslynLowering
+{
+    public void CopyRoslynDiagnostics()
+    {
+        foreach (var diagnostic in _compilation.GetDiagnostics())
+        {
+            if (diagnostic.Severity is Microsoft.CodeAnalysis.DiagnosticSeverity.Hidden or Microsoft.CodeAnalysis.DiagnosticSeverity.Info || diagnostic.IsSuppressed)
+            {
+                continue;
+            }
+
+            var severity = diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Warning
+                ? Lexing.DiagnosticSeverity.Warning
+                : Lexing.DiagnosticSeverity.Error;
+            Report(diagnostic.Location, diagnostic.GetMessage(), diagnostic.Id, severity);
+        }
+    }
+
+    public void ReportUnsupportedSyntax()
+    {
+        foreach (var tree in _compilation.SyntaxTrees)
+        {
+            var model = _compilation.GetSemanticModel(tree);
+            new SyntaxRules(this, model).Visit(tree.GetRoot());
+        }
+    }
+
+    public void ReportLifetimeRules()
+    {
+        foreach (var tree in _compilation.SyntaxTrees)
+        {
+            var model = _compilation.GetSemanticModel(tree);
+            new LifetimeRules(this, model).Visit(tree.GetRoot());
+        }
+    }
+
+    private sealed class SyntaxRules : CSharpSyntaxWalker
+    {
+        private readonly RoslynLowering _lowering;
+        private readonly SemanticModel _model;
+
+        public SyntaxRules(RoslynLowering lowering, SemanticModel model)
+        {
+            _lowering = lowering;
+            _model = model;
+        }
+
+        public override void Visit(SyntaxNode? node)
+        {
+            if (node == null)
+            {
+                return;
+            }
+
+            switch (node.Kind())
+            {
+                case SyntaxKind.BreakStatement:
+                    Reject(node, "'break' is not supported");
+                    break;
+                case SyntaxKind.ContinueStatement:
+                    Reject(node, "'continue' is not supported");
+                    break;
+                case SyntaxKind.ForEachStatement:
+                case SyntaxKind.ForEachVariableStatement:
+                    Reject(node, "'foreach' is not supported");
+                    break;
+                case SyntaxKind.TryStatement:
+                case SyntaxKind.ThrowStatement:
+                case SyntaxKind.ThrowExpression:
+                    Reject(node, "exceptions are not supported");
+                    break;
+                case SyntaxKind.SwitchStatement:
+                case SyntaxKind.SwitchExpression:
+                    Reject(node, "'switch' is not supported");
+                    break;
+                case SyntaxKind.LockStatement:
+                    Reject(node, "'lock' is not supported");
+                    break;
+                case SyntaxKind.YieldReturnStatement:
+                case SyntaxKind.YieldBreakStatement:
+                    Reject(node, "'yield' is not supported");
+                    break;
+                case SyntaxKind.CheckedStatement:
+                case SyntaxKind.CheckedExpression:
+                case SyntaxKind.UncheckedStatement:
+                case SyntaxKind.UncheckedExpression:
+                    Reject(node, "'checked' and 'unchecked' are not supported");
+                    break;
+                case SyntaxKind.UnsafeStatement:
+                    Reject(node, "'unsafe' is not supported");
+                    break;
+                case SyntaxKind.ParenthesizedLambdaExpression:
+                case SyntaxKind.SimpleLambdaExpression:
+                case SyntaxKind.AnonymousMethodExpression:
+                    Reject(node, "lambdas ('=>') are not supported");
+                    break;
+                case SyntaxKind.LocalFunctionStatement:
+                    Reject(node, "local functions are not supported");
+                    break;
+                case SyntaxKind.ArrowExpressionClause:
+                    Reject(node, "expression-bodied members are not supported");
+                    break;
+                case SyntaxKind.LeftShiftExpression:
+                case SyntaxKind.RightShiftExpression:
+                case SyntaxKind.UnsignedRightShiftExpression:
+                    Reject(node, "shift operators are not supported");
+                    break;
+                case SyntaxKind.BitwiseAndExpression:
+                case SyntaxKind.BitwiseOrExpression:
+                case SyntaxKind.ExclusiveOrExpression:
+                    Reject(node, "bitwise operators are not supported");
+                    break;
+                case SyntaxKind.PreIncrementExpression:
+                case SyntaxKind.PostIncrementExpression:
+                case SyntaxKind.PreDecrementExpression:
+                case SyntaxKind.PostDecrementExpression:
+                    Reject(node, "'++' and '--' are not supported");
+                    break;
+                case SyntaxKind.ConditionalExpression:
+                    Reject(node, "the conditional operator is not supported");
+                    break;
+                case SyntaxKind.QueryExpression:
+                    Reject(node, "query expressions are not supported");
+                    break;
+                case SyntaxKind.AwaitExpression:
+                    Reject(node, "'await' is not supported");
+                    break;
+                case SyntaxKind.RecordDeclaration:
+                case SyntaxKind.RecordStructDeclaration:
+                    Reject(node, "records are not supported");
+                    break;
+                case SyntaxKind.EnumDeclaration:
+                    Reject(node, "enums are not supported");
+                    break;
+                case SyntaxKind.DelegateDeclaration:
+                    Reject(node, "delegates are not supported");
+                    break;
+                case SyntaxKind.EventDeclaration:
+                case SyntaxKind.EventFieldDeclaration:
+                    Reject(node, "events are not supported");
+                    break;
+                case SyntaxKind.IndexerDeclaration:
+                    Reject(node, "indexers are not supported");
+                    break;
+                case SyntaxKind.DestructorDeclaration:
+                    Reject(node, "finalisers are not supported yet");
+                    break;
+                case SyntaxKind.NameColon:
+                    Reject(node, "named arguments are not supported");
+                    break;
+            }
+
+            base.Visit(node);
+        }
+
+        public override void VisitParameter(ParameterSyntax node)
+        {
+            if (node.Default != null)
+            {
+                Reject(node, "optional parameters are not supported");
+            }
+
+            base.VisitParameter(node);
+        }
+
+        public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
+        {
+            if (node.ReturnType is RefTypeSyntax)
+            {
+                Reject(node, "ref locals and ref returns are not supported: a managed reference must not outlive the call");
+            }
+
+            if (_model.GetDeclaredSymbol(node) is IMethodSymbol method
+                && method.ReturnType.TypeKind == RoslynKind.Struct
+                && method.ReturnType.SpecialType == SpecialType.None)
+            {
+                Reject(node, "struct return values are not supported yet: write through an 'out' parameter or a field instead");
+            }
+
+            base.VisitMethodDeclaration(node);
+        }
+
+        public override void VisitStructDeclaration(StructDeclarationSyntax node)
+        {
+            if (_model.GetDeclaredSymbol(node) is INamedTypeSymbol symbol && ContainsItself(symbol))
+            {
+                _lowering.Report(node, $"struct '{symbol.Name}' contains itself", DiagnosticCatalog.UnsupportedConstructId);
+            }
+
+            base.VisitStructDeclaration(node);
+        }
+
+        public override void VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node)
+        {
+            if (node.Declaration.Type is RefTypeSyntax)
+            {
+                Reject(node, "ref locals and ref returns are not supported: a managed reference must not outlive the call");
+            }
+
+            base.VisitLocalDeclarationStatement(node);
+        }
+
+        public override void VisitAttribute(AttributeSyntax node)
+        {
+            Reject(node, "attributes are not supported");
+            base.VisitAttribute(node);
+        }
+
+        public override void VisitObjectCreationExpression(ObjectCreationExpressionSyntax node)
+        {
+            if (_model.GetTypeInfo(node).Type is INamedTypeSymbol { IsAbstract: true, TypeKind: RoslynKind.Class })
+            {
+                _lowering.Report(node, $"cannot instantiate abstract class '{node.Type}'", "ARC2012");
+            }
+
+            base.VisitObjectCreationExpression(node);
+        }
+
+        public override void VisitUsingStatement(UsingStatementSyntax node)
+        {
+            var type = ResourceType(node);
+            if (type != null && type.TypeKind != RoslynKind.Error && !HasDispose(type))
+            {
+                _lowering.Report(node, $"type '{type.Name}' used in 'using' has no parameterless 'void Dispose()' method", "ARC2011");
+            }
+
+            base.VisitUsingStatement(node);
+        }
+
+        private ITypeSymbol? ResourceType(UsingStatementSyntax node)
+        {
+            if (node.Expression != null)
+            {
+                return _model.GetTypeInfo(node.Expression).Type;
+            }
+
+            var variable = node.Declaration?.Variables.FirstOrDefault();
+            return variable == null ? null : (_model.GetDeclaredSymbol(variable) as ILocalSymbol)?.Type;
+        }
+
+        private static bool HasDispose(ITypeSymbol type)
+        {
+            if (type.TypeKind == RoslynKind.Interface)
+            {
+                return type.GetMembers("Dispose").OfType<IMethodSymbol>()
+                    .Any(method => method.Parameters.Length == 0 && method.ReturnsVoid);
+            }
+
+            for (var current = type; current != null; current = current.BaseType)
+            {
+                if (current.GetMembers("Dispose").OfType<IMethodSymbol>().Any(method =>
+                        method.Parameters.Length == 0 && method.ReturnsVoid && !method.IsStatic))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool ContainsItself(INamedTypeSymbol symbol)
+        {
+            var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default);
+            return FieldContains(symbol, symbol, seen);
+        }
+
+        private static bool FieldContains(INamedTypeSymbol self, ITypeSymbol type, HashSet<ITypeSymbol> seen)
+        {
+            if (!seen.Add(type))
+            {
+                return false;
+            }
+
+            foreach (var field in type.GetMembers().OfType<IFieldSymbol>())
+            {
+                if (field.IsStatic)
+                {
+                    continue;
+                }
+
+                if (SymbolEqualityComparer.Default.Equals(field.Type, self))
+                {
+                    return true;
+                }
+
+                if (field.Type is INamedTypeSymbol { TypeKind: RoslynKind.Struct } nested && FieldContains(self, nested, seen))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void Reject(SyntaxNode node, string message) =>
+            _lowering.Report(node, message, DiagnosticCatalog.UnsupportedConstructId);
+    }
+
+    private sealed class LifetimeRules : CSharpSyntaxWalker
+    {
+        private readonly RoslynLowering _lowering;
+        private readonly SemanticModel _model;
+
+        public LifetimeRules(RoslynLowering lowering, SemanticModel model)
+        {
+            _lowering = lowering;
+            _model = model;
+        }
+
+        public override void VisitArgument(ArgumentSyntax node)
+        {
+            var kind = node.RefKindKeyword.Kind();
+            if (kind is SyntaxKind.RefKeyword or SyntaxKind.OutKeyword
+                && IsReadOnlyIn(node.Expression))
+            {
+                _lowering.Report(node, ReadOnlyMessage(node.Expression), "ARC2015");
+            }
+
+            base.VisitArgument(node);
+        }
+
+        public override void VisitAssignmentExpression(AssignmentExpressionSyntax node)
+        {
+            if (IsReadOnlyIn(node.Left))
+            {
+                _lowering.Report(node, ReadOnlyMessage(node.Left), "ARC2015");
+            }
+
+            base.VisitAssignmentExpression(node);
+        }
+
+        public override void VisitInvocationExpression(InvocationExpressionSyntax node)
+        {
+            if (node.Expression is MemberAccessExpressionSyntax access
+                && ReceiverIsStruct(access.Expression)
+                && IsReadOnlyIn(access.Expression))
+            {
+                _lowering.Report(node, ReadOnlyMessage(access.Expression), "ARC2015");
+            }
+
+            base.VisitInvocationExpression(node);
+        }
+
+        private bool IsReadOnlyIn(ExpressionSyntax expression)
+        {
+            expression = Unwrap(expression);
+            if (expression is IdentifierNameSyntax or ThisExpressionSyntax)
+            {
+                return _model.GetSymbolInfo(expression).Symbol is IParameterSymbol { RefKind: RefKind.In };
+            }
+
+            if (expression is MemberAccessExpressionSyntax access && ReceiverIsStruct(access.Expression))
+            {
+                return IsReadOnlyIn(access.Expression);
+            }
+
+            if (expression is ElementAccessExpressionSyntax element && ReceiverIsStruct(element.Expression))
+            {
+                return IsReadOnlyIn(element.Expression);
+            }
+
+            return false;
+        }
+
+        private bool ReceiverIsStruct(ExpressionSyntax expression)
+        {
+            var type = _model.GetTypeInfo(Unwrap(expression)).Type;
+            return type is { TypeKind: RoslynKind.Struct };
+        }
+
+        private string ReadOnlyMessage(ExpressionSyntax expression)
+        {
+            var name = "value";
+            var current = Unwrap(expression);
+            while (current is MemberAccessExpressionSyntax access)
+            {
+                current = Unwrap(access.Expression);
+            }
+
+            while (current is ElementAccessExpressionSyntax element)
+            {
+                current = Unwrap(element.Expression);
+            }
+
+            if (_model.GetSymbolInfo(current).Symbol is IParameterSymbol parameter)
+            {
+                name = parameter.Name;
+            }
+
+            return $"'in' parameter '{name}' is read-only";
+        }
+
+        private static ExpressionSyntax Unwrap(ExpressionSyntax expression)
+        {
+            while (expression is ParenthesizedExpressionSyntax parenthesized)
+            {
+                expression = parenthesized.Expression;
+            }
+
+            return expression;
+        }
+    }
+}
