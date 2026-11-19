@@ -99,9 +99,11 @@ lifetime pass require. The emitter, the object header, and the C runtime stay.
 That transition is the current milestone. Until it lands, the diagram above is
 the compiler.
 
-`ref/ArcSharp.References` is the library Roslyn will bind against instead of
-the .NET base class library. `dotnet build` builds it, and the compiler does
-not load it yet. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
+`ref/ArcSharp.References` is the library Roslyn binds against instead of
+the .NET base class library. `dotnet build` builds it and copies it beside
+the compiler. `--frontend roslyn` loads that copy, reports Roslyn's
+diagnostics, and does not lower a program yet. The hand-written frontend
+remains the default. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
 `System.Array`, `System.Console`, `System.WeakReference<T>`, and
 `System.IDisposable`. A call written `System.Console.WriteLine` binds to that
 type, and so does `Console.WriteLine` after `using System`. `String.Concat` and
@@ -126,7 +128,7 @@ Source layout:
 | `src/Driver/`           | `Compilation` — orchestrates the stages and invokes `clang`, or `llc` and a linker                                        |
 | `src/Program.cs`        | Command-line parsing                                                                                                      |
 | `runtime/arc_runtime.c` | Object header, retain/release, weak table, type info, strings, arrays, console                                            |
-| `ref/ArcSharp.References/` | Library surface the Roslyn frontend binds against. Built with the compiler, and not loaded yet |
+| `ref/ArcSharp.References/` | Library surface the Roslyn frontend binds against. Built with the compiler and loaded by `--frontend roslyn` |
 | `ref/ArcSharp.References.Check/` | Snippets compiled against that assembly alone. The harness runs them |
 | `samples/`              | Example `.cs` programs used as tests                                                                                      |
 

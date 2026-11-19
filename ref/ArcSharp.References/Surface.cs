@@ -8,9 +8,11 @@
 // direct call is not a supported library feature. There is no equality
 // operator on String, so == stays reference equality.
 //
-// Every type in this assembly is in namespace System, including Console.
-// System.Console.WriteLine and a using System directive both bind. There is
-// no global Console.
+// Every type a program names through `using System` is in namespace System,
+// including Console. System.Console.WriteLine and a using System directive
+// both bind. There is no global Console. The legacy `weak` modifier is
+// rewritten to ArcSharp.Runtime.WeakAttribute, which is not part of the
+// language surface.
 
 namespace System
 {
@@ -37,6 +39,16 @@ namespace System
     // has to exist as well. Enum declarations are not a supported language
     // feature; the Roslyn lowering has to reject them.
     public abstract class Enum : ValueType
+    {
+    }
+
+    // Roslyn asks for these predefined types while binding operators such as
+    // char equality. They are not a supported language feature.
+    public abstract class Delegate
+    {
+    }
+
+    public abstract class MulticastDelegate : Delegate
     {
     }
 
@@ -333,6 +345,18 @@ namespace System
         }
 
         public static void WriteLine(double value)
+        {
+        }
+    }
+}
+
+namespace ArcSharp.Runtime
+{
+    // The legacy `weak` field modifier is rewritten to this attribute before
+    // Roslyn sees the file. It is not a supported attribute to write by hand.
+    public sealed class WeakAttribute : System.Attribute
+    {
+        public WeakAttribute()
         {
         }
     }

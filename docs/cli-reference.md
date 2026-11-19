@@ -18,6 +18,8 @@ dotnet bin/Release/net11.0/arcsharp.dll <input.cs> [more.cs ...] [options]
 | `--target windows` | Yes | Emit IR for `x86_64-pc-windows-msvc`. |
 | `--target host` | | Emit IR for `x86_64-pc-linux-gnu`, whatever the machine you run on. This path is not part of the current verification. |
 | `--emit-llvm` | Off | Stop after writing the `.ll` file. |
+| `--frontend handwritten` | Yes | Lex and parse with the hand-written frontend. |
+| `--frontend roslyn` | | Parse and bind with Roslyn against `ArcSharp.References`. Lowering is not in place yet, so this path reports diagnostics and does not emit a program. |
 | `--no-bounds` | Off | Leave out array bounds checks. An out-of-range index then reads or writes arbitrary memory. |
 | `-Werror`, `--warn-as-error` | Off | Treat warnings as errors. |
 | `--llc <name>` | `llc` | The LLVM static compiler to use when `--clang` is not given. |
@@ -26,7 +28,7 @@ dotnet bin/Release/net11.0/arcsharp.dll <input.cs> [more.cs ...] [options]
 
 Every option that takes a value needs that value. If it is missing, the
 compiler reports `error: option <name> requires a value` and exits with code
-`2`. This covers `-o`, `--target`, `--runtime`, `--llc`, `--cc`, and `--clang`.
+`2`. This covers `-o`, `--target`, `--runtime`, `--llc`, `--cc`, `--clang`, and `--frontend`.
 
 If `clang`, `llc`, the `--cc` compiler, or the program started by `--run`
 cannot be started, the compiler reports `error: could not run '<tool>': ...`

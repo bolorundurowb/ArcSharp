@@ -71,10 +71,26 @@ for (var i = 0; i < args.Length; i++)
             o.Clang = clang;
             break;
         }
+        case "--frontend":
+        {
+            if (!TryTakeValue(args, ref i, a, out var frontend))
+            {
+                return 2;
+            }
+
+            if (frontend is not ("handwritten" or "roslyn"))
+            {
+                Console.Error.WriteLine("error: --frontend must be handwritten or roslyn");
+                return 2;
+            }
+
+            o.Frontend = frontend;
+            break;
+        }
         case "-h":
         case "--help":
             Console.WriteLine(
-                "usage: arcsharp <input.cs> [input2.cs ...] [-o name] [--target windows|host] [--emit-llvm] [--run] [--no-bounds] [-Werror] [--runtime path] [--llc name] [--cc name] [--clang path]");
+                "usage: arcsharp <input.cs> [input2.cs ...] [-o name] [--target windows|host] [--frontend handwritten|roslyn] [--emit-llvm] [--run] [--no-bounds] [-Werror] [--runtime path] [--llc name] [--cc name] [--clang path]");
             return 0;
         default:
             if (a.StartsWith('-'))

@@ -142,15 +142,14 @@ ARC accounting. Memory behaviour does not change.
 1. Reference `Microsoft.CodeAnalysis.CSharp` from the compiler, on the same 4.8
    line the analyser already uses. This is the one package the compiler is
    allowed to take. The shared catalogue in `analyzers/ArcSharp.Diagnostics`
-   stays free of Roslyn. **Landed.** The compiler project references 4.8.0.
-   Nothing calls Roslyn yet.
+   stays free of Roslyn.    **Landed.** The compiler project references 4.8.0.
 2. Add a reference assembly that describes exactly the surface ArcSharp
    implements: `object`, `string`, the numeric types, arrays,
    `Console.Write` and `WriteLine`, `WeakReference<T>`, and a parameterless
    `Dispose()`. Roslyn binds against that assembly, not the real base class
    library, so it cannot accept an API this compiler cannot lower. **Landed.**
-   The assembly is `ref/ArcSharp.References`. The compiler builds it and does
-   not load it yet. `String.Concat`, `Object.ToString`, `System.Enum`, and
+   The assembly is `ref/ArcSharp.References`. The compiler builds it and copies
+   it beside `arcsharp.dll`. `--frontend roslyn` loads that copy. `String.Concat`, `Object.ToString`, `System.Enum`, and
    `System.Attribute` are visible because the C# compiler requires them; a
    direct use is still not part of the language surface. The architecture
    describes those gaps. `tools/verify.ps1` runs
