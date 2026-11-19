@@ -3,7 +3,7 @@
 // dispatch, a null resource, and cleanup on the return path.
 class Count { public static int disposals; }
 
-class Logger {
+class Logger : IDisposable {
     public string name;
     public Logger(string n) { name = n; }
     public void Dispose() {
@@ -11,13 +11,13 @@ class Logger {
         Count.disposals = Count.disposals + 1;
     }
 }
-class File {
+class File : IDisposable {
     public virtual void Dispose() { Console.WriteLine("file close"); }
 }
 class TmpFile : File {
     public override void Dispose() { Console.WriteLine("tmp delete"); }
 }
-interface IResource {
+interface IResource : IDisposable {
     void Dispose();
 }
 class Db : IResource {

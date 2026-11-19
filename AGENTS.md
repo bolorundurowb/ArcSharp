@@ -74,7 +74,7 @@ Compiler command-line options (see `src/Program.cs`):
 | `-o <base>` | Output base path, without an extension |
 | `--target windows\|host` | `windows` (default) or the Linux x64 triple |
 | `--emit-llvm` | Stop after writing the `.ll` file |
-| `--frontend handwritten\|roslyn` | `handwritten` (default) or Roslyn. Roslyn lowers declarations and rejects method bodies until the next step |
+| `--frontend handwritten\|roslyn` | `handwritten` (default) or the Roslyn lowering. Both produce the same sample output |
 | `--clang <path>` | Build the `.exe` in one step with clang (the path used on Windows) |
 | `--run` | Run the produced executable |
 | `--runtime <path>` | C runtime source, default `runtime/arc_runtime.c` |

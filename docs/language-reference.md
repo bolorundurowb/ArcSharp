@@ -294,12 +294,14 @@ using (var log = new Logger("a")) { ... }      // with 'var'
 using (log) { ... }                            // expression form
 ```
 
-`IDisposable` is structural: no interface needs to be declared or implemented.
-Any type with a parameterless instance `void Dispose()` method can be a
-resource. When the resource's static type is an interface, `Dispose` is
-dispatched through the itable; otherwise a `virtual` `Dispose` dispatches
-through the vtable. The resource type must be a reference type, and the
-resource must have an initialiser. The binder reports
+On the hand-written frontend, `IDisposable` is structural: no interface needs
+to be declared or implemented, and any type with a parameterless instance
+`void Dispose()` method can be a resource. `--frontend roslyn` binds
+`System.IDisposable` from the reference assembly and requires the resource
+type to implement it. When the resource's static type is an interface,
+`Dispose` is dispatched through the itable; otherwise a `virtual` `Dispose`
+dispatches through the vtable. The resource type must be a reference type,
+and the resource must have an initialiser. The compiler reports
 [`ARC2011`](diagnostics.md#arc2011) when the resource is not disposable.
 
 Differences from .NET:

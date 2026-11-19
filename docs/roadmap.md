@@ -159,12 +159,12 @@ ARC accounting. Memory behaviour does not change.
    is `--frontend roslyn`. The hand-written path stays the default.
 4. Lower declarations from Roslyn's symbols into the existing symbols: types,
    fields, methods, properties, and generic instantiations. Layout, virtual
-   tables, and interface tables do not change. **Landed.** Method bodies are
-   the next step, so this path rejects every body with `ARC3001`.
+   tables, and interface tables do not change. **Landed.**
 5. Lower method bodies from `IOperation` into the existing bound tree. Every
    operation kind the lowering does not handle reports `ARC3001`. An unhandled
    node must not become an empty block or a silent null, which is the main
-   pitfall of the current binder.
+   pitfall of the current binder. **Landed.** `--frontend roslyn` produces the
+   same output and ARC accounting as the hand-written path.
 6. Reach diagnostic parity. ArcSharp rules keep their codes (`ARC2xxx`,
    `ARC3001`, `ARC3100`). Syntax and name errors now come from Roslyn with its
    own `CS` codes. The must-fail samples that expected a lexer or parser code

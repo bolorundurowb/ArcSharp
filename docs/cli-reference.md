@@ -19,7 +19,7 @@ dotnet bin/Release/net11.0/arcsharp.dll <input.cs> [more.cs ...] [options]
 | `--target host` | | Emit IR for `x86_64-pc-linux-gnu`, whatever the machine you run on. This path is not part of the current verification. |
 | `--emit-llvm` | Off | Stop after writing the `.ll` file. |
 | `--frontend handwritten` | Yes | Lex and parse with the hand-written frontend. |
-| `--frontend roslyn` | | Parse and bind with Roslyn against `ArcSharp.References`, and lower declarations. Method bodies are rejected until they are lowered. |
+| `--frontend roslyn` | | Parse, bind, and lower with Roslyn against `ArcSharp.References`. The hand-written frontend stays the default. |
 | `--no-bounds` | Off | Leave out array bounds checks. An out-of-range index then reads or writes arbitrary memory. |
 | `-Werror`, `--warn-as-error` | Off | Treat warnings as errors. |
 | `--llc <name>` | `llc` | The LLVM static compiler to use when `--clang` is not given. |

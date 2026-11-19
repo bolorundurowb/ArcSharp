@@ -149,9 +149,22 @@ public static class Compilation
         return 0;
     }
 
+    // The handwritten frontend does not know System.IDisposable. The prelude
+    // keeps samples that implement it compiling on this path. The Roslyn path
+    // binds the interface from the reference assembly instead.
     private static BoundProgram BindHandwritten(List<string> inputs, List<(string file, Diagnostic d)> diags)
     {
         var units = new List<CompilationUnit>();
+        var prelude = new Lexer("interface IDisposable { void Dispose(); }");
+        var preludeParser = new Parser(prelude.Lex());
+        var preludeUnit = preludeParser.ParseCompilationUnit();
+        preludeUnit.File = "";
+        units.Add(preludeUnit);
+        foreach (var d in prelude.Diagnostics.Concat(preludeParser.Diagnostics))
+        {
+            diags.Add(("", d));
+        }
+
         foreach (var input in inputs)
         {
             var src = File.ReadAllText(input);
@@ -166,7 +179,8 @@ public static class Compilation
             }
         }
 
-        var program = new Binder().Bind(units);
+        var binder = new Binder();
+        var program = binder.Bind(units);
         foreach (var d in program.Diagnostics)
         {
             diags.Add(("", d));
