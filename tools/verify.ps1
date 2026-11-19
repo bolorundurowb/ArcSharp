@@ -71,7 +71,7 @@ try {
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/$Name"
-        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--frontend", "roslyn", "--run")
         $run = Invoke-Captured (@($dll) + $a)
         $out = $run.Out
         $err = $run.Err
@@ -101,7 +101,7 @@ try {
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/leak_$Name"
-        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--frontend", "roslyn", "--run")
         $run = Invoke-Captured -Arguments (@($dll) + $a) -Environment @{ ARC_LEAKS = "1" }
         $out = $run.Out
         $err = $run.Err
@@ -131,7 +131,7 @@ try {
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/negative/$_.cs" })
         $outBase = Join-Path $build "out/neg_$Name"
-        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--emit-llvm")
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--frontend", "roslyn", "--emit-llvm")
         $run = Invoke-Captured (@($dll) + $a)
         $text = $run.Out + $run.Err
         $ok = ($run.ExitCode -ne 0) -and ($text -match [regex]::Escape($Code))
@@ -175,7 +175,7 @@ try {
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/warn_$Name"
-        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--emit-llvm")
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--frontend", "roslyn", "--emit-llvm")
         $run = Invoke-Captured (@($dll) + $a)
         $text = $run.Out + $run.Err
         $found = $text -match [regex]::Escape($Code)
@@ -277,21 +277,21 @@ try {
     ) @("root=static")
     Invoke-LeakCheck cycle_weak 0 "done (weak cycle)" @("cycle_weak") @() @("\[arc\] survivor")
 
-    Write-Host "--- unsupported constructs must be rejected (ARC3001 / ARC0003 / ARC0004 / ARC2011 / ARC2012 / ARC2015) ---"
+    Write-Host "--- unsupported constructs must be rejected (ARC3001 / CS / ARC2011 / ARC2012 / ARC2013 / ARC2015) ---"
     Invoke-MustFail break           "ARC3001" @("break")
     Invoke-MustFail try             "ARC3001" @("try")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
     Invoke-MustFail lambda          "ARC3001" @("lambda")
-    Invoke-MustFail generic         "ARC2013" @("generic")
-    Invoke-MustFail generic_arity "ARC2013" @("generic_arity")
-    Invoke-MustFail generic_constraint "ARC2014" @("generic_constraint")
-    Invoke-MustFail generic_interface_constraint "ARC2014" @("generic_interface_constraint")
-    Invoke-MustFail generic_method_constraint "ARC2014" @("generic_method_constraint")
-    Invoke-MustFail generic_constructor_constraint "ARC2014" @("generic_constructor_constraint")
+    Invoke-MustFail generic         "CS0246" @("generic")
+    Invoke-MustFail generic_arity "CS0305" @("generic_arity")
+    Invoke-MustFail generic_constraint "CS0452" @("generic_constraint")
+    Invoke-MustFail generic_interface_constraint "CS0311" @("generic_interface_constraint")
+    Invoke-MustFail generic_method_constraint "CS0453" @("generic_method_constraint")
+    Invoke-MustFail generic_constructor_constraint "CS0310" @("generic_constructor_constraint")
     Invoke-MustFail generic_expansion "ARC2013" @("generic_expansion")
     Invoke-MustFail generic_virtual_method "ARC3001" @("generic_virtual_method")
-    Invoke-MustFail shift_right "ARC0003" @("shift_right")
-    Invoke-MustFail shift           "ARC0003" @("shift")
+    Invoke-MustFail shift_right "ARC3001" @("shift_right")
+    Invoke-MustFail shift           "ARC3001" @("shift")
     Invoke-MustFail expression_body "ARC3001" @("expression_body")
     Invoke-MustFail named_arg       "ARC3001" @("named_arg")
     Invoke-MustFail optional_param  "ARC3001" @("optional_param")
@@ -299,7 +299,7 @@ try {
     Invoke-MustFail struct_self     "ARC3001" @("struct_self")
     Invoke-MustFail struct_return   "ARC3001" @("struct_return")
     Invoke-MustFail using_bad       "ARC2011" @("using_bad")
-    Invoke-MustFail bad_escape      "ARC0004" @("bad_escape")
+    Invoke-MustFail bad_escape      "CS1009" @("bad_escape")
     Invoke-MustFail abstract_new    "ARC2012" @("abstract_new")
     Invoke-MustFail ref_escape      "ARC3001" @("ref_escape")
     Invoke-MustFail ref_owner       "ARC2015" @("ref_owner")

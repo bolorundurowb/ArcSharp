@@ -169,7 +169,8 @@ ARC accounting. Memory behaviour does not change.
    `ARC3001`, `ARC3100`). Syntax and name errors now come from Roslyn with its
    own `CS` codes. The must-fail samples that expected a lexer or parser code
    are updated to expect the Roslyn error. The retired `ARC0xxx` and `ARC1xxx`
-   codes stay reserved and are not reused.
+   codes stay reserved and are not reused. **Landed.** `tools\verify.ps1`
+   compiles and runs every sample with `--frontend roslyn`.
 7. Make the Roslyn path the default. Delete the hand-written lexer, parser, and
    name resolution, and remove the temporary option. Definite assignment, cycle
    analysis, layout, and emission stay until each has a checked replacement.
