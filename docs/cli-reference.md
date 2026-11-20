@@ -53,6 +53,11 @@ Set the environment variable `ARC_LEAKS` to `1` before running a program to
 print a survivor line for each object still alive when `Main` returns. The
 accounting line is unchanged. See [Finding leaks](memory-model.md#finding-leaks).
 
+Set `ARC_STATS` to `1` to print `[arc-stats] retain=R release=S` on the next
+line. That count is the strong retain and release traffic for the run. It is
+separate from the accounting line, which keeps its format. See
+[Retain and release statistics](features/arc-statistics.md).
+
 If you call the compiler from a script, do not treat output on standard error
 as a failure. Check the exit code instead. `tools/verify.ps1` shows one way to
 capture both streams from PowerShell.

@@ -468,6 +468,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Field initialisers                                     | Parsed and discarded (defect)         |
 | Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
 | Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |
+| Retain and release statistics (`ARC_STATS=1`) | Implemented: opt-in `[arc-stats]` line. The `[arc]` line is unchanged |
 | Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 | Roslyn frontend | Landed. Roslyn parses and binds, and the lowering builds the bound tree. |
 | Lifetime pass | Not started. The emitter still retains every read. See the [Roadmap](roadmap.md). |

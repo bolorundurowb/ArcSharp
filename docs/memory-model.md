@@ -366,8 +366,14 @@ Every program prints its accounting line when `Main` returns:
 
 `live` is the number of objects that were never destroyed. If it is not zero,
 set the environment variable `ARC_LEAKS` to `1` and run the program again. The
-accounting line is unchanged. After it, the runtime prints one line for each
-object that is still alive:
+accounting line is unchanged. Set `ARC_STATS` to `1` to print
+`[arc-stats] retain=R release=S` after that line and before any survivor
+report. The two lines measure different things: the accounting line counts
+objects, and the statistics line counts strong retains and releases. See
+[Retain and release statistics](features/arc-statistics.md).
+
+With `ARC_LEAKS=1`, the runtime then prints one line for each object that is
+still alive:
 
 ```text
 [arc] survivor addr=<address> type=<type> strong=<n> weak=<n> site=<file:line> root=static|unreachable
