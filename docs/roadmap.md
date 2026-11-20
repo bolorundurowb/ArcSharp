@@ -121,6 +121,8 @@ results are in [Verification](verification.md).
 - `using` with an explicit `Dispose()` on the normal completion path.
 - `WeakReference<T>`, the `ARC3100` cycle warning, and the opt-in leak report
   (`ARC_LEAKS=1`).
+- An opt-in retain and release count (`ARC_STATS=1`). The baseline for every
+  sample is in [Verification](verification.md).
 - Interior-reference owner pins for the duration of a call.
 - Diagnostics with stable codes and severities, `-Werror`, definite-assignment
   warnings (`ARC2100`), and `ARC3001` for unsupported constructs.
@@ -212,6 +214,7 @@ release, a use after free, or a moved destruction without the harness noticing.
 2. Add an opt-in statistics line with the number of retains and releases each
    run performs. It is separate from the `[arc]` accounting line, whose format
    the harness depends on. Record the baseline for every sample.
+   **Landed.** See [Retain and release statistics](features/arc-statistics.md).
 3. Check exact `alloc`, `dead`, and `freed` counts for every sample, not only
    `live`.
 4. Add samples that observe destruction points directly: a `WeakReference<T>`

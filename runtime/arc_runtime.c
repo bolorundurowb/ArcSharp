@@ -60,6 +60,8 @@ int arc_is_instance(void* obj, TypeInfo* target);
 static long long g_alloc = 0;   /* total objects allocated                    */
 static long long g_dead  = 0;   /* objects whose strong count reached 0        */
 static long long g_free  = 0;   /* allocations actually freed (weak hit 0)     */
+static long long g_retain = 0;  /* strong-count increments after allocation   */
+static long long g_release = 0; /* strong-count decrements                     */
 
 /* Registry of objects with storage still owned by ARC. Nodes are plain
    malloc blocks and do not count towards ARC accounting. */
@@ -73,6 +75,7 @@ static ArcRec* g_recs = 0;
 static ArcRec* g_quarantine = 0;
 static int g_leaks = -1; /* -1 unknown, 0 off, 1 on */
 static int g_checks = -1;
+static int g_stats = -1;
 static void*** g_roots = 0;
 static intptr_t g_root_count = 0;
 static void arc_report_leaks(void);
@@ -131,6 +134,16 @@ static int leaks_on(void) {
     return g_leaks;
 }
 
+/* Printed only. The counters themselves always advance, so a report from an
+   early runtime failure still shows the operations performed so far. */
+static int stats_on(void) {
+    if (g_stats < 0) {
+        const char* e = getenv("ARC_STATS");
+        g_stats = e && strcmp(e, "1") == 0;
+    }
+    return g_stats;
+}
+
 static void track(ObjHeader* h, const char* site) {
     ArcRec* r;
     if (!checks_on() && !leaks_on()) {
@@ -178,6 +191,10 @@ void arc_set_roots(void*** roots, intptr_t count) {
 void arc_report(void) {
     fprintf(stderr, "[arc] alloc=%lld dead=%lld freed=%lld live=%lld\n",
             g_alloc, g_dead, g_free, g_alloc - g_dead);
+    if (stats_on()) {
+        fprintf(stderr, "[arc-stats] retain=%lld release=%lld\n",
+                g_retain, g_release);
+    }
     if (leaks_on()) arc_report_leaks();
 }
 long long arc_live_count(void) { return g_alloc - g_dead; }
@@ -198,6 +215,7 @@ void arc_retain(void* p) {
         ObjHeader* h = (ObjHeader*)p;
         check_header("retain", h, 1);
         h->strong++;
+        g_retain++;
     }
 }
 
@@ -226,6 +244,7 @@ void arc_release(void* p) {
     if (!p) return;
     ObjHeader* h = (ObjHeader*)p;
     check_header("release", h, 1);
+    g_release++;
     if (--h->strong == 0) {
         if (h->type && h->type->deinit) h->type->deinit(h);
         g_dead++;
@@ -264,6 +283,7 @@ void* arc_load_weak(void** slot) {
     check_header("weak load", h, 0);
     if (h->strong <= 0) return 0;   /* object logically destroyed */
     h->strong++;
+    g_retain++;
     return h;
 }
 

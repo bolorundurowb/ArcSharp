@@ -79,6 +79,54 @@ name an unreachable cycle (`Parent -> Child -> Parent`, and
 survivor lines. The accounting totals above are unchanged when the report is
 off.
 
+## Retain and release baseline
+
+`ARC_STATS=1` prints `[arc-stats] retain=R release=S` after the accounting
+line. A retain is a strong-count increment after allocation, and a release is
+a strong-count decrement. The harness does not assert these counts. They are
+the baseline the lifetime pass has to come in under. See
+[Retain and release statistics](features/arc-statistics.md).
+
+The counts below were taken on 20 November 2026 with `ARC_CHECK=1` and
+`ARC_STATS=1`, on the same Windows x64 path as the table above. For every
+sample except `leaks`, `release = retain + dead`. In `leaks` the shared
+`Cell[]` is stored in both cells, so that array still has a strong count of 2
+and the release count is one below `retain + dead`. The other five survivors
+in that run have a strong count of 1.
+
+| Sample | Retains | Releases |
+|---|---:|---:|
+| `inherit` | 17 | 22 |
+| `interface` | 11 | 19 |
+| `refarray` | 26 | 33 |
+| `statics` | 0 | 3 |
+| `fib` | 0 | 22 |
+| `floats` | 0 | 7 |
+| `weak_null` | 7 | 11 |
+| `cycle_weak` | 7 | 11 |
+| `cycle_weakref` | 7 | 11 |
+| `weakref_get` | 7 | 11 |
+| `cycle_strong` | 7 | 8 |
+| `cycle_struct` | 6 | 7 |
+| `multifile` | 1 | 5 |
+| `numerics` | 0 | 0 |
+| `byref` | 0 | 0 |
+| `properties` | 11 | 13 |
+| `isas` | 6 | 11 |
+| `covariance` | 2 | 5 |
+| `longconcat` | 0 | 7 |
+| `using_stmt` | 21 | 46 |
+| `structs` | 18 | 84 |
+| `boolprint` | 0 | 9 |
+| `unicode` | 0 | 9 |
+| `overloads` | 4 | 23 |
+| `charprint` | 0 | 5 |
+| `staticprop` | 0 | 3 |
+| `leaks` | 21 | 21 |
+| `generics` | 141 | 213 |
+| `generic_structs` | 16 | 44 |
+| `owners` | 29 | 62 |
+
 ## Diagnostics
 
 Diagnostics print with a stable code and a severity, for example

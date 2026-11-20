@@ -254,7 +254,9 @@ destructors are `@<Type>__deinit`.
   There is no exception handling yet.
 - `arc_report()` prints `[arc] alloc=A dead=D freed=F live=L` to stderr at the
   end of `Main`. The harness depends on that exact format. Do not change it
-  without updating `tools/verify.ps1`.
+  without updating `tools/verify.ps1`. `ARC_STATS=1` prints
+  `[arc-stats] retain=R release=S` on the following line. That line is not
+  part of the harness format.
 - Keep the runtime portable C with only the standard library. It is compiled
   with clang for Windows and with gcc or clang on Linux.
 - Windows x64 uses the LLP64 model: C `long` is 32 bits there, while it is 64

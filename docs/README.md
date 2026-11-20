@@ -38,6 +38,7 @@ before you rely on it for anything beyond experiments.
 ## Feature implementation
 
 - [ARC checking mode](features/arc-checking-mode.md)
+- [Retain and release statistics](features/arc-statistics.md)
 
 ## Logo
 
