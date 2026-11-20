@@ -8,8 +8,9 @@ See [Getting started](getting-started.md) for the prerequisites.
 The harness builds the compiler with the .NET 11 SDK selected by `global.json`,
 compiles each sample in `samples/` to LLVM IR, uses `clang` to lower the IR and
 link it with `runtime/arc_runtime.c` into a native Windows x64 `.exe`
-(`x86_64-pc-windows-msvc`), runs it, and checks both program output **and** ARC
-accounting. It runs every sample with [ARC checking](features/arc-checking-mode.md)
+(`x86_64-pc-windows-msvc`), runs it, and checks both program output **and** the
+exact `alloc`, `dead`, `freed`, and `live` counts on the `[arc]` line. It runs
+every sample with [ARC checking](features/arc-checking-mode.md)
 enabled. It also compiles the must-fail samples, checks the `ARC3100` cycle
 warnings, runs the analyser unit tests, and checks the reference assembly
 surface. The compiler can also emit the Linux
@@ -19,7 +20,8 @@ Linux only the triple, data layout, and the C runtime build differ.
 Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 `alloc` = objects created, `dead` = objects whose strong count hit 0 (destructor
 ran), `freed` = allocations whose weak count reached zero, `live` = `alloc − dead` (objects
-still retained at exit). **`live=0` means no leaks.**
+still retained at exit). **`live=0` means no leaks.** The harness compares
+all four numbers. In this run, `freed` equals `dead` for every sample.
 
 ## Results (30 samples, Windows x64, 20 November 2026)
 
@@ -33,32 +35,32 @@ object was reclaimed.
 
 | Sample | Exercises | ARC accounting | Output |
 |---|---|---|---|
-| `inherit` | single inheritance, `virtual`/`override`, `: base(...)`, arrays, `for`, string concat | alloc=5 dead=5 **live=0** | `25`, `sum=42` |
-| `interface` | interface declaration and dispatch through an interface-typed variable (itable) | alloc=8 dead=8 **live=0** | `rect=12`, `circle=75` |
-| `refarray` | `T[]` of reference elements; per-element release on array teardown | alloc=7 dead=7 **live=0** | `refarray sum=5` |
-| `statics` | static fields and static methods, `int Main()` exit code | alloc=3 dead=3 **live=0** | `count=3` |
-| `fib` | recursion, `long` return, `while`, `Console.Write` | alloc=22 dead=22 **live=0** | `fib(10)=55` |
-| `floats` | `float`/`double` literals, arithmetic, comparisons, string concat | alloc=7 dead=7 **live=0** | `area=19.6349` |
-| `weak_null` | a `WeakReference<T>` whose target is destroyed, so `TryGetTarget` returns false | alloc=4 dead=4 **live=0** | `weak-after-death is null: PASS` |
-| `cycle_weak` | parent/child graph broken with `WeakReference<T>` | alloc=4 dead=4 **live=0** | `done (weak cycle)` |
-| `cycle_weakref` | the same cycle, also broken with `WeakReference<T>` | alloc=4 dead=4 **live=0** | `done (WeakReference cycle)` |
-| `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 **live=0** | `false (PASS under ARC)` |
-| `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 **live=2** | `done (strong cycle)` |
-| `cycle_struct` | a **strong** cycle that runs through an inline struct field | alloc=3 dead=1 **live=2** | `done (struct cycle)` |
-| `multifile` | `mf_main.cs` and `mf_lib.cs` compiled together; `Greeter` is declared in one file and used from the other | alloc=4 dead=4 **live=0** | `twice=42` |
-| `numerics` | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong`, unsigned arithmetic, casts | alloc=0 dead=0 **live=0** | `150` |
-| `byref` | `ref`, `out`, and `in` parameters | alloc=0 dead=0 **live=0** | `3` |
-| `properties` | auto-properties | alloc=2 dead=2 **live=0** | `Alice` |
+| `inherit` | single inheritance, `virtual`/`override`, `: base(...)`, arrays, `for`, string concat | alloc=5 dead=5 freed=5 **live=0** | `25`, `sum=42` |
+| `interface` | interface declaration and dispatch through an interface-typed variable (itable) | alloc=8 dead=8 freed=8 **live=0** | `rect=12`, `circle=75` |
+| `refarray` | `T[]` of reference elements; per-element release on array teardown | alloc=7 dead=7 freed=7 **live=0** | `refarray sum=5` |
+| `statics` | static fields and static methods, `int Main()` exit code | alloc=3 dead=3 freed=3 **live=0** | `count=3` |
+| `fib` | recursion, `long` return, `while`, `Console.Write` | alloc=22 dead=22 freed=22 **live=0** | `fib(10)=55` |
+| `floats` | `float`/`double` literals, arithmetic, comparisons, string concat | alloc=7 dead=7 freed=7 **live=0** | `area=19.6349` |
+| `weak_null` | a `WeakReference<T>` whose target is destroyed, so `TryGetTarget` returns false | alloc=4 dead=4 freed=4 **live=0** | `weak-after-death is null: PASS` |
+| `cycle_weak` | parent/child graph broken with `WeakReference<T>` | alloc=4 dead=4 freed=4 **live=0** | `done (weak cycle)` |
+| `cycle_weakref` | the same cycle, also broken with `WeakReference<T>` | alloc=4 dead=4 freed=4 **live=0** | `done (WeakReference cycle)` |
+| `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 freed=4 **live=0** | `false (PASS under ARC)` |
+| `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 freed=1 **live=2** | `done (strong cycle)` |
+| `cycle_struct` | a **strong** cycle that runs through an inline struct field | alloc=3 dead=1 freed=1 **live=2** | `done (struct cycle)` |
+| `multifile` | `mf_main.cs` and `mf_lib.cs` compiled together; `Greeter` is declared in one file and used from the other | alloc=4 dead=4 freed=4 **live=0** | `twice=42` |
+| `numerics` | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong`, unsigned arithmetic, casts | alloc=0 dead=0 freed=0 **live=0** | `150` |
+| `byref` | `ref`, `out`, and `in` parameters | alloc=0 dead=0 freed=0 **live=0** | `3` |
+| `properties` | auto-properties | alloc=2 dead=2 freed=2 **live=0** | `Alice` |
 | `isas` | `is` and `as` runtime type checks | alloc=5 dead=5 freed=5 **live=0** | `as Cat: null` |
-| `covariance` | covariant store of a compatible reference element | alloc=3 dead=3 **live=0** | `stored Dog` |
-| `longconcat` | `long` and `uint` values converted to strings by concatenation; regression test for the 32-bit `long` truncation on Windows | alloc=7 dead=7 **live=0** | `concat=20000000000 uint=3000000000` |
-| `using_stmt` | `using`/`IDisposable`: declaration and expression forms, virtual and itable dispatch of `Dispose`, a `null` resource (cleanup skipped), and cleanup on the `return` path | alloc=25 dead=25 **live=0** | `dispose a`, `tmp delete`, `db closed`, `disposals=3` |
-| `structs` | struct code generation: value semantics, reference fields, `ref`/`out`, structs inside classes, nested structs, and a temporary struct method call | alloc=66 dead=66 **live=0** | `a.sum=5`, `card=card copy tags=1,2`, `temp=42` |
-| `boolprint` | `Console.WriteLine` of a false comparison, and concatenation of `bool` values | alloc=9 dead=9 **live=0** | `cmp=False/True direct=False` |
-| `unicode` | `\u` and `\U` escapes in a string and a character literal | alloc=9 dead=9 **live=0** | `A`, `letter=A match=True bytes=4` |
-| `overloads` | static and instance methods that share a name and an arity, chosen by argument type | alloc=19 dead=19 **live=0** | `int=7 str=ok 4 4` |
-| `charprint` | `Console.WriteLine` of a `char`, and concatenation of a `char` | alloc=5 dead=5 **live=0** | `concat=B direct=A` |
-| `staticprop` | a static auto-property, read and written | alloc=3 dead=3 **live=0** | `count=4` |
+| `covariance` | covariant store of a compatible reference element | alloc=3 dead=3 freed=3 **live=0** | `stored Dog` |
+| `longconcat` | `long` and `uint` values converted to strings by concatenation; regression test for the 32-bit `long` truncation on Windows | alloc=7 dead=7 freed=7 **live=0** | `concat=20000000000 uint=3000000000` |
+| `using_stmt` | `using`/`IDisposable`: declaration and expression forms, virtual and itable dispatch of `Dispose`, a `null` resource (cleanup skipped), and cleanup on the `return` path | alloc=25 dead=25 freed=25 **live=0** | `dispose a`, `tmp delete`, `db closed`, `disposals=3` |
+| `structs` | struct code generation: value semantics, reference fields, `ref`/`out`, structs inside classes, nested structs, and a temporary struct method call | alloc=66 dead=66 freed=66 **live=0** | `a.sum=5`, `card=card copy tags=1,2`, `temp=42` |
+| `boolprint` | `Console.WriteLine` of a false comparison, and concatenation of `bool` values | alloc=9 dead=9 freed=9 **live=0** | `cmp=False/True direct=False` |
+| `unicode` | `\u` and `\U` escapes in a string and a character literal | alloc=9 dead=9 freed=9 **live=0** | `A`, `letter=A match=True bytes=4` |
+| `overloads` | static and instance methods that share a name and an arity, chosen by argument type | alloc=19 dead=19 freed=19 **live=0** | `int=7 str=ok 4 4` |
+| `charprint` | `Console.WriteLine` of a `char`, and concatenation of a `char` | alloc=5 dead=5 freed=5 **live=0** | `concat=B direct=A` |
+| `staticprop` | a static auto-property, read and written | alloc=3 dead=3 freed=3 **live=0** | `count=4` |
 | `leaks` | a static root, an unreachable class cycle, and an unreachable cycle through a reference array. With `ARC_LEAKS=1` the report marks `Node` as `root=static` and the others as `root=unreachable`, and prints the `Parent`/`Child` and `<ref[]>`/`Cell` cycles | alloc=7 dead=1 freed=1 **live=6** | `leaks reported` |
 | `generics` | two-file generic classes/interfaces, generic bases and virtual dispatch, methods and inference, recursion, independent statics, arrays and weak references as arguments, constraints, and primitive default construction | alloc=72 dead=72 freed=72 **live=0** | `generic=42,hello`, `dispatch=7,7`, `infer=11,hello,9`, `owners=after,hello,made`, `counts=2,1`, `arrays=11,array`, `weak=made`, `types=True,True`, `generics PASS` |
 | `generic_structs` | specialised struct copies, reference fields, nested wide values, managed-reference generic methods, and class field offsets | alloc=28 dead=28 freed=28 **live=0** | `copies=first,second,wide`, `layout=20,30,99,40` |
@@ -83,8 +85,9 @@ off.
 
 `ARC_STATS=1` prints `[arc-stats] retain=R release=S` after the accounting
 line. A retain is a strong-count increment after allocation, and a release is
-a strong-count decrement. The harness does not assert these counts. They are
-the baseline the lifetime pass has to come in under. See
+a strong-count decrement. The harness checks `alloc`, `dead`, `freed`, and
+`live`. It does not assert the retain and release counts. They are the
+baseline the lifetime pass has to come in under. See
 [Retain and release statistics](features/arc-statistics.md).
 
 The counts below were taken on 20 November 2026 with `ARC_CHECK=1` and
@@ -163,15 +166,15 @@ check.
 back-reference is the only difference:
 
 ```
-cycle_strong:  public Parent owner;                         ->  alloc=3 dead=1 live=2   (LEAK)
-cycle_weak:    public WeakReference<Parent> owner;         ->  alloc=4 dead=4 live=0   (reclaimed)
+cycle_strong:  public Parent owner;                         ->  alloc=3 dead=1 freed=1 live=2   (LEAK)
+cycle_weak:    public WeakReference<Parent> owner;         ->  alloc=4 dead=4 freed=4 live=0   (reclaimed)
 ```
 
 This is exactly the fundamental ARC trade-off made concrete: pure reference
 counting cannot reclaim a strong cycle (two objects leak), and
 `WeakReference<T>` breaks the cycle so deterministic reclamation succeeds.
 The extra allocation is the `WeakReference<T>` object. `cycle_weakref` is the
-same shape (alloc=4 dead=4 live=0).
+same shape (alloc=4 dead=4 freed=4 live=0).
 `cycle_struct` shows that a cycle through an inline struct field leaks in the
 same way, and that `ARC3100` sees the class reference inside the struct. The
 leaks in `cycle_strong` and `cycle_struct` are **expected and asserted** by the

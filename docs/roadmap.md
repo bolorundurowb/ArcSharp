@@ -123,6 +123,7 @@ results are in [Verification](verification.md).
   (`ARC_LEAKS=1`).
 - An opt-in retain and release count (`ARC_STATS=1`). The baseline for every
   sample is in [Verification](verification.md).
+- The harness checks exact `alloc`, `dead`, `freed`, and `live` counts.
 - Interior-reference owner pins for the duration of a call.
 - Diagnostics with stable codes and severities, `-Werror`, definite-assignment
   warnings (`ARC2100`), and `ARC3001` for unsupported constructs.
@@ -217,6 +218,8 @@ release, a use after free, or a moved destruction without the harness noticing.
    **Landed.** See [Retain and release statistics](features/arc-statistics.md).
 3. Check exact `alloc`, `dead`, and `freed` counts for every sample, not only
    `live`.
+   **Landed.** `tools\verify.ps1` compares all four fields on every sample,
+   including the `ARC_LEAKS=1` runs.
 4. Add samples that observe destruction points directly: a `WeakReference<T>`
    that must turn `false` at a specific statement. These become the evidence
    that later milestones keep destruction in place.

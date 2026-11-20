@@ -27,8 +27,9 @@ reason to stderr and exits with code 70.
 ## Verification
 
 `tools/verify.ps1` enables checking for every executed sample, including
-the runs with `ARC_LEAKS=1`. It checks observable output and expected live
-counts, and rejects any `[arc-check]` diagnostic.
+the runs with `ARC_LEAKS=1`. It checks observable output and the expected
+`alloc`, `dead`, `freed`, and `live` counts, and rejects any `[arc-check]`
+diagnostic.
 
 The checked `isas` sample exposed a double release on a successful `as`
 cast. The emitter now retains the selected result so the receiving slot
