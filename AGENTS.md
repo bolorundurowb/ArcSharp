@@ -440,6 +440,9 @@ of the milestones.
 
 ## Git workflow
 
+- New branch names must start with `ft/` for features, `bg/` for bug fixes,
+  `doc/` for documentation, or `ch/` for other changes. These are the only
+  allowed branch prefixes.
 - Make small commits, each grouped by one effect on the code.
 - Commit messages use a type prefix and a lower-case summary:
   `ft:` feature, `ch:` change, `bg:` bug fix, `doc:` documentation, `tst:` tests.
