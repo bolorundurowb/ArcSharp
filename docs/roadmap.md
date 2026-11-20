@@ -106,8 +106,9 @@ and threads are not targets.
 
 ## Where we are
 
-Each of these was run on Windows x64 with `tools\verify.ps1`. There is no CI
-yet. The latest results are in [Verification](verification.md).
+Each of these was run on Windows x64 with `tools\verify.ps1`. GitHub Actions
+runs the same harness for pull requests targeting `master`. The latest local
+results are in [Verification](verification.md).
 
 - The pipeline from C# to LLVM IR to a native executable, with ARC accounting
   on every run.
