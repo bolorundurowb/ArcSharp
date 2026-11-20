@@ -287,8 +287,9 @@ enclosing method because bound nodes do not carry source positions.
 
 ## Testing
 
-`tools/verify.ps1` is the only test gate. There is no CI yet. The harness builds
-the compiler and compiles every sample with clang. It runs each executable and
+`tools/verify.ps1` is the only test gate. GitHub Actions runs it on Windows x64
+for pull requests targeting `master`. The harness builds the compiler and
+compiles every sample with clang. It runs each executable and
 checks two things:
 
 1. The program's stdout contains an expected substring.
