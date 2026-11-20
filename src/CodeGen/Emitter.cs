@@ -1857,12 +1857,17 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
     private string EmitAs(BoundAs a)
     {
         var v = EmitR(a.Operand);
-        if (a.Operand.Type.IsReferenceType) _stmtTemps.Add(v);
+        if (a.Operand.Type.IsReferenceType)
+        {
+            _stmtTemps.Add(v);
+        }
+
         var r = Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{a.TestType.Name}__ti)");
         var ok = Inst($"icmp ne i32 {r}, 0");
-        var cast = Inst($"bitcast i8* {v} to i8*");
-        var nullPtr = "null";
-        return Inst($"select i1 {ok}, i8* {cast}, i8* {nullPtr}");
+        var result = Inst($"select i1 {ok}, i8* {v}, i8* null");
+        // The operand's retain is already scheduled for statement cleanup.
+        Do($"call void @arc_retain(i8* {result})");
+        return result;
     }
 
     private string EmitWeakRefNew(BoundWeakRefNew n)

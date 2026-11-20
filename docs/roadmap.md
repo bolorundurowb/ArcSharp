@@ -207,6 +207,7 @@ release, a use after free, or a moved destruction without the harness noticing.
 1. Add a runtime checking mode that traps a retain or a release of a dead
    object, a strong count that goes below zero, and a weak load of freed
    memory. The harness runs every sample with it switched on.
+   **Landed.** See [ARC checking mode](features/arc-checking-mode.md).
 2. Add an opt-in statistics line with the number of retains and releases each
    run performs. It is separate from the `[arc]` accounting line, whose format
    the harness depends on. Record the baseline for every sample.

@@ -17,11 +17,9 @@ stay installed alongside it.
 
 ### `compilation failed: N error(s)`
 
-Read the first error; later ones are often caused by it. Each code is explained
-in [Diagnostics](diagnostics.md). A long run of `ARC1001` errors usually comes
-from one unsupported construct. Constructs the compiler recognises are reported
-as `ARC3001` instead, so look for that code first when the feature is listed in
-the [Language reference](language-reference.md#not-supported).
+Start with the first error, since later diagnostics can follow from it. Roslyn
+reports C# errors with `CS` codes. ArcSharp reports unsupported constructs with
+`ARC3001`. See [Diagnostics](diagnostics.md) for ArcSharp's codes.
 
 ### `error: could not run 'llc'`
 

@@ -73,7 +73,7 @@ When the program is run, its exit codes include:
 |---|---|
 | `0` | `Main` returned normally, or `static int Main()` returned `0`. |
 | Any value | The value returned by `static int Main()`. |
-| `70` | A runtime check failed, such as an array index out of range or an array type mismatch. |
+| `70` | A runtime check failed, such as an array index out of range, an array type mismatch, or an [ARC checking mode](features/arc-checking-mode.md) violation. |
 | `-1073741819` (`0xC0000005`) | Access violation, usually a null reference. |
 | `-1073741676` (`0xC0000094`) | Integer division by zero. |
 

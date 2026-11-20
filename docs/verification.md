@@ -9,7 +9,8 @@ The harness builds the compiler with the .NET 11 SDK selected by `global.json`,
 compiles each sample in `samples/` to LLVM IR, uses `clang` to lower the IR and
 link it with `runtime/arc_runtime.c` into a native Windows x64 `.exe`
 (`x86_64-pc-windows-msvc`), runs it, and checks both program output **and** ARC
-accounting. It also compiles the must-fail samples, checks the `ARC3100` cycle
+accounting. It runs every sample with [ARC checking](features/arc-checking-mode.md)
+enabled. It also compiles the must-fail samples, checks the `ARC3100` cycle
 warnings, runs the analyser unit tests, and checks the reference assembly
 surface. The compiler can also emit the Linux
 x64 triple (`x86_64-pc-linux-gnu`); the table below is a Windows x64 run. On
@@ -17,10 +18,10 @@ Linux only the triple, data layout, and the C runtime build differ.
 
 Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 `alloc` = objects created, `dead` = objects whose strong count hit 0 (destructor
-ran), `freed` = allocations returned to the OS, `live` = `alloc − dead` (objects
+ran), `freed` = allocations whose weak count reached zero, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
-## Results (30 samples, Windows x64, 18 November 2026)
+## Results (30 samples, Windows x64, 20 November 2026)
 
 `tools\verify.ps1` reported **68 passed, 0 failed** with the .NET 11.0.100 SDK:
 30 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
@@ -48,7 +49,7 @@ object was reclaimed.
 | `numerics` | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong`, unsigned arithmetic, casts | alloc=0 dead=0 **live=0** | `150` |
 | `byref` | `ref`, `out`, and `in` parameters | alloc=0 dead=0 **live=0** | `3` |
 | `properties` | auto-properties | alloc=2 dead=2 **live=0** | `Alice` |
-| `isas` | `is` and `as` runtime type checks | alloc=5 dead=5 **live=0** | `as Cat: null` |
+| `isas` | `is` and `as` runtime type checks | alloc=5 dead=5 freed=5 **live=0** | `as Cat: null` |
 | `covariance` | covariant store of a compatible reference element | alloc=3 dead=3 **live=0** | `stored Dog` |
 | `longconcat` | `long` and `uint` values converted to strings by concatenation; regression test for the 32-bit `long` truncation on Windows | alloc=7 dead=7 **live=0** | `concat=20000000000 uint=3000000000` |
 | `using_stmt` | `using`/`IDisposable`: declaration and expression forms, virtual and itable dispatch of `Dispose`, a `null` resource (cleanup skipped), and cleanup on the `return` path | alloc=25 dead=25 **live=0** | `dispose a`, `tmp delete`, `db closed`, `disposals=3` |
@@ -81,18 +82,18 @@ off.
 ## Diagnostics
 
 Diagnostics print with a stable code and a severity, for example
-`(12,0): error ARC2010: cannot convert 'int' to 'string'`. Compilation fails
+`(0,0): error ARC2050: no static 'Main()' entry point found`. Compilation fails
 when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
 The harness also compiles 25 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, including ref
-locals and ref returns, `ARC0003` for shift operators, `ARC0004` for an invalid
-Unicode escape, `ARC2011` for an invalid `using` resource, `ARC2012` for `new`
-on an abstract class, `ARC2013` for missing generic definitions, wrong arity, or
-expanding specialisations, `ARC2014` for unsatisfied type/method constraints,
-and `ARC2015` for a write through an `in` parameter. It
+locals, ref returns and shift operators, `CS1009` for an invalid Unicode escape,
+`ARC2011` for an invalid `using` resource, `ARC2012` for `new` on an abstract
+class, `ARC2013` for expanding specialisations, and `ARC2015` for a write
+through an `in` parameter. Missing generic definitions, wrong arity, and
+unsatisfied constraints report Roslyn `CS` codes. The harness also
 checks that `-o` with no value, and a missing `clang` or `llc`, are reported
 as errors and exit with code 2. It checks
 `ARC3100` in both directions: `cycle_strong` and `cycle_struct` warn, while
