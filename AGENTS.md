@@ -374,6 +374,11 @@ the code does.
 
 ## Documentation
 
+For every feature you implement, add a feature document under `docs/features/`
+in the same change and link it from `docs/README.md`. Record the implementation
+decisions and why they were made, including relevant constraints, trade-offs,
+and how the behaviour is verified.
+
 Keep the documentation accurate in the same change that alters behaviour.
 
 The documentation lives in `docs/`, with `docs/README.md` as its index.
