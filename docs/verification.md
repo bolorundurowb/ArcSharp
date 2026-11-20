@@ -82,18 +82,18 @@ off.
 ## Diagnostics
 
 Diagnostics print with a stable code and a severity, for example
-`(12,0): error ARC2010: cannot convert 'int' to 'string'`. Compilation fails
+`(0,0): error ARC2050: no static 'Main()' entry point found`. Compilation fails
 when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
 The harness also compiles 25 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, including ref
-locals and ref returns, `ARC0003` for shift operators, `ARC0004` for an invalid
-Unicode escape, `ARC2011` for an invalid `using` resource, `ARC2012` for `new`
-on an abstract class, `ARC2013` for missing generic definitions, wrong arity, or
-expanding specialisations, `ARC2014` for unsatisfied type/method constraints,
-and `ARC2015` for a write through an `in` parameter. It
+locals, ref returns and shift operators, `CS1009` for an invalid Unicode escape,
+`ARC2011` for an invalid `using` resource, `ARC2012` for `new` on an abstract
+class, `ARC2013` for expanding specialisations, and `ARC2015` for a write
+through an `in` parameter. Missing generic definitions, wrong arity, and
+unsatisfied constraints report Roslyn `CS` codes. The harness also
 checks that `-o` with no value, and a missing `clang` or `llc`, are reported
 as errors and exit with code 2. It checks
 `ARC3100` in both directions: `cycle_strong` and `cycle_struct` warn, while

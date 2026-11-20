@@ -424,7 +424,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 - **Exceptions** (`try`/`catch`/`finally`). Every unwinding path must release live locals. The cleanup model anticipates that, and the emitter does not yet emit landing pads.
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
 - **Struct forms still rejected.** Arrays of structs, struct return values, static struct fields, by-value struct parameters, properties of struct type, printing a struct, `virtual`/`override` members on structs, interfaces on structs, `using` a struct resource, and self-containing structs are `ARC3001`. They belong to the full struct row.
-- **Enums, indexers, and the rest of ordinary C#.** Enums, indexers, pattern matching, records, operator overloading, partial classes, extension methods, `params`, optional and named arguments, bitwise operators and shifts, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c). A single `&` or `|` is a lexer error (`ARC0003`) today.
+- **Enums, indexers, and the rest of ordinary C#.** Enums, indexers, pattern matching, records, operator overloading, partial classes, extension methods, `params`, optional and named arguments, bitwise operators and shifts, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c). Bitwise and shift operators report `ARC3001`.
 - **Name handling.** A trailing `?` is accepted and ignored. A namespace is part of the type's identity.
 
 ### Not part of the target
@@ -459,7 +459,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Structs (value types)                                  | Implemented with the restrictions in Section 7 |
 | `using` / `IDisposable` (deterministic `Dispose`)      | Implemented                           |
 | Interfaces (itable dispatch)                           | Implemented and verified              |
-| Diagnostics with codes (`ARC0001`…) and severities     | Implemented                           |
+| Roslyn and ArcSharp diagnostics with codes and severities | Implemented                        |
 | `ARC3001` unsupported-construct diagnostics            | Implemented (compiler and analyser)   |
 | `ARC3100` possible strong-cycle warning                 | Implemented (compiler and analyser)   |
 | Roslyn analyser + unit tests (`analyzers/`)            | Implemented (68 xUnit cases)          |

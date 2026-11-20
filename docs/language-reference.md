@@ -161,7 +161,7 @@ Output: `42`.
 
 Constraints support `class`, `struct`, base classes, interfaces, other type
 parameters, and `new()`. They are checked when a closed type or method is used;
-constraint failures are `ARC2014`. A `new()` reference argument must be concrete
+Roslyn reports constraint failures with `CS` diagnostics. A `new()` reference argument must be concrete
 and have a public parameterless constructor, or an implicit default constructor.
 Parameterless construction of primitive value types produces zero.
 
@@ -363,7 +363,7 @@ Explicit casts `(T)x` are accepted when `T` is `int`, `long`, `bool`, `string`,
 The escape sequences `\n`, `\t`, `\r`, `\0`, `\"`, `\'`, `\\`, `\u` followed by
 four hex digits, and `\U` followed by eight hex digits work in character and
 string literals. `"\u0041"` is `A`. A `\u` or `\U` sequence that is not valid
-hex, or a code point above U+10FFFF, is error `ARC0004`. A character literal
+hex, or a code point above U+10FFFF, is Roslyn error `CS1009`. A character literal
 cannot hold a code point above U+FFFF. Hexadecimal and binary literals, digit
 separators (`1_000`), exponents (`1e6`), verbatim strings (`@"..."`), raw
 strings, and interpolated strings are not supported.

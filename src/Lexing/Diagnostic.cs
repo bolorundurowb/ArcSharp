@@ -12,7 +12,7 @@ public sealed class Diagnostic
     public required string Message { get; init; }
     public int Line { get; init; }
     public int Column { get; init; }
-    public string Id { get; init; } = "ARC0000";
+    public required string Id { get; init; }
     public DiagnosticSeverity Severity { get; init; } = DiagnosticSeverity.Error;
 
     private string SeverityText => Severity switch

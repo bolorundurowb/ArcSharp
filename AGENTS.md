@@ -276,15 +276,14 @@ warnings fail it only with `-Werror`.
 
 | Range | Stage | Codes in use |
 |---|---|---|
-| `ARC0xxx` | Lexer | `ARC0001` (default), `ARC0002` unterminated literal, `ARC0003` unsupported operator |
-| `ARC1xxx` | Parser | `ARC1001` (default) |
-| `ARC2xxx` | Binder | `ARC2001` (default), `ARC2002` unknown name, `ARC2010` conversion, `ARC2011` invalid `using` resource, `ARC2015` managed-reference lifetime, `ARC2050` no entry point, `ARC2100` definite assignment (warning) |
+| `CS` | Roslyn | C# syntax, binding and type checking |
+| `ARC2xxx` | ArcSharp compiler | `ARC2001` binding or lowering failure, `ARC2002` unresolved lowered member or parameter, `ARC2011` invalid `using` resource, `ARC2012` abstract class instantiation, `ARC2013` generic specialisation, `ARC2015` managed-reference lifetime, `ARC2050` no entry point, `ARC2100` definite assignment (warning) |
 | `ARC3xxx` | Shared catalogue | `ARC3001` unsupported construct (error), `ARC3100` possible strong cycle (warning). `ARC3200` and `ARC3300` are reserved in the catalogue for planned rules; do not allocate `ARC3xxx` for other errors. |
 
-Never renumber or reuse an existing code. A new kind of error gets a new code
-in the range for its stage. Binder diagnostics report column 0, and
-definite-assignment warnings are reported at the enclosing method's line,
-because bound nodes do not carry source positions.
+Never renumber or reuse an existing code. The former lexer and parser ranges
+are retired and stay reserved. A new ArcSharp diagnostic gets a new code in
+the applicable active range. Definite-assignment warnings point to the
+enclosing method because bound nodes do not carry source positions.
 
 ## Testing
 
@@ -420,8 +419,7 @@ The [compatibility target](docs/roadmap.md#compatibility-target) is the language
   `ARC3001`)
 - Enums, delegates, events, and indexers
 - Lambdas, closures, `async`, and `await`
-- Bitwise and shift operators: a single `&` or `|`, and `<<` or `>>`, are lexer
-  error `ARC0003`
+- Bitwise and shift operators, including single `&` and `|` (`ARC3001`).
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, and `WeakReference<T>`
