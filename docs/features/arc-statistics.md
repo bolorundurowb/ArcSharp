@@ -40,5 +40,5 @@ The counts for every sample, taken with `ARC_CHECK=1` as well as
 `ARC_STATS=1`, are the baseline in
 [Verification](../verification.md#retain-and-release-baseline). The lifetime
 pass has to come in below those numbers without moving a destruction point.
-The harness does not assert the counts yet. It still checks program output
-and the `[arc]` line.
+The harness checks `alloc`, `dead`, `freed`, and `live` on the `[arc]` line.
+It does not assert the retain and release counts.

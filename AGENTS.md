@@ -295,7 +295,8 @@ compiles every sample with clang. It runs each executable and
 checks two things:
 
 1. The program's stdout contains an expected substring.
-2. The `live=` count in the `[arc]` line equals the expected value.
+2. The `alloc`, `dead`, `freed`, and `live` counts in the `[arc]` line equal
+   the expected values.
 
 It also compiles the must-fail samples and checks the expected diagnostic code,
 checks that `ARC3100` appears for the leaking cycle samples and not for the
@@ -317,11 +318,11 @@ cycle collector. `WeakReference<T>` is how a cycle is broken.
 2. Add a line to `tools/verify.ps1`:
 
    ```powershell
-   Invoke-Sample <name>  <expectedLive>  "<expected stdout substring>"  @("<name>")
+   Invoke-Sample <name> <alloc> <dead> <freed> <live> "<expected stdout substring>" @("<name>")
    ```
 
    For a multi-file sample, list every file, as `multifile` does.
-3. Run the harness, then copy the **actual** alloc, dead, and live counts and the
+3. Run the harness, then copy the **actual** alloc, dead, freed, and live counts and the
    output into the table in `docs/verification.md`.
 
 ### Reading ARC accounting
