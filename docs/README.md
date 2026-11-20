@@ -35,6 +35,10 @@ before you rely on it for anything beyond experiments.
 | [`analyzers/`](../analyzers/) | The Roslyn analyser, the shared `ARC3xxx` catalogue, and their xUnit tests |
 | [`AGENTS.md`](../AGENTS.md) | Contributor guide: the invariants you must preserve and the change checklist |
 
+## Feature implementation
+
+- [ARC checking mode](features/arc-checking-mode.md)
+
 ## Logo
 
 The logo is in [`assets/`](assets/). `logo.svg` is the horizontal lockup and

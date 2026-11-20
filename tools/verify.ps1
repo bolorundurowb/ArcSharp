@@ -72,18 +72,19 @@ try {
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/$Name"
         $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
-        $run = Invoke-Captured (@($dll) + $a)
+        $run = Invoke-Captured -Arguments (@($dll) + $a) -Environment @{ ARC_CHECK = "1" }
         $out = $run.Out
         $err = $run.Err
         $arc = ($err -split "`r?`n" | Where-Object { $_ -match '\[arc\] alloc=' }) -join ""
         $gotLive = if ($arc -match 'live=(\d+)') { [int]$Matches[1] } else { -1 }
-        $ok = ($gotLive -eq $Live) -and ($out -match [regex]::Escape($Want))
+        $ok = ($gotLive -eq $Live) -and ($out -match [regex]::Escape($Want)) -and ($err -notmatch '\[arc-check\]')
         if ($ok) {
             Write-Host "PASS  $Name  ($arc; output ok)"
             $script:pass++
         }
         else {
             Write-Host "FAIL  $Name  want_live=$Live got='$arc' want_out='$Want' got_out='$out'"
+            Write-Host $err
             $script:fail++
         }
     }
@@ -102,14 +103,14 @@ try {
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/leak_$Name"
         $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
-        $run = Invoke-Captured -Arguments (@($dll) + $a) -Environment @{ ARC_LEAKS = "1" }
+        $run = Invoke-Captured -Arguments (@($dll) + $a) -Environment @{ ARC_LEAKS = "1"; ARC_CHECK = "1" }
         $out = $run.Out
         $err = $run.Err
         $arc = ($err -split "`r?`n" | Where-Object { $_ -match '\[arc\] alloc=' }) -join ""
         $gotLive = if ($arc -match 'live=(\d+)') { [int]$Matches[1] } else { -1 }
         $missing = @($Patterns | Where-Object { $err -notmatch $_ })
         $present = @($Absent | Where-Object { $err -match $_ })
-        $ok = ($gotLive -eq $Live) -and ($out -match [regex]::Escape($Want)) -and ($missing.Count -eq 0) -and ($present.Count -eq 0)
+        $ok = ($gotLive -eq $Live) -and ($out -match [regex]::Escape($Want)) -and ($err -notmatch '\[arc-check\]') -and ($missing.Count -eq 0) -and ($present.Count -eq 0)
         if ($ok) {
             Write-Host "PASS  leak/$Name  ($arc)"
             $script:pass++

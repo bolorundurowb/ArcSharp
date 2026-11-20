@@ -12,7 +12,7 @@
  *   offset 32 : string bytes, or the element TypeInfo* of an array
  *   offset 40 : array elements (8-byte slots)
  */
-/* getenv is the portable way to read ARC_LEAKS. The MSVC headers mark it
+/* getenv is the portable way to read runtime options. The MSVC headers mark it
    deprecated in favour of _dupenv_s, which is not portable. */
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdint.h>
@@ -61,8 +61,8 @@ static long long g_alloc = 0;   /* total objects allocated                    */
 static long long g_dead  = 0;   /* objects whose strong count reached 0        */
 static long long g_free  = 0;   /* allocations actually freed (weak hit 0)     */
 
-/* Opt-in survivor registry. Nodes are plain malloc blocks, not ARC objects,
-   and they are not counted in g_alloc. Enabled by ARC_LEAKS=1. */
+/* Registry of objects with storage still owned by ARC. Nodes are plain
+   malloc blocks and do not count towards ARC accounting. */
 typedef struct ArcRec {
     ObjHeader*    obj;
     const char*   site;
@@ -70,10 +70,58 @@ typedef struct ArcRec {
 } ArcRec;
 
 static ArcRec* g_recs = 0;
+static ArcRec* g_quarantine = 0;
 static int g_leaks = -1; /* -1 unknown, 0 off, 1 on */
+static int g_checks = -1;
 static void*** g_roots = 0;
 static intptr_t g_root_count = 0;
 static void arc_report_leaks(void);
+
+static void check_fail(const char* operation, const char* reason) {
+    fprintf(stderr, "[arc-check] %s: %s\n", operation, reason);
+    exit(70);
+}
+
+static void free_quarantine(void) {
+    while (g_quarantine) {
+        ArcRec* r = g_quarantine;
+        g_quarantine = r->next;
+        free(r->obj);
+        free(r);
+    }
+}
+
+static int checks_on(void) {
+    if (g_checks < 0) {
+        const char* e = getenv("ARC_CHECK");
+        g_checks = e && strcmp(e, "1") == 0;
+        if (g_checks && atexit(free_quarantine) != 0) {
+            check_fail("initialisation", "cannot register quarantine cleanup");
+        }
+    }
+    return g_checks;
+}
+
+static void check_header(const char* operation, const ObjHeader* h, int needs_live) {
+    if (!checks_on()) {
+        return;
+    }
+    for (ArcRec* r = g_recs; r; r = r->next) {
+        if (r->obj == h) {
+            if (h->strong < 0) {
+                check_fail(operation, "negative strong count");
+            }
+            if (needs_live && h->strong == 0) {
+                check_fail(operation, "dead object");
+            }
+            if (h->weak <= 0) {
+                check_fail(operation, "non-positive weak count");
+            }
+            return;
+        }
+    }
+    check_fail(operation, "freed or untracked object");
+}
 
 static int leaks_on(void) {
     if (g_leaks < 0) {
@@ -85,28 +133,41 @@ static int leaks_on(void) {
 
 static void track(ObjHeader* h, const char* site) {
     ArcRec* r;
-    if (!leaks_on()) return;
+    if (!checks_on() && !leaks_on()) {
+        return;
+    }
     r = (ArcRec*)malloc(sizeof(ArcRec));
-    if (!r) return;
+    if (!r) {
+        if (checks_on()) {
+            check_fail("allocation", "cannot track object");
+        }
+        return;
+    }
     r->obj = h;
     r->site = site ? site : "-";
     r->next = g_recs;
     g_recs = r;
 }
 
-static void untrack(ObjHeader* h) {
+static void retire(ObjHeader* h) {
     ArcRec** pp;
-    if (!g_recs) return;
     pp = &g_recs;
     while (*pp) {
         if ((*pp)->obj == h) {
             ArcRec* dead = *pp;
             *pp = dead->next;
+            if (checks_on()) {
+                /* Prevent address reuse from making a stale pointer appear valid. */
+                dead->next = g_quarantine;
+                g_quarantine = dead;
+                return;
+            }
             free(dead);
-            return;
+            break;
         }
         pp = &(*pp)->next;
     }
+    free(h);
 }
 
 void arc_set_roots(void*** roots, intptr_t count) {
@@ -133,19 +194,30 @@ void* arc_alloc(TypeInfo* type, const char* site) {
 }
 
 void arc_retain(void* p) {
-    if (p) ((ObjHeader*)p)->strong++;
+    if (p) {
+        ObjHeader* h = (ObjHeader*)p;
+        check_header("retain", h, 1);
+        h->strong++;
+    }
 }
 
 void arc_weak_retain(void* p) {
-    if (p) ((ObjHeader*)p)->weak++;
+    if (p) {
+        ObjHeader* h = (ObjHeader*)p;
+        check_header("weak retain", h, 0);
+        h->weak++;
+    }
 }
 
 void arc_weak_release(void* p) {
     if (!p) return;
     ObjHeader* h = (ObjHeader*)p;
+    check_header("weak release", h, 0);
     if (--h->weak == 0) {
-        untrack(h);
-        free(h);
+        if (checks_on() && h->strong > 0) {
+            check_fail("weak release", "lost implicit weak reference");
+        }
+        retire(h);
         g_free++;
     }
 }
@@ -153,6 +225,7 @@ void arc_weak_release(void* p) {
 void arc_release(void* p) {
     if (!p) return;
     ObjHeader* h = (ObjHeader*)p;
+    check_header("release", h, 1);
     if (--h->strong == 0) {
         if (h->type && h->type->deinit) h->type->deinit(h);
         g_dead++;
@@ -188,6 +261,7 @@ void arc_store_weak(void** slot, void* v) {
 void* arc_load_weak(void** slot) {
     ObjHeader* h = (ObjHeader*)*slot;
     if (!h) return 0;
+    check_header("weak load", h, 0);
     if (h->strong <= 0) return 0;   /* object logically destroyed */
     h->strong++;
     return h;
@@ -333,6 +407,7 @@ void* arc_weakref_new(void* target, const char* site) {
 }
 void* arc_weakref_try_get(void* wr) {
     if (!wr) return 0;
+    check_header("weak load", (ObjHeader*)wr, 1);
     void** slot = (void**)((char*)wr + 24);
     return arc_load_weak(slot);        /* +1 strong, or NULL if target died */
 }
