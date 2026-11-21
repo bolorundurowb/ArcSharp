@@ -24,6 +24,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
     private readonly List<BoundUsing> _usingScopes = []; // open using statements, innermost last
     private int _tmp, _lbl, _strId;
     private bool _terminated;
+    private string _block = "entry";
     private MethodSymbol _curMethod = null!;
     private readonly Dictionary<int, string> _localSlot = [];
 
@@ -53,6 +54,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
 
     private void Lbl(string l)
     {
+        _block = l;
         _body.Add($"{l}:");
         _terminated = false;
     }
@@ -62,8 +64,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         if (_terminated)
         {
             var l = L("dead");
-            _body.Add($"{l}:");
-            _terminated = false;
+            Lbl(l);
         }
     }
 
@@ -141,6 +142,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                      "declare i8* @arc_str_lit(i8*, i64, i8*)",
                      "declare i64 @arc_str_length(i8*)",
                      "declare i8* @arc_str_concat(i8*, i8*)",
+                     "declare i32 @arc_str_equal(i8*, i8*)",
                      "declare i8* @arc_str_from_int(i64)",
                      "declare i8* @arc_str_from_char(i32)",
                      "declare i8* @arc_str_from_bool(i32)",
@@ -290,7 +292,9 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var k = t.Vtable.Count;
         if (k > 0)
         {
-            var entries = t.Vtable.Select(m => $"i8* bitcast ({FnPtrType(m)} @{m.MangledName} to i8*)");
+            var entries = t.Vtable.Select(m => m.IsAbstract
+                ? "i8* null"
+                : $"i8* bitcast ({FnPtrType(m)} @{m.MangledName} to i8*)");
             _mod.AppendLine($"@{t.Name}__vtable = private constant [{k} x i8*] [ {string.Join(", ", entries)} ]");
         }
 
@@ -300,7 +304,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             var entries = new List<string>();
             for (var sel = 0; sel < s; sel++)
             {
-                if (t.InterfaceImpl.TryGetValue(sel, out var m))
+                if (t.InterfaceImpl.TryGetValue(sel, out var m) && !m.IsAbstract)
                 {
                     entries.Add($"i8* bitcast ({FnPtrType(m)} @{m.MangledName} to i8*)");
                 }
@@ -445,6 +449,9 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         fns.AppendLine();
 
         fns.AppendLine($"define void @{t.Name}__drop({ty}* %p) {{");
+        fns.AppendLine($"  %missing = icmp eq {ty}* %p, null");
+        fns.AppendLine("  br i1 %missing, label %exit, label %drop");
+        fns.AppendLine("drop:");
         foreach (var f in t.InstanceFields)
         {
             var slot = FieldAddrFromGep(fns, "%p", t, f);
@@ -464,6 +471,8 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             }
         }
 
+        fns.AppendLine("  br label %exit");
+        fns.AppendLine("exit:");
         fns.AppendLine("  ret void");
         fns.AppendLine("}");
         fns.AppendLine();
@@ -501,6 +510,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         _tmp = 0;
         _lbl = 0;
         _terminated = false;
+        _block = "entry";
 
         var m = b.Method;
         var ps = new List<string>();
@@ -571,6 +581,17 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             {
                 _entry.Add("  store i8* null, i8** %retval");
             }
+        }
+
+        if (m == m.Owner.StaticFieldInitialiser)
+        {
+            var guard = $"@{m.MangledName}.started";
+            _mod.AppendLine($"{guard} = private global i1 false");
+            var started = Inst($"load i1, i1* {guard}");
+            Term($"br i1 {started}, label %func.exit, label %field.init");
+            Lbl("field.init");
+            // Recursive access sees fields that have already been initialised.
+            Do($"store i1 true, i1* {guard}");
         }
 
         EmitStmt(b.Body);
@@ -1132,7 +1153,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 return Inst($"load {ty}*, {ty}** %this.addr");
             }
             case BoundFieldAccess { Field.IsStatic: true } fa:
-                return fa.Field.MangledStatic;
+                return StaticFieldAddress(fa.Field);
             case BoundFieldAccess fa:
             {
                 var receiver = fa.Receiver!;
@@ -1220,11 +1241,21 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         return FieldAddr(recv, receiver.Type, fa.Field);
     }
 
+    private string StaticFieldAddress(FieldSymbol field)
+    {
+        if (field.Owner.StaticFieldInitialiser is { } initialiser && _curMethod != initialiser)
+        {
+            Do($"call void @{initialiser.MangledName}()");
+        }
+
+        return field.MangledStatic;
+    }
+
     private string EmitFieldRead(BoundFieldAccess fa)
     {
         if (fa.Field.IsStatic)
         {
-            var g = fa.Field.MangledStatic;
+            var g = StaticFieldAddress(fa.Field);
             if (fa.Field.IsWeak)
             {
                 return Inst($"call i8* @arc_load_weak(i8** {g})");
@@ -1484,6 +1515,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             case BinKind.LongCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.FloatCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.StrEq:
             case BinKind.RefEq:
             {
                 var l = EmitR(b.Left);
@@ -1496,6 +1528,12 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 if (b.Right.Type.IsReferenceType)
                 {
                     _stmtTemps.Add(r);
+                }
+
+                if (b.Kind == BinKind.StrEq)
+                {
+                    var equal = Inst($"call i32 @arc_str_equal(i8* {l}, i8* {r})");
+                    return Inst($"icmp {(b.Op == TokenKind.EqualsEquals ? "ne" : "eq")} i32 {equal}, 0");
                 }
 
                 return Inst($"icmp {(b.Op == TokenKind.EqualsEquals ? "eq" : "ne")} i8* {l}, {r}");
@@ -1553,6 +1591,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         var slot = Inst("alloca i1");
         var l = EmitR(b.Left);
         Do($"store i1 {l}, i1* {slot}");
+        var lhsBlock = _block;
         string rhsL = L("logic.rhs"), endL = L("logic.end");
         if (b.Op == TokenKind.AmpAmp)
         {
@@ -1564,10 +1603,25 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         }
 
         Lbl(rhsL);
+        var mark = _stmtTemps.Count;
+        var structMark = _stmtStructTemps.Count;
         var r = EmitR(b.Right);
         Do($"store i1 {r}, i1* {slot}");
+        var rhsBlock = _block;
         Term($"br label %{endL}");
         Lbl(endL);
+        // A skipped operand contributes no owned temporary to the statement.
+        for (var i = mark; i < _stmtTemps.Count; i++)
+        {
+            _stmtTemps[i] = Inst($"phi i8* [ null, %{lhsBlock} ], [ {_stmtTemps[i]}, %{rhsBlock} ]");
+        }
+
+        for (var i = structMark; i < _stmtStructTemps.Count; i++)
+        {
+            var (type, addr) = _stmtStructTemps[i];
+            _stmtStructTemps[i] = (type, Inst($"phi {type.LlvmType}* [ null, %{lhsBlock} ], [ {addr}, %{rhsBlock} ]"));
+        }
+
         return Inst($"load i1, i1* {slot}");
     }
 
@@ -1750,7 +1804,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
         string addr;
         if (fa.Field.IsStatic)
         {
-            addr = fa.Field.MangledStatic;
+            addr = StaticFieldAddress(fa.Field);
         }
         else
         {
@@ -1919,7 +1973,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                 string addr;
                 if (fa.Field.IsStatic)
                 {
-                    addr = fa.Field.MangledStatic;
+                    addr = StaticFieldAddress(fa.Field);
                 }
                 else
                 {

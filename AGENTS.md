@@ -133,7 +133,7 @@ lowering in `src/Frontend` builds the bound tree. `using` directives are
 honoured, and a namespace is part of a type's identity. A global
 `using System` is added so `Console` resolves without one.
 
-The current milestone is the verification baseline in the
+The verification baseline is complete. The next milestone is the lifetime pass in the
 [Roadmap](docs/roadmap.md). Do not add a language feature ahead of that. A
 defect in the emitter or the runtime may still be fixed. A defect in binding
 is fixed in the Roslyn lowering.
@@ -298,7 +298,7 @@ compiles every sample with clang. It runs each executable and
 checks two things:
 
 1. The program's stdout contains an expected substring.
-2. The `live=` count in the `[arc]` line equals the expected value.
+2. The complete `[arc]` line matches the expected `alloc`, `dead`, `freed`, and `live` counts.
 
 It also compiles the must-fail samples and checks the expected diagnostic code,
 checks that `ARC3100` appears for the leaking cycle samples and not for the
@@ -326,7 +326,7 @@ change. This applies to every `M*` section. The comparison is not part of
 2. Add a line to `tools/verify.ps1`:
 
    ```powershell
-   Invoke-Sample <name>  <expectedLive>  "<expected stdout substring>"  @("<name>")
+   Invoke-Sample <name> "alloc=A dead=D freed=F live=L" "<expected stdout substring>" @("<name>")
    ```
 
    For a multi-file sample, list every file, as `multifile` does.
@@ -442,8 +442,8 @@ constructs and possible strong cycles from an ordinary `dotnet build`. It does
 not replace compiler diagnostics. The compiler has to report the same rules,
 because the analyser is optional. `ARC3xxx` is the shared catalogue.
 
-The defects found outside this list, such as ignored field initialisers, are
-recorded in the known-issues table of `docs/language-reference.md`.
+The known-issues table of `docs/language-reference.md` records defects found
+outside this list.
 
 See `docs/roadmap.md` for the milestone that delivers each item and the order
 of the milestones.

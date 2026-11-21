@@ -96,13 +96,14 @@ implement the whole framework.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 30 sample programs pass the test
+executable, with ARC accounting) works, and 34 sample programs pass the test
 harness on Windows x64. The harness also runs four leak-report checks, 25
 must-fail diagnostics, three command-line checks, four cycle checks, and 68
 analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See
 [Verification](docs/verification.md) for the latest results.
 
+The M2 verification baseline checks exact ARC counts and destruction timing.
 The present compiler reference-counts every heap object. Roslyn parses and
 binds the source. The compiler rejects C# finalisers. The
 [Roadmap](docs/roadmap.md) adds a lifetime pass that uses ARC only where a

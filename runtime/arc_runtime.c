@@ -354,6 +354,13 @@ static char* arc_str_data(void* s) { return (char*)s + 32; }
 void* arc_str_lit(const char* data, intptr_t len, const char* site) { return arc_str_new(data, len, site); }
 intptr_t arc_str_length(void* s) { return s ? *(intptr_t*)((char*)s + 24) : 0; }
 
+int arc_str_equal(void* a, void* b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    intptr_t len = arc_str_length(a);
+    return len == arc_str_length(b) && memcmp(arc_str_data(a), arc_str_data(b), (size_t)len) == 0;
+}
+
 void* arc_str_concat(void* a, void* b) {
     intptr_t la = arc_str_length(a), lb = arc_str_length(b);
     void* r = arc_str_new(0, la + lb, "<runtime>");

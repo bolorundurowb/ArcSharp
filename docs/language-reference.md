@@ -51,8 +51,8 @@ can be used from another.
 |---|---|---|
 | `bool` | 1 bit in registers, 8 bytes in fields | Prints as `True` or `False` |
 | `char` | 32 bits | Prints as the character |
-| `byte`, `sbyte` | 8 bits | Declaration and arithmetic only; casts and arrays are not supported |
-| `short`, `ushort` | 16 bits | Declaration and arithmetic only; casts and arrays are not supported |
+| `byte`, `sbyte` | 8 bits | Explicit integer casts and single-dimensional arrays are supported |
+| `short`, `ushort` | 16 bits | Explicit integer casts and single-dimensional arrays are supported |
 | `int`, `uint` | 32 bits | |
 | `long`, `ulong` | 64 bits | |
 | `float` | 32 bits | |
@@ -70,14 +70,14 @@ parameter that holds them. `decimal`, `enum`, and nullable value types
 
 - **Classes** you declare.
 - **`string`**, an immutable sequence of UTF-8 bytes.
-- **Single-dimensional arrays** `T[]` of any supported element type except the
-  small integer types. Multi-dimensional and jagged array syntax
+- **Single-dimensional arrays** `T[]` of supported non-struct element types.
+  Multi-dimensional and jagged array syntax
   (`int[,]`, `int[][]`) is not supported.
 - **`System.WeakReference<T>`**, where `T` is a reference type. It can be used
   in fields, locals, and generic arguments. See
   [Memory model](memory-model.md).
 
-Every reference-type variable, field, and array element starts as `null`.
+Reference storage defaults to `null` before any explicit initialiser runs.
 
 ### Structs
 
@@ -202,6 +202,9 @@ Supported:
 - Single inheritance from one base class, and any number of interfaces.
 - Instance and static fields.
 - Constructors, including `: base(...)` and `: this(...)` initialisers.
+- Instance and static field initialisers. A declaring constructor can assign
+  its get-only auto-properties. Inherited auto-properties use their declaring
+  type's accessors.
 - Instance and static methods.
 - `virtual` and `override` methods, dispatched through a virtual table.
 - The modifiers `public`, `private`, `protected`, `internal`, `static`, and
@@ -432,7 +435,6 @@ a claim that `~T()` already runs.
 | `Dispose` and finalisation | Often paired by convention. The finaliser is a backstop | Separate. A finaliser does not call `Dispose`. `using` is an explicit call |
 | Reference cycles | Collected. Finalisers of cyclic objects may still run | Permitted. `ARC3100` warns when the type graph can form one. An ignored warning, including in a library, leaks, and a finaliser in the cycle does not run. `WeakReference<T>` breaks the cycle |
 | `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false`. The weak reference does not keep the object alive |
-| String `==` | Compares contents | Compares references; see [Known issues](#known-issues) |
 | `string.Length` | UTF-16 code units | UTF-8 bytes. `"héllo".Length` is 6, not 5. |
 | Formatting a `double` or `float` | Shortest round-trippable form, such as `0.3333333333333333` | Six significant digits, such as `0.333333` |
 | Null dereference | `NullReferenceException` | The process crashes with an access violation |
@@ -442,19 +444,11 @@ a claim that `~T()` already runs.
 
 ## Known issues
 
-These are defects in the current compiler, found by testing. Each one has a
-workaround.
+The current known defect has a workaround.
 
 | Issue | Workaround |
 |---|---|
-| **Field initialisers are ignored.** `public int count = 5;` compiles, but the field starts as `0`. | Assign the value in the constructor. |
-| **String `==` compares references.** Two equal strings built separately are not `==`. | Avoid comparing strings for equality. There is no content comparison yet. |
-| **Abstract methods fail to link.** Calling an `abstract` method through the base type compiles to IR that `clang` rejects with `use of undefined value`. | Declare the method `virtual` with a default body, and `override` it. |
-| **Get-only auto-properties cannot be assigned.** `public int Id { get; }` cannot be set, even in a constructor. | Declare `{ get; set; }`. |
-| **Reference temporaries on short-circuit paths can produce invalid IR.** A reference-valued call or load on the right of `&&` or `||` can be released from a block it does not dominate. | Evaluate each reference-using condition into a boolean local in a separate statement. |
-| **Inherited auto-properties are not found through derived instances.** | Access the property through a base-typed local, or use a field. |
 | **Class casts are unchecked.** `(Dog)animal` succeeds even when `animal` is a `Cat`. | Use `animal as Dog` and test for `null`. |
-| **Small integer casts are rejected.** `(byte)x` and `new byte[n]` do not compile. | Use `int` or `long`. |
 
 If you find another difference, check it against `dotnet run` first, then
 record it here with a reproduction.

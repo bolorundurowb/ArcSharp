@@ -386,8 +386,10 @@ This section records only how the subset is lowered.
   concatenated into a string.
 - **Compilation units** are merged: `using` directives are skipped, namespace
   names are discarded, and a trailing `?` on a type is ignored.
-- **Field initialisers** are parsed and then discarded. This is a known defect,
-  not a design choice.
+- **Field initialisers** lower to assignments. An instance constructor that
+  delegates to another constructor of the same type leaves these assignments
+  to the receiving constructor. Static field access runs the declaring type's
+  initialisers once.
 
 ---
 
@@ -470,7 +472,8 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Roslyn analyser + unit tests (`analyzers/`)            | Implemented (68 xUnit cases)          |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
-| Field initialisers                                     | Parsed and discarded (defect)         |
+| Field initialisers                                     | Implemented for instance and static fields |
+| Verification baseline                                 | Exact ARC accounting and destruction-point checks on Windows x64 |
 | Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
 | Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |
 | Retain and release statistics (`ARC_STATS=1`) | Implemented: opt-in `[arc-stats]` line. The `[arc]` line is unchanged |

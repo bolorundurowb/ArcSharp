@@ -128,6 +128,9 @@ results are in [Verification](verification.md).
 - An opt-in retain and release count (`ARC_STATS=1`). The baseline for every
   sample is in [Verification](verification.md).
 - Interior-reference owner pins for the duration of a call.
+- The M2 verification baseline. The harness asserts exact ARC counts, checks
+  destruction timing with weak references, and covers the seven M2 defects.
+  See [Verification](verification.md).
 - Diagnostics with stable codes and severities, `-Werror`, definite-assignment
   warnings (`ARC2100`), and `ARC3001` for unsupported constructs.
 - A Roslyn analyser that reports `ARC3001` and `ARC3100` in an ordinary
@@ -137,8 +140,7 @@ results are in [Verification](verification.md).
   are gone. Layout, definite assignment, cycle analysis, and emission are
   unchanged.
 - A comparison of peak memory and collector pauses against the ordinary .NET
-  runtime, on source both compilers accept. The method and the 20 November
-  2026 numbers are in
+  runtime, on source both compilers accept. The method and the M2 medians are in
   [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
   `tools\compare-gc.ps1` is not part of the verification harness.
 
@@ -209,7 +211,7 @@ known issues. Ignored field initialisers are an emitter defect and wait for M2.
 
 ## M2 — Verification baseline
 
-**This is the current milestone.**
+**Landed.**
 
 **Goal.** Tests strong enough that the lifetime pass cannot introduce a double
 release, a use after free, or a moved destruction without the harness noticing.
@@ -225,17 +227,18 @@ release, a use after free, or a moved destruction without the harness noticing.
    the harness depends on. Record the baseline for every sample.
    **Landed.** See [Retain and release statistics](features/arc-statistics.md).
 3. Check exact `alloc`, `dead`, and `freed` counts for every sample, not only
-   `live`.
+   `live`. **Landed.** The harness compares the complete accounting line.
 4. Add samples that observe destruction points directly: a `WeakReference<T>`
    that must turn `false` at a specific statement. These become the evidence
-   that later milestones keep destruction in place.
-5. Fix the known emitter defects, each with a sample: ignored field
+   that later milestones keep destruction in place. **Landed.**
+5. Fix the known defects, each covered by a sample: ignored field
    initialisers, abstract methods that produce invalid IR, string `==`
    comparing references, get-only auto-properties that cannot be assigned,
    inherited auto-property lookup, rejected small integer casts, and reference
    temporaries on short-circuit paths. Defects that need exceptions, such as an
-   unchecked class cast, wait for M5.
-6. Run `tools\verify.ps1` in CI on Windows x64.
+   unchecked class cast, wait for M5. **Landed.**
+6. Run `tools\verify.ps1` in CI on Windows x64. **Landed.** The existing
+   workflow runs the harness for pull requests targeting `master`.
 
 **Done when.** The checking mode is on in the harness and every sample passes
 under it. The retain and release baseline is in Verification. The fixed
@@ -244,6 +247,8 @@ defects are gone from the known issues. CI runs the harness on every change.
 ---
 
 ## M3 — Lifetime pass
+
+**This is the next milestone.**
 
 **Goal.** ARC only where a lifetime cannot be proved, on the existing header.
 
