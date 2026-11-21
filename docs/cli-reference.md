@@ -18,6 +18,7 @@ dotnet bin/Release/net11.0/arcsharp.dll <input.cs> [more.cs ...] [options]
 | `--target windows` | Yes | Emit IR for `x86_64-pc-windows-msvc`. |
 | `--target host` | | Emit IR for `x86_64-pc-linux-gnu`, whatever the machine you run on. This path is not part of the current verification. |
 | `--emit-llvm` | Off | Stop after writing the `.ll` file. |
+| `--dump-ownership` | Off | Print reference ownership classifications and moves to stderr. |
 | `--no-bounds` | Off | Leave out array bounds checks. An out-of-range index then reads or writes arbitrary memory. |
 | `-Werror`, `--warn-as-error` | Off | Treat warnings as errors. |
 | `--llc <name>` | `llc` | The LLVM static compiler to use when `--clang` is not given. |

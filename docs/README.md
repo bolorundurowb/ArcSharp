@@ -40,6 +40,7 @@ before you rely on it for anything beyond experiments.
 - [ARC checking mode](features/arc-checking-mode.md)
 - [Retain and release statistics](features/arc-statistics.md)
 - [M2 verification baseline](features/verification-baseline.md)
+- [Lifetime classification, borrows and moves](features/lifetime-reads-and-moves.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo
