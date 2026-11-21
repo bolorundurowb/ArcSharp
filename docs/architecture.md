@@ -41,6 +41,11 @@ count reaches zero.
 | Cycles          | Collected automatically             | Warned, permitted, and a leak if the warning is ignored |
 | Determinism     | Finalisers run later, on another thread, and may resurrect | At the last strong release, on that thread. No resurrection. `~T()` is not accepted yet |
 
+The same source, compiled both ways, is measured in
+[Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
+That run is where the peak-memory and pause claims are checked against the
+ordinary .NET runtime.
+
 The defining trade-off — and the reason GC exists — is reference cycles. Naive
 ARC cannot reclaim them. The architectural decision is to warn, permit, and
 document the leak. `ARC3100` warns when the type graph can form a cycle. The

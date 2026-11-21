@@ -1,0 +1,204 @@
+# Comparing ArcSharp with the .NET garbage collector
+
+ArcSharp's claim is that reference counting gives a program a smaller memory
+footprint and no collector pauses. This page records a measurement of that
+claim against the ordinary .NET runtime, on source that both compilers accept.
+It also records where the claim does not hold.
+
+The run below is one machine on 20 November 2026. Repeat it with
+`tools\compare-gc.ps1` at the end of every milestone in the roadmap, and add
+the new medians here. The script is not part of
+`tools\verify.ps1`. The numbers move with the machine, and the runs are longer
+than the sample suite.
+
+## What was compared
+
+Three programs in `bench/` were compiled twice: once with ArcSharp to a native
+executable, and once with `dotnet build -c Release` against the .NET 11
+runtime. The .NET build is a normal console program. It uses workstation
+concurrent GC, which is the console default. Tiered compilation and dynamic
+PGO were switched off so each run pays for one compilation of the methods.
+Server GC was left off. Native AOT was not used: that would remove the JIT and
+keep the garbage collector, which is a different comparison.
+
+ArcSharp's executable was linked with `clang -O2`. Link-time optimisation was
+left off, so `arc_retain` and `arc_release` stay real calls into the C
+runtime. That matches the compiler today. The compiler's own `--clang` path
+does not pass an optimisation level; the comparison script passes `-O2` so the
+native program is optimised and the .NET program is a Release build.
+
+The .NET process includes `bench/dotnet/GcReport.cs`, which ArcSharp does not
+compile. A background thread polls `GC.GetGCMemoryInfo` once a millisecond and
+records each collection's suspension. The thread is part of the measured .NET
+process.
+
+Both programs print the same checksum. The script fails if the checksums
+differ, if ArcSharp's `live` count is not 0, or if the .NET process does not
+write a `[gc]` line.
+
+## The workloads
+
+`baseline` prints a line and returns. It is the cost of starting the process.
+
+`retained` builds 50 buckets of 8,000 nodes and holds them until `Main`
+returns. Each node is a class with one `int` field. A bucket's array stays
+under the .NET large-object threshold of 85,000 bytes, so the arrays are
+ordinary objects. The nodes are not linked together. Releasing a linked chain
+is recursive in the current runtime, and a long chain overflows the stack.
+
+`churn` keeps that same set, then builds and drops a further batch five times.
+Each batch is 25 buckets of 8,000 nodes. Storing the next batch releases the
+previous one. On ArcSharp that release is immediate. On .NET the previous
+batch becomes garbage and waits for a collection.
+
+The checksum reads every stored value, so a compiler that deleted the objects
+would produce a different number. Both runtimes agreed:
+
+| Workload | Checksum |
+|---|---|
+| baseline | 0 |
+| retained | 3199600000 |
+| churn | 7199100000 |
+
+## How a number was taken
+
+The script discards two launches of each executable, then records five. The
+table is the median. Wall time is the whole process, including startup. For
+.NET that includes JIT. Peak working set and peak private commit come from
+`GetProcessMemoryInfo` after the process has exited, while its handle is still
+open. Working set includes shared libraries mapped into the process. Private
+commit is the process's own pagefile usage, which is the closer figure for
+"how much memory this program added".
+
+`ARC_STATS=1` was set for the ArcSharp runs. The counters increment on every
+run; the variable only turns on the extra line. `ARC_CHECK` was left off,
+because checking mode keeps a registry of live objects and would raise the
+peak.
+
+## Results
+
+Windows NT 10.0.26300, 20 processors, .NET SDK 11.0.100, clang 22.1.8.
+Command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\compare-gc.ps1 -Runs 5
+```
+
+A MiB here is 1,048,576 bytes. The range is the minimum and maximum of the
+five recorded runs.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---|---|---|
+| baseline | ArcSharp | 14.7 ms (14.4–16.6) | 4,038,656 (3.9 MiB) | 663,552 (0.6 MiB) |
+| baseline | .NET | 61.0 ms (57.5–62.4) | 24,211,456 (23.1 MiB) | 6,582,272 (6.3 MiB) |
+| retained | ArcSharp | 60.2 ms (59.5–63.0) | 26,181,632 (25.0 MiB) | 24,489,984 (23.4 MiB) |
+| retained | .NET | 59.7 ms (58.6–74.2) | 37,093,376 (35.4 MiB) | 19,554,304 (18.6 MiB) |
+| churn | ArcSharp | 138.3 ms (137.8–147.4) | 37,466,112 (35.7 MiB) | 36,356,096 (34.7 MiB) |
+| churn | .NET | 91.3 ms (90.5–92.6) | 64,016,384 (61.1 MiB) | 46,317,568 (44.2 MiB) |
+
+ArcSharp accounting was the same on every run. `release = retain + dead`, and
+`live` was 0, so the run neither leaked nor freed an object twice.
+
+| Workload | alloc | retain | release |
+|---|---|---|---|
+| baseline | 4 | 0 | 4 |
+| retained | 400,105 | 3,600,502 | 4,000,607 |
+| churn | 1,400,360 | 9,601,132 | 11,001,492 |
+
+The .NET baseline and the retained set did not collect. `GC.CollectionCount`
+stayed 0. The retained set allocated about 13,438,448 managed bytes and the
+heap absorbed it. The churn program collected twice on every run, one of those
+a generation 1 collection, and the sampler saw both (`missed=0`). Each
+collection reported a single suspension:
+
+| Run | First pause | Second pause | Total |
+|---|---|---|---|
+| 1 | 4.143 ms | 14.601 ms | 18.744 ms |
+| 2 | 4.261 ms | 15.173 ms | 19.434 ms |
+| 3 | 4.078 ms | 15.450 ms | 19.528 ms |
+| 4 | 4.301 ms | 15.066 ms | 19.367 ms |
+| 5 | 3.600 ms | 14.957 ms | 18.557 ms |
+
+The median of the first pauses is 4.1 ms and the median of the second is
+15.1 ms. The median of the two pauses added together is 19.4 ms, inside a
+process whose median wall time was 91.3 ms. After the last collection the
+managed heap was 18,243,040 bytes, with 40,128,512 bytes committed and 12,528
+bytes fragmented. The process had allocated 45,444,208 managed bytes in total.
+ArcSharp has no collector, so it has no suspension to report.
+
+## What the numbers support
+
+**The empty process is smaller.** The ArcSharp baseline commits 0.6 MiB and
+touches 3.9 MiB of working set. The .NET baseline commits 6.3 MiB and touches
+23.1 MiB. Most of that is the runtime and its libraries. It also finishes later
+(61 ms against 15 ms), because it has to start the runtime and JIT the
+method. This is a property of shipping a small native runtime. It is already
+true before any object is allocated.
+
+**Peak working set was lower for ArcSharp on all three programs.** The gap is
+19 MiB on the empty program, 10 MiB on the retained set, and 25 MiB on the
+churn program.
+
+**Private commit tells a more careful story.** Subtracting the baseline, the
+retained set costs ArcSharp about 22.7 MiB and .NET about 12.4 MiB. A live
+object is more expensive under ArcSharp: the header is 24 bytes and every
+field occupies an 8-byte slot, and the C allocator adds its own overhead. The
+.NET object is smaller, and 400,000 of them fitted in the heap without a
+collection. Holding a large stable graph uses less private memory on .NET.
+
+**Dropping objects promptly is where ArcSharp's peak stays down.** From the
+retained set to the churn program, ArcSharp's private commit rises by 11.3
+MiB, which is one batch living beside the retained set. .NET's private commit
+rises by 25.5 MiB. The collector kept the heap committed after the batches
+became garbage: at exit it still reported 38.3 MiB committed for a heap of
+17.4 MiB. Absolute peak commit on the churn program is 34.7 MiB for ArcSharp
+and 44.2 MiB for .NET.
+
+**There were no ArcSharp pauses, and the .NET pauses were real.** Two
+suspensions, the longer of them about 15 ms, fell inside a 91 ms process.
+That is the latency claim, and this run supports it. It does not, by itself,
+make the program faster. The churn program still finished in 138 ms under
+ArcSharp and 91 ms under .NET. The retained set was a tie, at about 60 ms.
+The churn run performed 9.6 million retains. Every reference read still
+increments a count. The [lifetime pass](../roadmap.md#m3--lifetime-pass) is
+what removes the retains it can prove, and the throughput comparison is
+meaningful again after that pass, and again after the optimising backend.
+
+## Other consequences, not measured here
+
+These follow from the memory model. This run does not add evidence for them.
+
+- **Destruction is tied to the last release.** For an acyclic object that is
+  already true: the batch dies when the local is overwritten, on that thread,
+  and the accounting line reaches `live=0`. A user finaliser (`~T()`) is still
+  rejected. Deterministic finalisers are [M4](../roadmap.md#m4--deterministic-finalisers).
+- **A cycle leaks.** The workloads are acyclic on purpose. `ARC3100` warns, the
+  program stays legal, and an ignored warning leaks. The .NET collector would
+  reclaim the same cycle. There is no backup collector.
+- **The heap is not compacted.** `malloc` returns blocks to its free list and
+  does not slide live objects together. A long-running program can keep a high
+  resident size after its live set has shrunk. A short run will not show that.
+  The .NET collector can compact, which is an advantage in the other direction
+  over a long run.
+- **The runtime is single-threaded.** The pauses here are workstation pauses
+  on one heap. Server GC, and a program with many threads, are outside this
+  comparison and outside the current compatibility target.
+- **Finalisers and `using`.** `Dispose()` runs when a `using` block completes
+  normally. That is already deterministic. It is a different mechanism from a
+  finaliser, and this run does not exercise it.
+
+## Repeating the run
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\compare-gc.ps1 -Runs 5
+```
+
+`-Workload baseline`, `retained`, or `churn` runs one program. The script
+needs the .NET 11 SDK and `clang`. It builds the compiler, builds each .NET
+program, emits LLVM IR, and links with `clang -O2`.
+
+At the end of every milestone in the [roadmap](../roadmap.md), run the same
+command and record the new medians beside the table above. A slower result does not
+fail those milestones. The milestones fail or pass on their own definitions
+of done. The comparison only says whether the memory and pause claims still
+hold, and whether the retain traffic has come down.

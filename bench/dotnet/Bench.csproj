@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Workload Condition="'$(Workload)' == ''">churn</Workload>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>$(Workload)</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Workstation concurrent GC is the console default. Named here so a
+         later change to the SDK default does not silently change the comparison. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredCompilation>false</TieredCompilation>
+    <TieredPGO>false</TieredPGO>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="GcReport.cs" />
+    <Compile Include="..\types.cs" Condition="'$(Workload)' != 'baseline'" />
+    <Compile Include="..\$(Workload).cs" />
+  </ItemGroup>
+
+</Project>

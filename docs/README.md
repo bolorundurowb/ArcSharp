@@ -39,6 +39,7 @@ before you rely on it for anything beyond experiments.
 
 - [ARC checking mode](features/arc-checking-mode.md)
 - [Retain and release statistics](features/arc-statistics.md)
+- [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo
 

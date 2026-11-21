@@ -107,15 +107,18 @@ how `tools/verify.ps1` captures both streams.
 | `analyzers/ArcSharp.Analyzers.Tests/` | xUnit tests that run the analyser over in-memory compilations |
 | `samples/*.cs` | Test programs; each one is run by `tools/verify.ps1` |
 | `samples/negative/*.cs` | Programs that must be rejected with a specific diagnostic |
+| `bench/` | Workloads compiled by both ArcSharp and the .NET GC runtime. Not part of `tools/verify.ps1` |
 | `tools/verify.ps1` | End-to-end verification harness |
+| `tools/compare-gc.ps1` | Peak memory and GC pause comparison. See `docs/features/gc-comparison.md` |
 | `tools/build-windows.ps1` | Convenience script: build and compile one file |
 | `tools/env.ps1` | Environment variables and LLVM on `PATH` |
 | `README.md` | Landing page |
 | `docs/` | User guides, architecture, roadmap, verification results, and the logo (see "Documentation" below) |
 
-`ArcSharp.csproj` excludes `samples/**/*.cs`, `analyzers/**/*.cs`, and
-`ref/**/*.cs` from compilation, so those files are never built as part of the
-compiler. The reference assembly is its own project. Keep it that way.
+`ArcSharp.csproj` excludes `samples/**/*.cs`, `bench/**/*.cs`,
+`analyzers/**/*.cs`, and `ref/**/*.cs` from compilation, so those files are
+never built as part of the compiler. The reference assembly is its own
+project. Keep it that way.
 
 ## The compiler pipeline
 
@@ -308,6 +311,12 @@ leaks are deliberate. Cycles are a closed decision: `ARC3100` warns, the
 program stays legal, and an ignored warning leaks, including when the cycle
 comes from a library. Do not turn `ARC3100` into an error, and do not add a
 cycle collector. `WeakReference<T>` is how a cycle is broken.
+
+When you finish a milestone in `docs/roadmap.md`, re-run
+`powershell -ExecutionPolicy Bypass -File tools\compare-gc.ps1 -Runs 5` and add
+the new medians to the table in `docs/features/gc-comparison.md`, in the same
+change. This applies to every `M*` section. The comparison is not part of
+`tools\verify.ps1`, so it does not replace the harness run.
 
 ### Adding a sample
 
