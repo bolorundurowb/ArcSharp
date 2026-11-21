@@ -27,6 +27,7 @@ for (var i = 0; i < args.Length; i++)
             break;
         }
         case "--emit-llvm": o.EmitLlvmOnly = true; break;
+        case "--dump-ownership": o.DumpOwnership = true; break;
         case "--run": o.Run = true; break;
         case "--no-bounds": o.BoundsChecks = false; break;
         case "-Werror":
@@ -74,7 +75,7 @@ for (var i = 0; i < args.Length; i++)
         case "-h":
         case "--help":
             Console.WriteLine(
-                "usage: arcsharp <input.cs> [input2.cs ...] [-o name] [--target windows|host] [--emit-llvm] [--run] [--no-bounds] [-Werror] [--runtime path] [--llc name] [--cc name] [--clang path]");
+                "usage: arcsharp <input.cs> [input2.cs ...] [-o name] [--target windows|host] [--emit-llvm] [--dump-ownership] [--run] [--no-bounds] [-Werror] [--runtime path] [--llc name] [--cc name] [--clang path]");
             return 0;
         default:
             if (a.StartsWith('-'))

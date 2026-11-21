@@ -13,6 +13,7 @@ public sealed class Options
     public string Output = "";
     public string Target = "windows"; // windows | host
     public bool EmitLlvmOnly;
+    public bool DumpOwnership;
     public bool Run;
     public bool BoundsChecks = true;
     public bool WarnAsError; // treat warnings as errors
@@ -64,6 +65,11 @@ public static class Compilation
         }
 
         var triple = o.Target == "windows" ? "x86_64-pc-windows-msvc" : "x86_64-pc-linux-gnu";
+        if (o.DumpOwnership)
+        {
+            LifetimeAnalysis.Analyze(program, Console.Error);
+        }
+
         var emitter = new Emitter(program, triple, o.BoundsChecks);
         var ir = emitter.Emit();
 
