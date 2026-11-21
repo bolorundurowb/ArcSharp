@@ -65,12 +65,8 @@ public static class Compilation
         }
 
         var triple = o.Target == "windows" ? "x86_64-pc-windows-msvc" : "x86_64-pc-linux-gnu";
-        if (o.DumpOwnership)
-        {
-            LifetimeAnalysis.Analyze(program, Console.Error);
-        }
-
-        var emitter = new Emitter(program, triple, o.BoundsChecks);
+        var lifetime = LifetimeAnalysis.Analyze(program, o.DumpOwnership ? Console.Error : null);
+        var emitter = new Emitter(program, triple, lifetime, o.BoundsChecks);
         var ir = emitter.Emit();
 
         var baseName = string.IsNullOrEmpty(o.Output)
