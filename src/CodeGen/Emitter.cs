@@ -500,6 +500,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private void EmitMethod(BoundMethodBody b, StringBuilder fns)
     {
+        var argumentOwners = lifetime.ArgumentOwners(b).ToHashSet();
         _curMethod = b.Method;
         _entry = [];
         _body = [];
@@ -573,6 +574,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
+        foreach (var owner in argumentOwners)
+        {
+            _entry.Add($"  %moved.arg{owner.Id} = alloca i8*");
+            _entry.Add($"  store i8* null, i8** %moved.arg{owner.Id}");
+        }
+
         var isVoid = m.ReturnType.Kind == TypeKind.Void;
         if (!isVoid)
         {
@@ -612,6 +619,14 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             if (loc.Type.IsReferenceType)
             {
                 var v = Inst($"load i8*, i8** %loc{loc.Id}");
+                if (argumentOwners.Contains(loc))
+                {
+                    // Earlier exits still own the value in the original slot.
+                    var moved = Inst($"load i8*, i8** %moved.arg{loc.Id}");
+                    var empty = Inst($"icmp eq i8* {v}, null");
+                    v = Inst($"select i1 {empty}, i8* {moved}, i8* {v}");
+                }
+
                 Do($"call void @arc_release(i8* {v})");
             }
             else if (loc.Type.Kind == TypeKind.Struct)
@@ -1011,6 +1026,18 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 }
 
                 var slot = _localSlot[lo.Symbol.Id];
+                if (lifetime.IsMove(lo) || lifetime.IsArgumentMove(lo))
+                {
+                    var moved = Inst($"load i8*, i8** {slot}");
+                    Do($"store i8* null, i8** {slot}");
+                    if (lifetime.IsArgumentMove(lo))
+                    {
+                        Do($"store i8* {moved}, i8** %moved.arg{lo.Symbol.Id}");
+                    }
+
+                    return moved;
+                }
+
                 return lifetime.IsBorrowed(lo)
                     ? Inst($"load i8*, i8** {slot}")
                     : EmitLoadSlot(slot, lo.Type);
@@ -1409,7 +1436,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private void TrackReferenceTemp(BoundExpr expression, string value)
     {
-        if (expression.Type.IsReferenceType && !lifetime.IsBorrowed(expression))
+        if (expression.Type.IsReferenceType && !lifetime.IsBorrowed(expression) && !lifetime.IsArgumentMove(expression))
         {
             _stmtTemps.Add(value);
         }

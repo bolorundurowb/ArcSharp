@@ -96,7 +96,7 @@ implement the whole framework.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 34 sample programs pass the test
+executable, with ARC accounting) works, and 35 sample programs pass the test
 harness on Windows x64. The harness also runs four leak-report checks, 25
 must-fail diagnostics, three command-line checks, four cycle checks, and 68
 analyser unit tests. The
@@ -104,10 +104,10 @@ compiler can also emit IR for Linux x64, but that path is not tested. See
 [Verification](docs/verification.md) for the latest results.
 
 The M2 verification baseline checks exact ARC counts and destruction timing.
-The present compiler reference-counts every heap object. Roslyn parses and
-binds the source. The compiler rejects C# finalisers. The
-[Roadmap](docs/roadmap.md) adds a lifetime pass that uses ARC only where a
-lifetime cannot be proved, then implements deterministic finalisation. That
+Every heap object has a reference count. Roslyn parses and binds the source,
+and the lifetime pass now proves selected borrows and moves. The compiler
+rejects C# finalisers. The [Roadmap](docs/roadmap.md) completes the lifetime
+pass before implementing deterministic finalisation. That
 contract is in the
 [memory model](docs/memory-model.md#finalisation): a finaliser runs when the
 last strong reference is released, not when a variable leaves scope, and

@@ -8,8 +8,8 @@ that count reaches zero. It emits textual **LLVM IR**, links against a small
 **Windows x64** (`x86_64-pc-windows-msvc`). The compiler itself is written in
 C# (.NET 11, LangVersion 12).
 
-> Status: first pass / PoC. The compiler that exists today retains every
-> reference and parses with its own frontend. The direction is a separate
+> Status: proof of concept. The compiler uses Roslyn and proves selected
+> borrows and moves. The direction is a separate
 > runtime, not a collector for the CLR: Roslyn at the front, an ownership tree
 > rather than CIL, ARC only where a lifetime cannot be proved, deterministic
 > finalisation, and the [compatibility target](roadmap.md#compatibility-target)
@@ -53,8 +53,8 @@ program still compiles. `System.WeakReference<T>` (Section 5) is how a cycle is
 broken. If the developer or a library ignores the warning, the objects leak
 and that result is intended. There is no backup collector.
 
-The counts above are what every heap object does today. The lifetime pass will
-skip a retain and release when it can prove the lifetime, on this same header.
+Every heap object uses the same header. The lifetime pass skips selected
+retain and release pairs when it can prove the lifetime.
 Stock CIL is not the representation that pass reads.
 
 ---
@@ -95,8 +95,8 @@ stops and prints the link command; with `--target host` it links the object and
 the runtime with `gcc`.
 
 Roslyn parses and binds, and the lowering builds the same bound tree the
-emitter already consumes. A lifetime pass will sit between that tree and the
-emitter. The bound tree stays the ownership representation. Stock CIL is not
+emitter consumes. The lifetime pass analyses that tree before emission. The
+bound tree stays the ownership representation. Stock CIL is not
 inserted in front of it: the CLR's IL has already dropped the escape and
 last-release facts that finalisation and the lifetime pass require. The
 emitter, the object header, and the C runtime stay. The lifetime pass is the
@@ -222,11 +222,12 @@ memory is freed only when the last weak reference also goes away.
 
 ### Compile-time discipline (applied by the emitter)
 
-The emitter normalises every evaluated reference expression to **+1 (owned)**:
+The emitter uses **+1 (owned)** values for allocation, returns and consuming
+stores. It retains shared reads by default:
 
 - `new T(...)` and reference-returning calls yield **+1** by convention.
-- Reading a local, field, parameter, `this`, or array element yields a borrowed
-  value that the emitter immediately **retains to +1**.
+- A proved borrowed read uses its existing slot owner for the duration of the
+  use. A proved move consumes the slot's existing +1 and clears the slot.
 
 A +1 value is then *consumed* in exactly one of these ways, or released:
 
@@ -265,13 +266,9 @@ on the object. Where that flag sits in the header is chosen with the
 implementation, and the emitter, the runtime, and this layout are updated
 together. The header does not change before then.
 
-> This "retain every read to +1, release temporaries per statement, release
-> slots at scope exit" rule over-retains slightly versus the hybrid model in
-> the [Roadmap](roadmap.md#m3--lifetime-pass). That is
-> intentional until the lifetime pass exists: it is simple, local, and
-> provably balanced. The pass will skip retain and release where it can prove
-> a lifetime. It will not remove the header, and it will not introduce a
-> second object layout. An escape still uses the count on the same object.
+The lifetime pass preserves these cleanup boundaries for shared values and
+moves. The [lifetime feature notes](features/lifetime-reads-and-moves.md)
+describe the cases handled so far and the ARC fallback.
 
 ---
 
@@ -479,7 +476,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Retain and release statistics (`ARC_STATS=1`) | Implemented: opt-in `[arc-stats]` line. The `[arc]` line is unchanged |
 | Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 | Roslyn frontend | Landed. Roslyn parses and binds, and the lowering builds the bound tree. |
-| Lifetime pass | Not started. The emitter still retains every read. See the [Roadmap](roadmap.md). |
+| Lifetime pass | Classification, stable borrows and restricted last-use moves implemented. See the [Roadmap](roadmap.md). |
 
 See [Verification](verification.md) for the exact set of sample programs that
 compile and run, with ARC alloc/free accounting, and the

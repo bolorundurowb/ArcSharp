@@ -73,6 +73,7 @@ Compiler command-line options (see `src/Program.cs`):
 | `-o <base>` | Output base path, without an extension |
 | `--target windows\|host` | `windows` (default) or the Linux x64 triple |
 | `--emit-llvm` | Stop after writing the `.ll` file |
+| `--dump-ownership` | Print ownership classifications and moves to stderr |
 | `--clang <path>` | Build the `.exe` in one step with clang (the path used on Windows) |
 | `--run` | Run the produced executable |
 | `--runtime <path>` | C runtime source, default `runtime/arc_runtime.c` |
@@ -133,7 +134,7 @@ lowering in `src/Frontend` builds the bound tree. `using` directives are
 honoured, and a namespace is part of a type's identity. A global
 `using System` is added so `Console` resolves without one.
 
-The verification baseline is complete. The next milestone is the lifetime pass in the
+The verification baseline is complete. The current milestone is the lifetime pass in the
 [Roadmap](docs/roadmap.md). Do not add a language feature ahead of that. A
 defect in the emitter or the runtime may still be fixed. A defect in binding
 is fixed in the Roslyn lowering.
@@ -183,9 +184,10 @@ checks the program's observable output.
 These rules are what keep every sample at `live=0`. They are described in
 `docs/architecture.md` section 4, and the emitter applies them as follows.
 
-- **Every evaluated reference expression yields an owned (+1) value.** `new`
-  and reference-returning calls already return +1. Reading a local, parameter,
-  field, array element, or `this` retains the value to +1 (`arc_retain`).
+- **Reference expressions yield an owned (+1) value by default.** `new`
+  and reference-returning calls already return +1. Shared reads retain to
+  +1. The lifetime pass can prove a borrow for a limited use or move a
+  local's existing +1 and clear its slot.
 - **A +1 value is consumed exactly once.** Storing it in a local, field, or
   array element transfers ownership with `arc_assign_take`, which releases the
   slot's old value and does not retain the new one. Returning it hands it to
@@ -193,7 +195,8 @@ These rules are what keep every sample at `live=0`. They are described in
 - **Temporaries are released at the end of the full statement.** The emitter
   records them in `_stmtTemps`. Each statement takes a `mark`, emits its
   expressions, and calls `ReleaseTemps(mark)`. A new emit path that produces a
-  reference value that is not stored or returned must add it to `_stmtTemps`.
+  reference temporary must add it to `_stmtTemps` unless ownership was
+  transferred or the lifetime pass proved a borrow.
 - **Reference-typed locals start as null and are released at `func.exit`.**
   Every `return` stores its value in `%retval` and branches to `func.exit`; do
   not emit a `ret` anywhere else.
@@ -212,11 +215,10 @@ These rules are what keep every sample at `live=0`. They are described in
   threads or shared state. Threads are outside the compatibility target, and
   the roadmap lists them as not scheduled.
 
-Over-retaining is acceptable; an unbalanced retain or release is not. Do not
-remove or skip retain and release pairs in the current emitter. The lifetime
-pass that will do that is a later milestone
-(M3 in `docs/roadmap.md`). It keeps this header on every heap object and
-uses ARC wherever it cannot prove a lifetime. It does not add a second layout.
+Over-retaining is acceptable. Eliding ARC operations requires a lifetime
+proof that preserves destruction timing. Every heap object keeps the same
+header, and the emitter uses ordinary ARC wherever the pass cannot prove a
+lifetime.
 
 ### Object layout
 
