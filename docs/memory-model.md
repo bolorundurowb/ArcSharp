@@ -475,3 +475,12 @@ escapes into a field, an array, or a call the compiler cannot see stays
 reference-counted on the same object. That pass is not in the compiler yet.
 Until it is, every heap object is reference-counted, there are no collection
 pauses, and memory is returned when the last strong reference goes away.
+
+A measurement of that behaviour against the ordinary .NET collector is in
+[Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
+On that run the empty program and a program that allocates and drops batches
+had a lower peak under ArcSharp, and the .NET run suspended for about 15 ms.
+A graph kept alive for the whole run used more private memory under ArcSharp,
+because of this header and the 8-byte slots. The batch program also took
+longer: the compiler still retains every reference, and that run performed
+9.6 million retains. The comparison is re-run when the lifetime pass lands.

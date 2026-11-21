@@ -101,6 +101,10 @@ and threads are not targets.
 - Diagnostic codes are never renumbered or reused.
 - The ARC invariants in [`AGENTS.md`](../AGENTS.md) hold at every step. Over-
   retaining is acceptable. An unbalanced retain or release is not.
+- At the end of every milestone, before it is marked done, re-run
+  `tools\compare-gc.ps1 -Runs 5` and add the new medians to the table in the
+  [GC comparison](features/gc-comparison.md). A slower wall time does not fail
+  a milestone. The milestone's own definition of done decides that.
 
 ---
 
@@ -132,6 +136,11 @@ results are in [Verification](verification.md).
 - Roslyn is the frontend. The hand-written lexer, parser, and name resolution
   are gone. Layout, definite assignment, cycle analysis, and emission are
   unchanged.
+- A comparison of peak memory and collector pauses against the ordinary .NET
+  runtime, on source both compilers accept. The method and the 20 November
+  2026 numbers are in
+  [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
+  `tools\compare-gc.ps1` is not part of the verification harness.
 
 ---
 

@@ -21,6 +21,13 @@ Each run prints `[arc] alloc=A dead=D freed=F live=L` to stderr:
 ran), `freed` = allocations whose weak count reached zero, `live` = `alloc − dead` (objects
 still retained at exit). **`live=0` means no leaks.**
 
+Peak memory and collector pauses are a separate measurement. The programs in
+`bench/` are compiled with ArcSharp and with the ordinary .NET runtime by
+`tools\compare-gc.ps1`. The 20 November 2026 results are in
+[Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
+The script is not part of this harness, and GitHub Actions does not run it.
+The numbers depend on the machine.
+
 ## Results (30 samples, Windows x64, 20 November 2026)
 
 `tools\verify.ps1` reported **68 passed, 0 failed** with the .NET 11.0.100 SDK:
