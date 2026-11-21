@@ -5,7 +5,7 @@ using ArcSharp.Syntax;
 
 namespace ArcSharp.CodeGen;
 
-public sealed class Emitter(BoundProgram program, string triple, bool boundsChecks = true)
+public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysis lifetime, bool boundsChecks = true)
 {
     private readonly BoundProgram _program = program;
     private readonly string _triple = triple;
@@ -1010,8 +1010,14 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
                     return _localSlot[lo.Symbol.Id];
                 }
 
-                return EmitLoadSlot(_localSlot[lo.Symbol.Id], lo.Type);
-            case BoundParam p: return EmitLoadParam(p);
+                var slot = _localSlot[lo.Symbol.Id];
+                return lifetime.IsBorrowed(lo)
+                    ? Inst($"load i8*, i8** {slot}")
+                    : EmitLoadSlot(slot, lo.Type);
+            case BoundParam p:
+                return lifetime.IsBorrowed(p)
+                    ? Inst($"load i8*, i8** %arg{p.Symbol.Index}")
+                    : EmitLoadParam(p);
             case BoundThis:
             {
                 if (_curMethod.Owner.Kind == TypeKind.Struct)
@@ -1296,7 +1302,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
     private string EmitLength(BoundLength len)
     {
         var recv = EmitR(len.Receiver);
-        _stmtTemps.Add(recv);
+        TrackReferenceTemp(len.Receiver, recv);
         var l = Inst($"call i64 @arc_array_length(i8* {recv})");
         return Inst($"trunc i64 {l} to i32");
     }
@@ -1317,10 +1323,7 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             else
             {
                 recv = EmitR(c.Receiver);
-                if (c.Receiver.Type.IsReferenceType)
-                {
-                    _stmtTemps.Add(recv);
-                }
+                TrackReferenceTemp(c.Receiver, recv);
             }
         }
 
@@ -1395,16 +1398,21 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             else
             {
                 var v = EmitR(a);
-                if (a.Type.IsReferenceType)
-                {
-                    _stmtTemps.Add(v);
-                }
+                TrackReferenceTemp(a, v);
 
                 argVals.Add($"{a.Type.LlvmType} {v}");
             }
         }
 
         return argVals;
+    }
+
+    private void TrackReferenceTemp(BoundExpr expression, string value)
+    {
+        if (expression.Type.IsReferenceType && !lifetime.IsBorrowed(expression))
+        {
+            _stmtTemps.Add(value);
+        }
     }
 
     // A struct method's this is an interior pointer into the caller's storage.
@@ -1519,16 +1527,10 @@ public sealed class Emitter(BoundProgram program, string triple, bool boundsChec
             case BinKind.RefEq:
             {
                 var l = EmitR(b.Left);
-                if (b.Left.Type.IsReferenceType)
-                {
-                    _stmtTemps.Add(l);
-                }
+                TrackReferenceTemp(b.Left, l);
 
                 var r = EmitR(b.Right);
-                if (b.Right.Type.IsReferenceType)
-                {
-                    _stmtTemps.Add(r);
-                }
+                TrackReferenceTemp(b.Right, r);
 
                 if (b.Kind == BinKind.StrEq)
                 {
