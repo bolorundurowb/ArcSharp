@@ -225,7 +225,7 @@ release, a use after free, or a moved destruction without the harness noticing.
    the harness depends on. Record the baseline for every sample.
    **Landed.** See [Retain and release statistics](features/arc-statistics.md).
 3. Check exact `alloc`, `dead`, and `freed` counts for every sample, not only
-   `live`.
+   `live`. **Landed.** The harness compares the complete accounting line.
 4. Add samples that observe destruction points directly: a `WeakReference<T>`
    that must turn `false` at a specific statement. These become the evidence
    that later milestones keep destruction in place.

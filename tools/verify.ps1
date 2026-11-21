@@ -65,7 +65,7 @@ try {
     function Invoke-Sample {
         param(
             [string]   $Name,
-            [int]      $Live,
+            [string]   $Accounting,
             [string]   $Want,
             [string[]] $Sources
         )
@@ -76,14 +76,13 @@ try {
         $out = $run.Out
         $err = $run.Err
         $arc = ($err -split "`r?`n" | Where-Object { $_ -match '\[arc\] alloc=' }) -join ""
-        $gotLive = if ($arc -match 'live=(\d+)') { [int]$Matches[1] } else { -1 }
-        $ok = ($gotLive -eq $Live) -and ($out -match [regex]::Escape($Want)) -and ($err -notmatch '\[arc-check\]')
+        $ok = ($arc -ceq "[arc] $Accounting") -and ($out -match [regex]::Escape($Want)) -and ($err -notmatch '\[arc-check\]')
         if ($ok) {
             Write-Host "PASS  $Name  ($arc; output ok)"
             $script:pass++
         }
         else {
-            Write-Host "FAIL  $Name  want_live=$Live got='$arc' want_out='$Want' got_out='$out'"
+            Write-Host "FAIL  $Name  want='[arc] $Accounting' got='$arc' want_out='$Want' got_out='$out'"
             Write-Host $err
             $script:fail++
         }
@@ -223,36 +222,36 @@ try {
         $script:fail++
     }
 
-    Invoke-Sample generics 0 "generics PASS" @("generics", "generics_lib")
-    Invoke-Sample generic_structs 0 "layout=20,30,99,40" @("generic_structs")
-    Invoke-Sample inherit       0 "sum=42"                     @("inherit")
-    Invoke-Sample interface     0 "circle=75"                  @("interface")
-    Invoke-Sample refarray      0 "refarray sum=5"             @("refarray")
-    Invoke-Sample statics       0 "count=3"                    @("statics")
-    Invoke-Sample fib           0 "fib(10)=55"                 @("fib")
-    Invoke-Sample floats        0 "area=19.6349"               @("floats")
-    Invoke-Sample weak_null     0 "PASS"                       @("weak_null")
-    Invoke-Sample cycle_weak    0 "done (weak cycle)"          @("cycle_weak")
-    Invoke-Sample cycle_weakref 0 "done (WeakReference cycle)" @("cycle_weakref")
-    Invoke-Sample weakref_get   0 "PASS under ARC"             @("weakref_get")
-    Invoke-Sample cycle_strong  2 "done (strong cycle)"        @("cycle_strong")   # intentional leak without weak
-    Invoke-Sample cycle_struct  2 "done (struct cycle)"        @("cycle_struct")   # strong cycle through an inline struct field
-    Invoke-Sample multifile     0 "twice=42"                   @("mf_main", "mf_lib")   # two source files compiled together
-    Invoke-Sample numerics      0 "150"                        @("numerics")             # byte/sbyte/short/ushort/uint/ulong
-    Invoke-Sample byref         0 "3"                          @("byref")                # ref/out/in parameters
-    Invoke-Sample properties    0 "Alice"                      @("properties")           # auto-properties
-    Invoke-Sample isas          0 "as Cat: null"               @("isas")                 # is/as runtime type checks
-    Invoke-Sample covariance      0 "stored Dog"                 @("covariance")           # array covariance runtime check
-    Invoke-Sample longconcat      0 "concat=20000000000 uint=3000000000" @("longconcat") # long and uint to string; C long is 32-bit on Windows
-    Invoke-Sample using_stmt     0 "disposals=3"                @("using_stmt")           # using/IDisposable: declaration, expression, virtual, interface, null, return
-    Invoke-Sample structs        0 "card=card copy tags=1,2"    @("structs")              # struct codegen: value semantics, reference fields, ref/out, nesting
-    Invoke-Sample boolprint      0 "cmp=False/True direct=False" @("boolprint")       # false comparison printed with WriteLine, and bool concatenation
-    Invoke-Sample unicode        0 "letter=A match=True bytes=4" @("unicode")         # \u and \U escapes
-    Invoke-Sample overloads      0 "int=7 str=ok 4 4"           @("overloads")        # same-arity overloads, static and instance
-    Invoke-Sample charprint      0 "concat=B direct=A"          @("charprint")        # char prints as a character
-    Invoke-Sample staticprop     0 "count=4"                    @("staticprop")       # static auto-property
-    Invoke-Sample leaks          6 "leaks reported"             @("leaks")            # static root plus unreachable cycles; ARC_LEAKS report checked below
-    Invoke-Sample owners         0 "owners=4,7,5,6,5,2"         @("owners")           # interior refs stay valid when the callee drops the owner
+    Invoke-Sample generics "alloc=72 dead=72 freed=72 live=0" "generics PASS" @("generics", "generics_lib")
+    Invoke-Sample generic_structs "alloc=28 dead=28 freed=28 live=0" "layout=20,30,99,40" @("generic_structs")
+    Invoke-Sample inherit       "alloc=5 dead=5 freed=5 live=0" "sum=42"                     @("inherit")
+    Invoke-Sample interface     "alloc=8 dead=8 freed=8 live=0" "circle=75"                  @("interface")
+    Invoke-Sample refarray      "alloc=7 dead=7 freed=7 live=0" "refarray sum=5"             @("refarray")
+    Invoke-Sample statics       "alloc=3 dead=3 freed=3 live=0" "count=3"                    @("statics")
+    Invoke-Sample fib           "alloc=22 dead=22 freed=22 live=0" "fib(10)=55"                 @("fib")
+    Invoke-Sample floats        "alloc=7 dead=7 freed=7 live=0" "area=19.6349"               @("floats")
+    Invoke-Sample weak_null     "alloc=4 dead=4 freed=4 live=0" "PASS"                       @("weak_null")
+    Invoke-Sample cycle_weak    "alloc=4 dead=4 freed=4 live=0" "done (weak cycle)"          @("cycle_weak")
+    Invoke-Sample cycle_weakref "alloc=4 dead=4 freed=4 live=0" "done (WeakReference cycle)" @("cycle_weakref")
+    Invoke-Sample weakref_get   "alloc=4 dead=4 freed=4 live=0" "PASS under ARC"             @("weakref_get")
+    Invoke-Sample cycle_strong  "alloc=3 dead=1 freed=1 live=2" "done (strong cycle)"        @("cycle_strong")   # intentional leak without weak
+    Invoke-Sample cycle_struct  "alloc=3 dead=1 freed=1 live=2" "done (struct cycle)"        @("cycle_struct")   # strong cycle through an inline struct field
+    Invoke-Sample multifile     "alloc=4 dead=4 freed=4 live=0" "twice=42"                   @("mf_main", "mf_lib")   # two source files compiled together
+    Invoke-Sample numerics      "alloc=0 dead=0 freed=0 live=0" "150"                        @("numerics")             # byte/sbyte/short/ushort/uint/ulong
+    Invoke-Sample byref         "alloc=0 dead=0 freed=0 live=0" "3"                          @("byref")                # ref/out/in parameters
+    Invoke-Sample properties    "alloc=2 dead=2 freed=2 live=0" "Alice"                      @("properties")           # auto-properties
+    Invoke-Sample isas          "alloc=5 dead=5 freed=5 live=0" "as Cat: null"               @("isas")                 # is/as runtime type checks
+    Invoke-Sample covariance      "alloc=3 dead=3 freed=3 live=0" "stored Dog"                 @("covariance")           # array covariance runtime check
+    Invoke-Sample longconcat      "alloc=7 dead=7 freed=7 live=0" "concat=20000000000 uint=3000000000" @("longconcat") # long and uint to string; C long is 32-bit on Windows
+    Invoke-Sample using_stmt     "alloc=25 dead=25 freed=25 live=0" "disposals=3"                @("using_stmt")           # using/IDisposable: declaration, expression, virtual, interface, null, return
+    Invoke-Sample structs        "alloc=66 dead=66 freed=66 live=0" "card=card copy tags=1,2"    @("structs")              # struct codegen: value semantics, reference fields, ref/out, nesting
+    Invoke-Sample boolprint      "alloc=9 dead=9 freed=9 live=0" "cmp=False/True direct=False" @("boolprint")       # false comparison printed with WriteLine, and bool concatenation
+    Invoke-Sample unicode        "alloc=9 dead=9 freed=9 live=0" "letter=A match=True bytes=4" @("unicode")         # \u and \U escapes
+    Invoke-Sample overloads      "alloc=19 dead=19 freed=19 live=0" "int=7 str=ok 4 4"           @("overloads")        # same-arity overloads, static and instance
+    Invoke-Sample charprint      "alloc=5 dead=5 freed=5 live=0" "concat=B direct=A"          @("charprint")        # char prints as a character
+    Invoke-Sample staticprop     "alloc=3 dead=3 freed=3 live=0" "count=4"                    @("staticprop")       # static auto-property
+    Invoke-Sample leaks          "alloc=7 dead=1 freed=1 live=6" "leaks reported"             @("leaks")            # static root plus unreachable cycles; ARC_LEAKS report checked below
+    Invoke-Sample owners         "alloc=33 dead=33 freed=33 live=0" "owners=4,7,5,6,5,2"         @("owners")           # interior refs stay valid when the callee drops the owner
 
     Write-Host "--- leak detector (ARC_LEAKS=1) ---"
     Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(
