@@ -41,6 +41,30 @@ sealed partial class RoslynLowering
 
         var block = new BoundBlock();
         var syntax = roslyn.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+        if (roslyn.MethodKind == MethodKind.StaticConstructor
+            || (method.IsConstructor && syntax is not ConstructorDeclarationSyntax { Initializer.ThisOrBaseKeyword.RawKind: (int)SyntaxKind.ThisKeyword }))
+        {
+            AppendFieldInitialisers(block, method);
+        }
+
+        if (method.IsConstructor && roslyn.IsImplicitlyDeclared && method.Owner.BaseType is { } baseType)
+        {
+            var baseConstructor = baseType.Methods.Find(candidate => candidate.IsConstructor && candidate.Parameters.Count == 0);
+            if (baseConstructor != null)
+            {
+                block.Statements.Add(new BoundExprStmt
+                {
+                    Expression = new BoundCall
+                    {
+                        Receiver = new BoundThis { Type = method.Owner },
+                        Method = baseConstructor,
+                        Arguments = [],
+                        Type = _void
+                    }
+                });
+            }
+        }
+
         if (syntax != null)
         {
             var model = _compilation.GetSemanticModel(syntax.SyntaxTree);
@@ -78,6 +102,40 @@ sealed partial class RoslynLowering
         }
     }
 
+    private void AppendFieldInitialisers(BoundBlock block, MethodSymbol method)
+    {
+        if (!_fieldInitialisers.TryGetValue(method.Owner, out var initialisers))
+        {
+            return;
+        }
+
+        foreach (var (field, syntax) in initialisers)
+        {
+            if (field.IsStatic != method.IsStatic)
+            {
+                continue;
+            }
+
+            var model = _compilation.GetSemanticModel(syntax.SyntaxTree);
+            if (model.GetOperation(syntax) is not IFieldInitializerOperation operation)
+            {
+                Report(syntax, $"could not lower initialiser for '{field.Name}'", "ARC2001");
+                continue;
+            }
+
+            var target = new BoundFieldAccess
+            {
+                Field = field,
+                Type = field.Type,
+                Receiver = field.IsStatic ? null : new BoundThis { Type = method.Owner }
+            };
+            block.Statements.Add(new BoundExprStmt
+            {
+                Expression = new BoundAssign { Target = target, Value = LowerExpr(operation.Value), Type = field.Type }
+            });
+        }
+    }
+
     private BoundExpr? LowerInitialiser(IOperation? initialiser)
     {
         if (initialiser is IExpressionStatementOperation statement)
@@ -91,8 +149,8 @@ sealed partial class RoslynLowering
         }
 
         var target = call.TargetMethod;
-        if (target.IsImplicitlyDeclared
-            || target.ContainingType.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType)
+        if (target.ContainingType.SpecialType is SpecialType.System_Object or SpecialType.System_ValueType
+            || (target.IsImplicitlyDeclared && target.ContainingType.TypeKind == RoslynKind.Struct))
         {
             return null;
         }
@@ -685,7 +743,8 @@ sealed partial class RoslynLowering
         }
 
         MethodSymbol? ctor = null;
-        if (creation.Constructor != null && !creation.Constructor.IsImplicitlyDeclared
+        if (creation.Constructor != null
+            && (!creation.Constructor.IsImplicitlyDeclared || type.Kind == BoundKind.Class)
             && creation.Constructor.ContainingType.SpecialType != SpecialType.System_Object)
         {
             ctor = MapMethod(creation.Constructor, creation.Syntax.GetLocation());
@@ -779,6 +838,13 @@ sealed partial class RoslynLowering
         var right = LowerExpr(binary.RightOperand);
         var op = BinaryToken(binary.OperatorKind);
         if (op is TokenKind.EqualsEquals or TokenKind.BangEquals
+            && binary.LeftOperand.Type?.SpecialType == SpecialType.System_String
+            && binary.RightOperand.Type?.SpecialType == SpecialType.System_String)
+        {
+            return new BoundBinary { Op = op, Kind = BinKind.StrEq, Left = left, Right = right, Type = _bool };
+        }
+
+        if (op is TokenKind.EqualsEquals or TokenKind.BangEquals
             && (left.Type.IsReferenceType || right.Type.IsReferenceType || left.Type == _null || right.Type == _null))
         {
             return new BoundBinary { Op = op, Kind = BinKind.RefEq, Left = left, Right = right, Type = _bool };
@@ -841,11 +907,6 @@ sealed partial class RoslynLowering
 
         var value = LowerExpr(conversion.Operand);
         var type = MapType(conversion.Type, conversion.Syntax.GetLocation());
-        if (!conversion.IsImplicit && IsSmallInteger(type))
-        {
-            Report(conversion.Syntax, $"explicit casts to '{type.Name}' are not supported", DiagnosticCatalog.UnsupportedConstructId);
-        }
-
         if (value.Type == type || type == _error || value.Type == _error)
         {
             return value;
@@ -921,6 +982,22 @@ sealed partial class RoslynLowering
     {
         if (property.Property.SetMethod == null)
         {
+            var getter = property.Property.GetMethod == null
+                ? null
+                : MapMethod(property.Property.GetMethod, syntax.GetLocation());
+            var backing = getter?.Owner.Properties.Find(candidate => candidate.Getter == getter)?.BackingField;
+            if (_currentMethod.IsConstructor && backing != null && backing.Owner == _currentType
+                && property.Instance is IInstanceReferenceOperation instance)
+            {
+                var target = new BoundFieldAccess
+                {
+                    Receiver = LowerExpr(instance),
+                    Field = backing,
+                    Type = backing.Type
+                };
+                return new BoundAssign { Target = target, Value = value, Type = backing.Type };
+            }
+
             Report(syntax, $"get-only property '{property.Property.Name}' cannot be assigned", "ARC2001");
             return ErrorExpr();
         }

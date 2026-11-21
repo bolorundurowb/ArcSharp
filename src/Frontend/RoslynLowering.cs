@@ -26,6 +26,7 @@ sealed partial class RoslynLowering
     private readonly Dictionary<INamedTypeSymbol, TypeSymbol> _named = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<string, TypeSymbol> _generic = [];
     private readonly Dictionary<MemberKey, FieldSymbol> _fields = [];
+    private readonly Dictionary<TypeSymbol, List<(FieldSymbol Field, EqualsValueClauseSyntax Syntax)>> _fieldInitialisers = [];
     private readonly Dictionary<MemberKey, MethodSymbol> _methods = [];
     private readonly Dictionary<MethodSymbol, int> _selectors = [];
     private readonly Dictionary<string, TypeSymbol> _arrays = [];
@@ -181,12 +182,10 @@ sealed partial class RoslynLowering
             }
 
             var element = MapType(array.ElementType, location);
-            if (element.Kind == BoundKind.Struct || IsSmallInteger(element))
+            if (element.Kind == BoundKind.Struct)
             {
                 Report(location,
-                    element.Kind == BoundKind.Struct
-                        ? "arrays of struct element type are not supported"
-                        : $"arrays of '{element.Name}' are not supported",
+                    "arrays of struct element type are not supported",
                     DiagnosticCatalog.UnsupportedConstructId);
             }
 
@@ -424,6 +423,17 @@ sealed partial class RoslynLowering
                 case IMethodSymbol method when method.MethodKind is MethodKind.Destructor:
                     ReportOnce(method, "finalisers are not supported yet");
                     break;
+                case IMethodSymbol { MethodKind: MethodKind.StaticConstructor, IsImplicitlyDeclared: true } method:
+                    var initialiser = new MethodSymbol
+                    {
+                        Name = "<field_init>",
+                        Owner = type,
+                        IsStatic = true,
+                        ReturnType = _void
+                    };
+                    type.StaticFieldInitialiser = initialiser;
+                    Queue(initialiser, method);
+                    break;
                 case IMethodSymbol method when method.MethodKind is MethodKind.StaticConstructor:
                     ReportOnce(method, "static constructors are not supported yet");
                     break;
@@ -527,6 +537,17 @@ sealed partial class RoslynLowering
             IsStatic = field.IsStatic
         };
         _fields[new MemberKey(field.OriginalDefinition, owner)] = created;
+        if (field.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is VariableDeclaratorSyntax { Initializer: { } syntax })
+        {
+            if (!_fieldInitialisers.TryGetValue(owner, out var initialisers))
+            {
+                initialisers = [];
+                _fieldInitialisers.Add(owner, initialisers);
+            }
+
+            initialisers.Add((created, syntax));
+        }
+
         return created;
     }
 
@@ -640,7 +661,7 @@ sealed partial class RoslynLowering
 
     private void CreateMethod(TypeSymbol owner, IMethodSymbol method, List<MethodSymbol> methods)
     {
-        if (method.IsImplicitlyDeclared)
+        if (method.IsImplicitlyDeclared && (method.MethodKind != MethodKind.Constructor || owner.Kind != BoundKind.Class))
         {
             return;
         }
@@ -674,7 +695,7 @@ sealed partial class RoslynLowering
             Owner = owner,
             ReturnType = returnType,
             IsStatic = method.IsStatic,
-            IsVirtual = method.IsVirtual,
+            IsVirtual = method.IsVirtual || method.IsAbstract,
             IsOverride = method.IsOverride,
             IsAbstract = method.IsAbstract,
             IsConstructor = method.MethodKind == MethodKind.Constructor,
@@ -709,7 +730,7 @@ sealed partial class RoslynLowering
             return;
         }
 
-        if (!method.IsAbstract && HasBody(method))
+        if (!method.IsAbstract && (method.IsImplicitlyDeclared || HasBody(method)))
         {
             Queue(created, method);
         }
@@ -1093,9 +1114,6 @@ sealed partial class RoslynLowering
         SpecialType.System_Void => _void,
         _ => null
     };
-
-    private static bool IsSmallInteger(TypeSymbol type) =>
-        type.Name is "byte" or "sbyte" or "short" or "ushort";
 
     private static bool IsWeakReference(INamedTypeSymbol named) =>
         named.Name == "WeakReference" && named.ContainingNamespace?.ToDisplayString() == "System";

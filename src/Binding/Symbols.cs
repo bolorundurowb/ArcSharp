@@ -22,6 +22,7 @@ public sealed class TypeSymbol
 
     // class/struct
     public TypeSymbol? BaseType;
+    public MethodSymbol? StaticFieldInitialiser;
     public List<TypeSymbol> Interfaces = [];
     public List<FieldSymbol> InstanceFields = []; // includes inherited, in layout order
     public List<FieldSymbol> StaticFields = [];

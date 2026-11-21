@@ -126,6 +126,26 @@ managed heap was 18,243,040 bytes, with 40,128,512 bytes committed and 12,528
 bytes fragmented. The process had allocated 45,444,208 managed bytes in total.
 ArcSharp has no collector, so it has no suspension to report.
 
+## M2 medians (21 November 2026)
+
+The same command completed five measured runs per workload and runtime on
+Windows x64 with .NET SDK 11.0.100 and clang 22.1.8. All checksums matched,
+and all ArcSharp runs ended with `live=0`. The ARC accounting totals matched
+the original run.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---:|---:|---:|
+| baseline | ArcSharp | 16.0 ms | 3.9 MiB | 0.6 MiB |
+| baseline | .NET | 59.1 ms | 23.1 MiB | 6.3 MiB |
+| retained | ArcSharp | 58.5 ms | 25.0 MiB | 23.4 MiB |
+| retained | .NET | 61.3 ms | 35.3 MiB | 18.7 MiB |
+| churn | ArcSharp | 137.0 ms | 35.7 MiB | 34.7 MiB |
+| churn | .NET | 91.2 ms | 61.0 MiB | 44.2 MiB |
+
+The .NET churn sampler recorded both pauses in all five runs. The median
+first and second pauses were 4.012 ms and 15.142 ms. The median total pause
+per run was 19.231 ms.
+
 ## What the numbers support
 
 **The empty process is smaller.** The ArcSharp baseline commits 0.6 MiB and

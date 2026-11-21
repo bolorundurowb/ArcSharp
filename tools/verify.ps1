@@ -79,6 +79,9 @@ try {
         $ok = ($arc -ceq "[arc] $Accounting") -and ($out -match [regex]::Escape($Want)) -and ($err -notmatch '\[arc-check\]')
         if ($ok) {
             Write-Host "PASS  $Name  ($arc; output ok)"
+            $err -split "`r?`n" | Where-Object { $_ -match '^\[arc-stats\]' } | ForEach-Object {
+                Write-Host "      $Name  $_"
+            }
             $script:pass++
         }
         else {
@@ -252,6 +255,10 @@ try {
     Invoke-Sample staticprop     "alloc=3 dead=3 freed=3 live=0" "count=4"                    @("staticprop")       # static auto-property
     Invoke-Sample leaks          "alloc=7 dead=1 freed=1 live=6" "leaks reported"             @("leaks")            # static root plus unreachable cycles; ARC_LEAKS report checked below
     Invoke-Sample owners         "alloc=33 dead=33 freed=33 live=0" "owners=4,7,5,6,5,2"         @("owners")           # interior refs stay valid when the callee drops the owner
+    Invoke-Sample destruction_points "alloc=3 dead=3 freed=3 live=0" "destruction points PASS" @("destruction_points")
+    Invoke-Sample m2_dispatch_logic "alloc=6 dead=6 freed=6 live=0" "dispatch and logic PASS" @("m2_dispatch_logic")
+    Invoke-Sample m2_initialisers "alloc=7 dead=7 freed=7 live=0" "initialisers PASS" @("m2_initialisers")
+    Invoke-Sample m2_properties_narrowing "alloc=5 dead=5 freed=5 live=0" "properties and narrowing PASS" @("m2_properties_narrowing")
 
     Write-Host "--- leak detector (ARC_LEAKS=1) ---"
     Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(
