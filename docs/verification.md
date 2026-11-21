@@ -28,10 +28,10 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (34 samples, Windows x64, 21 November 2026)
+## Results (35 samples, Windows x64, 21 November 2026)
 
-`tools\verify.ps1` reported **72 passed, 0 failed** with the .NET 11.0.100 SDK:
-34 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
+`tools\verify.ps1` reported **73 passed, 0 failed** with the .NET 11.0.100 SDK:
+35 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
 diagnostics, 3 command-line checks, 4 cycle checks, one run of the analyser
 unit tests (68 cases), and one reference-surface check. `live=0` means every
 object was reclaimed.
@@ -74,6 +74,7 @@ object was reclaimed.
 | `m2_dispatch_logic` | abstract dispatch, string equality and short-circuit temporaries | alloc=6 dead=6 freed=6 **live=0** | `dispatch and logic PASS` |
 | `m2_initialisers` | instance and static field initialisers, implicit base construction and constructor delegation | alloc=7 dead=7 freed=7 **live=0** | `initialisers PASS` |
 | `m2_properties_narrowing` | get-only assignment, inherited auto-properties, narrow casts and arrays | alloc=5 dead=5 freed=5 **live=0** | `properties and narrowing PASS` |
+| `lifetime_reads_and_moves` | stable reads, last-use moves, early return and a by-reference alias | alloc=10 dead=10 freed=10 **live=0** | `lifetime reads and moves PASS` |
 
 The two new generic samples were also built and run with the normal .NET 8
 compiler, producing the same stdout. The generic identity example in the
@@ -90,7 +91,7 @@ name an unreachable cycle (`Parent -> Child -> Parent`, and
 survivor lines. The accounting totals above are unchanged when the report is
 off.
 
-## Retain and release baseline
+## M2 retain and release baseline
 
 `ARC_STATS=1` prints `[arc-stats] retain=R release=S` after the accounting
 line. A retain is a strong-count increment after allocation, and a release is
@@ -141,6 +142,29 @@ in that run have a strong count of 1.
 | `m2_dispatch_logic` | 7 | 13 |
 | `m2_initialisers` | 21 | 28 |
 | `m2_properties_narrowing` | 12 | 17 |
+
+## M3 steps 1–3 retain and release counts
+
+The 34 existing samples retained their exact M2 accounting and output
+checks. Retains across those samples fell from 418 to 369
+and releases fell from 799 to 750. Samples with changed ARC traffic
+are listed below. The new lifetime regression recorded 18 retains and 28
+releases.
+
+| Sample | M2 retains | Current retains | M2 releases | Current releases |
+|---|---:|---:|---:|---:|
+| `inherit` | 17 | 12 | 22 | 17 |
+| `interface` | 11 | 9 | 19 | 17 |
+| `refarray` | 26 | 18 | 33 | 25 |
+| `weak_null` | 7 | 6 | 11 | 10 |
+| `weakref_get` | 7 | 6 | 11 | 10 |
+| `multifile` | 1 | 0 | 5 | 4 |
+| `properties` | 11 | 7 | 13 | 9 |
+| `isas` | 7 | 6 | 12 | 11 |
+| `overloads` | 4 | 1 | 23 | 20 |
+| `generics` | 141 | 123 | 213 | 195 |
+| `m2_dispatch_logic` | 7 | 4 | 13 | 10 |
+| `m2_properties_narrowing` | 12 | 10 | 17 | 15 |
 
 ## Diagnostics
 

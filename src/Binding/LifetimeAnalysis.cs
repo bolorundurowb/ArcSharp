@@ -12,9 +12,18 @@ public enum ReferenceOwnership
 public sealed class LifetimeAnalysis
 {
     private readonly Dictionary<BoundExpr, ReferenceOwnership> _ownership = [];
+    private readonly HashSet<BoundLocal> _moves = [];
+    private readonly HashSet<BoundLocal> _argumentMoves = [];
 
     public bool IsBorrowed(BoundExpr value) =>
         _ownership.TryGetValue(value, out var ownership) && ownership == ReferenceOwnership.Borrowed;
+
+    public bool IsMove(BoundLocal value) => _moves.Contains(value);
+
+    public bool IsArgumentMove(BoundExpr value) => value is BoundLocal local && _argumentMoves.Contains(local);
+
+    public IEnumerable<LocalSymbol> ArgumentOwners(BoundMethodBody body) =>
+        body.AllLocals.Where(symbol => _argumentMoves.Any(move => move.Symbol == symbol));
 
     private void Borrow(BoundExpr value)
     {
@@ -92,6 +101,10 @@ public sealed class LifetimeAnalysis
                         }
 
                         break;
+                    case BoundReturn { Value: BoundLocal local } when stableReads.Contains(local):
+                        result._moves.Add(local);
+                        result._ownership[local] = ReferenceOwnership.Owned;
+                        break;
                 }
             }
 
@@ -134,13 +147,33 @@ public sealed class LifetimeAnalysis
                 }
             }
 
+            // The last top-level statement has no successor that can read the
+            // source. A fresh destination with a later exit-cleanup position
+            // keeps the object alive at least as long as the original slot.
+            switch (body.Body.Statements.LastOrDefault())
+            {
+                case BoundLocalDecl { Initializer: BoundLocal source } declaration
+                    when stableReads.Contains(source) && body.AllLocals.IndexOf(source.Symbol) >= 0
+                        && body.AllLocals.IndexOf(source.Symbol) < body.AllLocals.IndexOf(declaration.Symbol):
+                    result._moves.Add(source);
+                    result._ownership[source] = ReferenceOwnership.Owned;
+                    break;
+                case BoundExprStmt { Expression: BoundCall { Arguments: [BoundLocal argument] } call }
+                    when call.Method.IsStatic && result.IsBorrowed(argument):
+                    result._argumentMoves.Add(argument);
+                    result._ownership[argument] = ReferenceOwnership.Owned;
+                    break;
+            }
+
             if (trace != null)
             {
                 trace.WriteLine($"[ownership] {body.Method.MangledName}");
                 foreach (var value in nodes.OfType<BoundExpr>().Where(value => value.Type.IsReferenceType))
                 {
                     var ownership = result._ownership[value].ToString().ToLowerInvariant();
-                    trace.WriteLine($"  {ownership,-8} {value.GetType().Name} {value.Type.Name}");
+                    var action = value is BoundLocal local && (result.IsMove(local) || result.IsArgumentMove(local))
+                        ? " move" : "";
+                    trace.WriteLine($"  {ownership,-8} {value.GetType().Name} {value.Type.Name}{action}");
                 }
             }
 

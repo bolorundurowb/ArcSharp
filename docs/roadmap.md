@@ -36,9 +36,8 @@ tracing collector. Finalisers run deterministically, at the last strong
 release. Weak references are explicit. The language and libraries are bounded
 by the [compatibility target](#compatibility-target).
 
-The compiler parses and binds with Roslyn, and it retains every reference it
-reads. [Where we are](#where-we-are) lists
-what has shipped.
+The compiler parses and binds with Roslyn. The lifetime pass now proves
+selected borrows and moves. [Where we are](#where-we-are) lists what has shipped.
 
 ---
 
@@ -248,7 +247,8 @@ defects are gone from the known issues. CI runs the harness on every change.
 
 ## M3 — Lifetime pass
 
-**This is the next milestone.**
+**In progress.** Steps 1–3 are implemented. See
+[Lifetime classification, borrows and moves](features/lifetime-reads-and-moves.md).
 
 **Goal.** ARC only where a lifetime cannot be proved, on the existing header.
 
@@ -256,12 +256,15 @@ defects are gone from the known issues. CI runs the harness on every change.
 
 1. Classify every reference value in the ownership tree as owned, borrowed, or
    shared. The emitter ignores the classification at first. A debug option
-   prints it. Output does not change.
+   prints it. Output does not change. **Implemented.** Use `--dump-ownership`.
 2. Skip the retain and release for a borrowed read of a local or parameter
    whose slot cannot change during the use: repeated reads, a call receiver,
-   and an argument the callee does not store.
+   and an argument the callee does not store. **Implemented** for stable slot
+   reads, side-effect-free arguments and directly inspected callees.
 3. Turn the last use of a local into a move when it is stored, passed, or
-   returned, instead of a retain and a later release.
+   returned, instead of a retain and a later release. **Implemented** for
+   direct returns, final local declarations with compatible cleanup order,
+   and final calls with a single non-escaping local argument.
 4. Let an object that is created and never escapes skip count traffic until its
    proved end. That end is exactly where its last strong release used to be,
    so destruction does not move.
