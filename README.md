@@ -93,6 +93,27 @@ and library surface the project is aiming at: classes through `Span<T>` as
 full, and reflection, `dynamic`, and `unsafe` as limited. It is not a plan to
 implement the whole framework.
 
+## GC comparison (22 November 2026)
+
+The five-run comparison completed on Windows x64 with .NET SDK 11.0.100
+and clang 22.1.8. All checksums matched and every ArcSharp run reported
+`live=0`.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---:|---:|---:|
+| baseline | ArcSharp | 17.8 ms | 3.8 MiB | 0.6 MiB |
+| baseline | .NET | 58.9 ms | 23.1 MiB | 6.3 MiB |
+| retained | ArcSharp | 57.7 ms | 25.0 MiB | 23.4 MiB |
+| retained | .NET | 76.5 ms | 35.4 MiB | 18.6 MiB |
+| churn | ArcSharp | 148.0 ms | 35.7 MiB | 34.7 MiB |
+| churn | .NET | 105.8 ms | 61.0 MiB | 44.2 MiB |
+
+The churn sampler observed both .NET pauses in three of the five runs. The
+median total for those three complete traces was 20.490 ms. The ArcSharp
+churn workload recorded 9,200,856 retains and 10,601,216 releases per run.
+
+[Benchmark method and previous results](docs/features/gc-comparison.md).
+
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
