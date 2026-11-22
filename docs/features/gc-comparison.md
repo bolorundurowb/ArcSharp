@@ -146,7 +146,26 @@ The .NET churn sampler recorded both pauses in all five runs. The median
 first and second pauses were 4.012 ms and 15.142 ms. The median total pause
 per run was 19.231 ms.
 
-## What the numbers support
+## M3 medians (22 November 2026)
+
+The five-run comparison completed on Windows x64 with .NET SDK 11.0.100
+and clang 22.1.8. All checksums matched and every ArcSharp run reported
+`live=0`.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---:|---:|---:|
+| baseline | ArcSharp | 17.8 ms | 3.8 MiB | 0.6 MiB |
+| baseline | .NET | 58.9 ms | 23.1 MiB | 6.3 MiB |
+| retained | ArcSharp | 57.7 ms | 25.0 MiB | 23.4 MiB |
+| retained | .NET | 76.5 ms | 35.4 MiB | 18.6 MiB |
+| churn | ArcSharp | 148.0 ms | 35.7 MiB | 34.7 MiB |
+| churn | .NET | 105.8 ms | 61.0 MiB | 44.2 MiB |
+
+The churn sampler observed both .NET pauses in three of the five runs. The
+median total for those three complete traces was 20.490 ms. The ArcSharp
+churn workload recorded 9,200,856 retains and 10,601,216 releases per run.
+
+## What the original numbers support
 
 **The empty process is smaller.** The ArcSharp baseline commits 0.6 MiB and
 touches 3.9 MiB of working set. The .NET baseline commits 6.3 MiB and touches
@@ -179,10 +198,9 @@ suspensions, the longer of them about 15 ms, fell inside a 91 ms process.
 That is the latency claim, and this run supports it. It does not, by itself,
 make the program faster. The churn program still finished in 138 ms under
 ArcSharp and 91 ms under .NET. The retained set was a tie, at about 60 ms.
-The churn run performed 9.6 million retains. Every reference read still
-increments a count. The [lifetime pass](../roadmap.md#m3--lifetime-pass) is
-what removes the retains it can prove, and the throughput comparison is
-meaningful again after that pass, and again after the optimising backend.
+The original churn run performed 9.6 million retains. The
+[M3 lifetime pass](../roadmap.md#m3--lifetime-pass) reduced that to 9.2
+million in the five-run comparison above.
 
 ## Other consequences, not measured here
 

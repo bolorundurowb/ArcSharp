@@ -165,6 +165,8 @@ public sealed class LifetimeAnalysis
                     break;
             }
 
+            BorrowConfinedReads(body.Body, nodes, bodies, stableReads, result);
+
             if (trace != null)
             {
                 trace.WriteLine($"[ownership] {body.Method.MangledName}");
@@ -180,6 +182,48 @@ public sealed class LifetimeAnalysis
         }
 
         return result;
+    }
+
+    private static void BorrowConfinedReads(BoundBlock block, object[] nodes,
+        Dictionary<MethodSymbol, object[]> bodies, HashSet<BoundExpr> stableReads, LifetimeAnalysis result)
+    {
+        var addressTargets = nodes.OfType<BoundAssign>().Select(assignment => assignment.Target).ToHashSet();
+        addressTargets.UnionWith(nodes.OfType<BoundByRefArg>().Select(argument => argument.Lvalue));
+        addressTargets.UnionWith(nodes.OfType<BoundWeakRefTryGet>().Select(get => get.OutTarget));
+
+        var reads = nodes.Select(node => node switch
+        {
+            BoundIs test => test.Operand,
+            BoundLength length => length.Receiver,
+            BoundIndex index when !addressTargets.Contains(index) => index.Receiver,
+            BoundFieldAccess field when field.Type.Kind != TypeKind.Struct && !addressTargets.Contains(field) =>
+                field.Receiver,
+            _ => null
+        }).OfType<BoundLocal>().ToHashSet();
+
+        var usesByLocal = nodes.OfType<BoundLocal>().ToLookup(local => local.Symbol);
+        foreach (var declaration in block.Statements.OfType<BoundLocalDecl>())
+        {
+            // A constructor with executable code could publish this before any local read.
+            var confinedAllocation = declaration.Initializer switch
+            {
+                BoundNewArray => true,
+                BoundNewObject { Type.IsReferenceType: true, Ctor: null } => true,
+                BoundNewObject { Type.IsReferenceType: true, Ctor: { } ctor } =>
+                    bodies.TryGetValue(ctor, out var constructor) && constructor is [BoundBlock],
+                _ => false
+            };
+
+            var uses = usesByLocal[declaration.Symbol];
+            if (confinedAllocation && uses.All(use => reads.Contains(use) && stableReads.Contains(use)))
+            {
+                // The slot keeps its original +1 and is released at func.exit.
+                foreach (var use in uses)
+                {
+                    result.Borrow(use);
+                }
+            }
+        }
     }
 
     private static bool Simple(BoundExpr value) => value switch

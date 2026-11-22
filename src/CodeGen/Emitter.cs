@@ -1305,10 +1305,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         var receiver = fa.Receiver!;
         var recv = EmitR(receiver);
-        if (receiver.Type.IsReferenceType)
-        {
-            _stmtTemps.Add(recv);
-        }
+        TrackReferenceTemp(receiver, recv);
 
         var addr = FieldAddr(recv, receiver.Type, fa.Field);
         if (fa.Field.IsWeak)
@@ -1526,7 +1523,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private string EmitIndexRead(BoundIndex ix)
     {
         var arr = EmitR(ix.Receiver);
-        _stmtTemps.Add(arr);
+        TrackReferenceTemp(ix.Receiver, arr);
         var idx = EmitR(ix.Index);
         var addr = ElemAddr(arr, idx, ix.Type);
         var v = Inst($"load {ix.Type.LlvmType}, {ix.Type.LlvmType}* {addr}");
@@ -1932,7 +1929,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private string EmitIs(BoundIs i)
     {
         var v = EmitR(i.Operand);
-        if (i.Operand.Type.IsReferenceType) _stmtTemps.Add(v);
+        TrackReferenceTemp(i.Operand, v);
         var r = Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{i.TestType.Name}__ti)");
         return Inst($"icmp ne i32 {r}, 0");
     }
