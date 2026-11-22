@@ -37,7 +37,7 @@ release. Weak references are explicit. The language and libraries are bounded
 by the [compatibility target](#compatibility-target).
 
 The compiler parses and binds with Roslyn. The lifetime pass now proves
-selected borrows and moves. [Where we are](#where-we-are) lists what has shipped.
+selected borrows, moves and confined allocation lifetimes. [Where we are](#where-we-are) lists what has shipped.
 
 ---
 
@@ -130,6 +130,9 @@ results are in [Verification](verification.md).
 - The M2 verification baseline. The harness asserts exact ARC counts, checks
   destruction timing with weak references, and covers the seven M2 defects.
   See [Verification](verification.md).
+- The M3 lifetime pass. The original 34 samples have the same output and
+  accounting, with 49 fewer retains and 49 fewer releases in total. See
+  [Verification](verification.md) and the [M3 benchmark medians](features/gc-comparison.md#m3-medians-22-november-2026).
 - Diagnostics with stable codes and severities, `-Werror`, definite-assignment
   warnings (`ARC2100`), and `ARC3001` for unsupported constructs.
 - A Roslyn analyser that reports `ARC3001` and `ARC3100` in an ordinary
@@ -247,8 +250,8 @@ defects are gone from the known issues. CI runs the harness on every change.
 
 ## M3 — Lifetime pass
 
-**In progress.** Steps 1–3 are implemented. See
-[Lifetime classification, borrows and moves](features/lifetime-reads-and-moves.md).
+**Landed.** See [Lifetime classification, borrows and moves](features/lifetime-reads-and-moves.md)
+and [Confined allocation lifetimes](features/confined-allocation-lifetimes.md).
 
 **Goal.** ARC only where a lifetime cannot be proved, on the existing header.
 
@@ -267,9 +270,13 @@ defects are gone from the known issues. CI runs the harness on every change.
    and final calls with a single non-escaping local argument.
 4. Let an object that is created and never escapes skip count traffic until its
    proved end. That end is exactly where its last strong release used to be,
-   so destruction does not move.
+   so destruction does not move. **Implemented** for fresh class and array
+   locals whose construction and uses prove confinement.
 5. Treat everything else as shared. A store to a field or an array, a call the
-   pass cannot see, or a capture is the promotion point. The pass never guesses.
+   pass cannot see, or a capture is the promotion point. **Implemented** as
+   a conservative fallback. A use outside the confinement proof keeps
+   ordinary ARC for the allocation wherever the existing borrow and move
+   rules cannot prove a lifetime.
 
 **Done when.** Every sample prints the same output with the same accounting.
 The checking mode reports nothing. Every destruction-point sample from M2 sees

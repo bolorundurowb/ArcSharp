@@ -23,15 +23,15 @@ still retained at exit). **`live=0` means no leaks.**
 
 Peak memory and collector pauses are a separate measurement. The programs in
 `bench/` are compiled with ArcSharp and with the ordinary .NET runtime by
-`tools\compare-gc.ps1`. The original results and the M2 medians are in
+`tools\compare-gc.ps1`. The original results and the M2 and M3 medians are in
 [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (35 samples, Windows x64, 21 November 2026)
+## Results (36 samples, Windows x64, 22 November 2026)
 
-`tools\verify.ps1` reported **73 passed, 0 failed** with the .NET 11.0.100 SDK:
-35 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
+`tools\verify.ps1` reported **74 passed, 0 failed** with the .NET 11.0.100 SDK:
+36 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
 diagnostics, 3 command-line checks, 4 cycle checks, one run of the analyser
 unit tests (68 cases), and one reference-surface check. `live=0` means every
 object was reclaimed.
@@ -75,6 +75,7 @@ object was reclaimed.
 | `m2_initialisers` | instance and static field initialisers, implicit base construction and constructor delegation | alloc=7 dead=7 freed=7 **live=0** | `initialisers PASS` |
 | `m2_properties_narrowing` | get-only assignment, inherited auto-properties, narrow casts and arrays | alloc=5 dead=5 freed=5 **live=0** | `properties and narrowing PASS` |
 | `lifetime_reads_and_moves` | stable reads, last-use moves, early return and a by-reference alias | alloc=10 dead=10 freed=10 **live=0** | `lifetime reads and moves PASS` |
+| `lifetime_confined` | confined class and array reads, a stored local and publication from a constructor | alloc=6 dead=6 freed=6 **live=0** | `confined lifetimes PASS` |
 
 The two new generic samples were also built and run with the normal .NET 8
 compiler, producing the same stdout. The generic identity example in the
@@ -143,13 +144,17 @@ in that run have a strong count of 1.
 | `m2_initialisers` | 21 | 28 |
 | `m2_properties_narrowing` | 12 | 17 |
 
-## M3 steps 1–3 retain and release counts
+## M3 retain and release counts
 
 The 34 existing samples retained their exact M2 accounting and output
 checks. Retains across those samples fell from 418 to 369
 and releases fell from 799 to 750. Samples with changed ARC traffic
-are listed below. The new lifetime regression recorded 18 retains and 28
-releases.
+are listed below. The reads-and-moves regression recorded 18 retains and 28
+releases. The confined-allocation regression recorded 8 retains and 14
+releases. Its generated `ReadConfined` method contains only the two
+function-exit releases for its owners, and `Escape` retains and releases
+its read temporaries through ordinary ARC. The M2 destruction-point sample
+still observed destruction at the same statements.
 
 | Sample | M2 retains | Current retains | M2 releases | Current releases |
 |---|---:|---:|---:|---:|

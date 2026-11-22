@@ -260,6 +260,7 @@ try {
     Invoke-Sample m2_initialisers "alloc=7 dead=7 freed=7 live=0" "initialisers PASS" @("m2_initialisers")
     Invoke-Sample m2_properties_narrowing "alloc=5 dead=5 freed=5 live=0" "properties and narrowing PASS" @("m2_properties_narrowing")
     Invoke-Sample lifetime_reads_and_moves "alloc=10 dead=10 freed=10 live=0" "lifetime reads and moves PASS" @("lifetime_reads_and_moves")
+    Invoke-Sample lifetime_confined "alloc=6 dead=6 freed=6 live=0" "confined lifetimes PASS" @("lifetime_confined")
 
     Write-Host "--- leak detector (ARC_LEAKS=1) ---"
     Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(

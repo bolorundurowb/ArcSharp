@@ -134,16 +134,15 @@ lowering in `src/Frontend` builds the bound tree. `using` directives are
 honoured, and a namespace is part of a type's identity. A global
 `using System` is added so `Console` resolves without one.
 
-The verification baseline is complete. The current milestone is the lifetime pass in the
-[Roadmap](docs/roadmap.md). Do not add a language feature ahead of that. A
-defect in the emitter or the runtime may still be fixed. A defect in binding
-is fixed in the Roslyn lowering.
+The verification baseline and lifetime pass have landed. The next milestone
+is deterministic finalisation in the [Roadmap](docs/roadmap.md). A defect in
+the emitter or the runtime may still be fixed. A defect in binding is fixed in
+the Roslyn lowering.
 
 ### Adding or changing a language feature
 
-Do this only for a change the roadmap still allows on the current compiler,
-which today means an emitter or runtime defect. A new language feature is
-lowered from a Roslyn operation in `src/Frontend`, not by adding a parser.
+Follow the milestone order in the roadmap. Lower new language features from
+Roslyn operations in `src/Frontend`.
 
 When a change does touch the current pipeline, work through this list in order:
 

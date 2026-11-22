@@ -93,10 +93,31 @@ and library surface the project is aiming at: classes through `Span<T>` as
 full, and reflection, `dynamic`, and `unsafe` as limited. It is not a plan to
 implement the whole framework.
 
+## GC comparison (22 November 2026)
+
+The five-run comparison completed on Windows x64 with .NET SDK 11.0.100
+and clang 22.1.8. All checksums matched and every ArcSharp run reported
+`live=0`.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---:|---:|---:|
+| baseline | ArcSharp | 17.8 ms | 3.8 MiB | 0.6 MiB |
+| baseline | .NET | 58.9 ms | 23.1 MiB | 6.3 MiB |
+| retained | ArcSharp | 57.7 ms | 25.0 MiB | 23.4 MiB |
+| retained | .NET | 76.5 ms | 35.4 MiB | 18.6 MiB |
+| churn | ArcSharp | 148.0 ms | 35.7 MiB | 34.7 MiB |
+| churn | .NET | 105.8 ms | 61.0 MiB | 44.2 MiB |
+
+The churn sampler observed both .NET pauses in three of the five runs. The
+median total for those three complete traces was 20.490 ms. The ArcSharp
+churn workload recorded 9,200,856 retains and 10,601,216 releases per run.
+
+[Benchmark method and previous results](docs/features/gc-comparison.md).
+
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 35 sample programs pass the test
+executable, with ARC accounting) works, and 36 sample programs pass the test
 harness on Windows x64. The harness also runs four leak-report checks, 25
 must-fail diagnostics, three command-line checks, four cycle checks, and 68
 analyser unit tests. The
@@ -105,10 +126,9 @@ compiler can also emit IR for Linux x64, but that path is not tested. See
 
 The M2 verification baseline checks exact ARC counts and destruction timing.
 Every heap object has a reference count. Roslyn parses and binds the source,
-and the lifetime pass now proves selected borrows and moves. The compiler
-rejects C# finalisers. The [Roadmap](docs/roadmap.md) completes the lifetime
-pass before implementing deterministic finalisation. That
-contract is in the
+and the lifetime pass proves selected borrows, moves and confined allocation
+lifetimes. [Deterministic finalisation](docs/roadmap.md#m4--deterministic-finalisers)
+is the next milestone. Its contract is in the
 [memory model](docs/memory-model.md#finalisation): a finaliser runs when the
 last strong reference is released, not when a variable leaves scope, and
 `Dispose()` stays a separate call. ArcSharp is a separate runtime with that

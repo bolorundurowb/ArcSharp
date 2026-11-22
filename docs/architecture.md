@@ -476,7 +476,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Retain and release statistics (`ARC_STATS=1`) | Implemented: opt-in `[arc-stats]` line. The `[arc]` line is unchanged |
 | Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 | Roslyn frontend | Landed. Roslyn parses and binds, and the lowering builds the bound tree. |
-| Lifetime pass | Classification, stable borrows and restricted last-use moves implemented. See the [Roadmap](roadmap.md). |
+| Lifetime pass | Classification, stable borrows, restricted last-use moves and confined allocation lifetimes implemented. See the [Roadmap](roadmap.md). |
 
 See [Verification](verification.md) for the exact set of sample programs that
 compile and run, with ARC alloc/free accounting, and the
