@@ -159,21 +159,21 @@ class Program
 
 Output: `42`.
 
-Constraints support `class`, `struct`, base classes, interfaces, other type
-parameters, and `new()`. They are checked when a closed type or method is used;
+Constraints support `class`, `class?`, `struct`, `unmanaged`, `notnull`,
+base classes, interfaces, other type parameters, and `new()`. They are checked when a closed type or method is used;
 Roslyn reports constraint failures with `CS` diagnostics. A `new()` reference argument must be concrete
 and have a public parameterless constructor, or an implicit default constructor.
 Parameterless construction of primitive value types produces zero.
 
-The existing struct restrictions still apply after substitution: struct values
-can be stored inline in generic fields and copied through managed references,
-but cannot be returned, passed by value, or placed in arrays. Virtual methods
+Struct type arguments can be stored inline, passed by value, returned, and
+placed in arrays. Virtual methods
 on generic classes and methods of generic interfaces work. Methods that are
 themselves generic cannot be virtual, overrides, abstract, or interface members
 (`ARC3001`). Method type parameters must not shadow enclosing type parameters.
-Templates are checked when instantiated. Nested type declarations, variance,
-`default(T)`, and additional constraint forms such as `unmanaged`, `notnull`,
-and `class?` remain unsupported. The compiler caps specialisation at 64 nested
+Templates are checked when instantiated. Generic interfaces support covariant
+and contravariant dispatch for reference type arguments. Types nested in
+generic types remain unsupported. `default(T)` uses the closed type's zero
+or null value. The compiler caps specialisation at 64 nested
 instantiations and 1024 total type/method instantiations (`ARC2013`).
 
 ## Classes, interfaces, and members
@@ -498,7 +498,7 @@ and `>>>=`. String storage accepts `+=` for supported concatenation operands.
 
 The `??` operator can select a fallback for a nullable value or a reference.
 Not supported: `??=`, `?.`, `typeof`, `sizeof`,
-`nameof`, `default`, lambdas, anonymous types, tuples, pattern matching beyond
+`nameof`, lambdas, anonymous types, tuples, pattern matching beyond
 scalar, declaration and type patterns, object and collection initialisers, and
 interpolated strings (`$"..."`).
 

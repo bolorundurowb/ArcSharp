@@ -67,7 +67,7 @@ reclaimed.
 - Classes with single inheritance, transitive base interfaces, and
   `virtual`/`override` dispatch.
 - Generic classes, structs, interfaces, and methods through monomorphisation,
-  with basic type inference and generic constraints.
+  with basic type inference, generic constraints, and interface variance.
 - Constructors, instance and static methods and fields, and instance
   properties, indexers, constants, readonly fields, and expression-bodied methods
   and constructors. Calls support named arguments, optional defaults, and

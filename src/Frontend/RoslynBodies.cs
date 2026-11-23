@@ -1271,14 +1271,18 @@ sealed partial class RoslynLowering
     {
         if (conversion.OperatorMethod is { } method)
         {
-            return LowerOperator(conversion, method, conversion.Operand);
+            var lifted = (IsNullableSymbol(conversion.Type) && !IsNullableSymbol(method.ReturnType))
+                || (IsNullableSymbol(conversion.Operand.Type) && !IsNullableSymbol(method.Parameters[0].Type));
+            return lifted ? UnsupportedExpr(conversion) : LowerOperator(conversion, method, conversion.Operand);
         }
 
         if (conversion.IsTryCast)
         {
             var operand = LowerExpr(conversion.Operand);
             var target = MapType(conversion.Type, conversion.Syntax.GetLocation());
-            return new BoundAs { Operand = operand, TestType = target, Type = target };
+            return target.NullableElementType != null
+                ? UnsupportedExpr(conversion)
+                : new BoundAs { Operand = operand, TestType = target, Type = target };
         }
 
         if ((conversion.Operand.Type?.TypeKind == RoslynKind.Enum && conversion.Type?.IsReferenceType == true)

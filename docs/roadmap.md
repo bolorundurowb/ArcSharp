@@ -420,8 +420,9 @@ uses. Each step below ships on its own.
    [Switch expressions](features/conditional-values.md) are implemented.
    [Base interface lists and explicit implementations](features/base-interfaces.md)
    and [scalar and type patterns](features/patterns.md) are implemented.
-7. The rest of generics: virtual and interface generic methods, variance, full
-   inference, and the remaining constraint forms.
+7. Virtual and interface generic methods, full inference, and remaining
+   constraint forms. [Interface variance and additional constraints](features/generic-variance.md)
+   are implemented.
 8. [Nullable storage, conversions and lifted built-in operations](features/nullable-values.md)
    are implemented. Nullable boxing, lifted updates and user-defined operators,
    and `decimal` remain.

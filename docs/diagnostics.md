@@ -138,7 +138,7 @@ C# construct it cannot lower. The message names the construct.
 The rule covers virtual/interface generic methods, exception filters
 (`catch ... when`), throw expressions, `lock`, `foreach`, `switch`, `break`, `continue`, `do`/`while`, `goto`,
 lambdas, local functions, `async`/`await`, `yield`, LINQ, pattern matching,
-interpolated strings, `default`, top-level statements,
+interpolated strings, top-level statements,
 attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,
 `base.` access and the struct
 restrictions listed in the [Language reference](language-reference.md#structs).

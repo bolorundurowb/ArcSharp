@@ -33,6 +33,7 @@ sealed partial class RoslynLowering
     private readonly Dictionary<string, TypeSymbol> _weakRefs = [];
     private readonly Dictionary<TypeSymbol, FieldSymbol> _structBoxes = [];
     private readonly Dictionary<TypeSymbol, TypeSymbol> _nullableTypes = [];
+    private readonly Dictionary<TypeSymbol, INamedTypeSymbol> _variantInterfaces = [];
     private readonly HashSet<TypeSymbol> _filled = [];
     private readonly HashSet<MethodSymbol> _queued = [];
     private readonly Queue<PendingBody> _bodies = [];
@@ -133,6 +134,7 @@ sealed partial class RoslynLowering
         program.Types.AddRange(_generic.Values);
         program.Types.AddRange(_structBoxes.Values.Select(field => field.Owner));
         program.Types.AddRange(_nullableTypes.Values);
+        MapVariantInterfaces(program.Types);
         program.InterfaceSelectorCount = _selectors.Count;
         program.MethodBodies.AddRange(_readyBodies);
 
@@ -320,6 +322,12 @@ sealed partial class RoslynLowering
             created.GenericDefinition = definition.Name;
             created.TypeArguments = arguments;
             _generic.Add(key, created);
+            if (definition.TypeKind == RoslynKind.Interface
+                && definition.TypeParameters.Any(parameter => parameter.Variance != VarianceKind.None))
+            {
+                _variantInterfaces.Add(created, definition);
+            }
+
             _substitution.Clear();
             for (var i = 0; i < definition.TypeParameters.Length && i < arguments.Count; i++)
             {
@@ -798,6 +806,7 @@ sealed partial class RoslynLowering
         };
         var field = new FieldSymbol { Name = "value", Owner = box, Type = valueType, ByteOffset = 24 };
         box.InstanceFields.Add(field);
+        box.Interfaces.AddRange(valueType.Interfaces);
         _structBoxes.Add(valueType, field);
 
         BoundFieldAccess Receiver() => new() { Receiver = new BoundThis { Type = box }, Field = field, Type = valueType };

@@ -61,6 +61,7 @@ before you rely on it for anything beyond experiments.
 - [Conditional values](features/conditional-values.md)
 - [Overloaded storage updates](features/operator-updates.md)
 - [Nullable values](features/nullable-values.md)
+- [Generic interface variance and constraints](features/generic-variance.md)
 - [Constant-label switch statements](features/switch-statement.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 

@@ -59,13 +59,22 @@ sealed partial class RoslynLowering
         }
 
         var exceptionType = MapType(_compilation.GetTypeByMetadataName("System.InvalidOperationException"), null);
-        var exceptionCtor = exceptionType.Methods.Find(method => method.IsConstructor && method.Parameters.Count == 0);
+        var exceptionCtor = exceptionType.Methods.Find(method => method.IsConstructor && method.Parameters.Count == 1);
+        var missingValue = new BoundNewObject
+        {
+            Type = exceptionType,
+            Ctor = exceptionCtor,
+            Arguments = [new BoundLiteral
+            {
+                Type = _string, LitKind = LiteralKind.String, StringValue = "Nullable object must have a value."
+            }]
+        };
         AddMember("get_HasValue", _bool, new BoundReturn { Value = Read(hasValue) });
         AddMember("get_Value", element, new BoundIf
         {
             Condition = Read(hasValue),
             Then = new BoundReturn { Value = Read(value) },
-            Else = new BoundThrow { Value = new BoundNewObject { Type = exceptionType, Ctor = exceptionCtor } }
+            Else = new BoundThrow { Value = missingValue }
         });
         AddMember("GetValueOrDefault", element, new BoundReturn { Value = Read(value) });
         AddMember("GetValueOrDefault", element, new BoundReturn

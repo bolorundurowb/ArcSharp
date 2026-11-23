@@ -453,7 +453,7 @@ Two lists. The first is inherent in the memory model. The second is inside the
 ### In the compatibility target, not built yet
 The [compatibility target](roadmap.md#compatibility-target) is the bound. These items are inside it and absent from the compiler today.
 
-- **Remaining generic features.** Virtual generic methods, interface generic methods, variance, full overload inference, and further constraint forms. Closed types stay specialised.
+- **Remaining generic features.** Virtual generic methods, interface generic methods, full overload inference, and further constraint forms. Closed types stay specialised.
 - **Reflection, `dynamic`, and `unsafe`.** Limited, as that table says. Reflection is emitted metadata. `dynamic` binds only to members this compiler can lower. A pointer must not outlive the proved lifetime of the object it addresses.
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
 - **Struct forms still rejected.** Using a struct resource and self-containing structs are `ARC3001`. They belong to the full struct row.

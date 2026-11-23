@@ -20,7 +20,6 @@ public sealed class UnsupportedConstructTests
         { "conditional access", "class C { static void Main() { string s = null; int n = s?.Length ?? 0; } }" },
         { "coalescing assignment", "class C { static void Main() { string s = null; s ??= \"x\"; } }" },
         { "interpolated string", "class C { static void Main() { System.Console.WriteLine($\"x\"); } }" },
-        { "default", "class C { static void Main() { int x = default(int); } }" },
         { "target-typed new", "class C { static void Main() { C c = new(); } }" },
         { "object initializer", "class C { static void Main() { C c = new C { }; } }" },
         { "attribute", "[System.Obsolete] class C { }" },

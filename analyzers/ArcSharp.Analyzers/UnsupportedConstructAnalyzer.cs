@@ -72,8 +72,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.AnonymousObjectCreationExpression,
         SyntaxKind.InterpolatedStringExpression,
         SyntaxKind.RefExpression,
-        SyntaxKind.DefaultExpression,
-        SyntaxKind.DefaultLiteralExpression,
         SyntaxKind.RefType,
         SyntaxKind.PointerType,
         SyntaxKind.FunctionPointerType,
@@ -230,8 +228,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.InterpolatedStringExpression => "interpolated strings are not supported: use concatenation",
         SyntaxKind.RefExpression =>
             "ref locals and ref returns are not supported: a managed reference must not outlive the call",
-        SyntaxKind.DefaultExpression or SyntaxKind.DefaultLiteralExpression =>
-            "'default' is not supported: assign an explicit value",
         SyntaxKind.RefType =>
             "ref locals and ref returns are not supported: a managed reference must not outlive the call",
         SyntaxKind.PointerType => "pointers are not supported",

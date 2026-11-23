@@ -301,6 +301,7 @@ try {
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
     Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
+    Invoke-Sample variance "alloc=5 dead=5 freed=5 live=0" "variance PASS" @("variance")
     Invoke-Sample nullable_values "alloc=4 dead=4 freed=4 live=0" "nullable values PASS" @("nullable_values")
     Invoke-Sample operator_updates "alloc=9 dead=9 freed=9 live=0" "operator updates PASS" @("operator_updates")
     Invoke-Sample conditional_values "alloc=10 dead=10 freed=10 live=0" "conditional values PASS" @("conditional_values")
@@ -380,6 +381,9 @@ try {
     Invoke-MustFail enum_boxing "ARC3001" @("enum_boxing")
     Invoke-MustFail static_ctor_parameter "CS0132" @("static_ctor_parameter")
     Invoke-MustFail params_type "CS0225" @("params_type")
+    Invoke-MustFail unmanaged_constraint "CS8377" @("unmanaged_constraint")
+    Invoke-MustFail invalid_variance "CS1961" @("invalid_variance")
+    Invoke-MustFail nullable_as "ARC3001" @("nullable_as")
     Invoke-MustFail nullable_boxing "ARC3001" @("nullable_boxing")
     Invoke-MustFail print_class "ARC3001" @("print_class")
     Invoke-MustFail struct_boxing_missing_member "CS0535" @("struct_boxing_missing_member")

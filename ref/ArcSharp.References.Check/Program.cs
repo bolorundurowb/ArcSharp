@@ -58,6 +58,13 @@ return 0;
 
 static SurfaceCase[] Cases() =>
 [
+    new("unmanaged constraint", """
+        class P
+        {
+            static T Identity<T>(T value) where T : unmanaged => value;
+            static int Call() => Identity(42);
+        }
+        """),
     new("parameter array", """
         class P
         {
