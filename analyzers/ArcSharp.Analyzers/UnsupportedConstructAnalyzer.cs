@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Linq;
+using ArcSharp.Diagnostics;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -17,7 +18,7 @@ namespace ArcSharp.Analyzers;
 public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
 {
     public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-        ImmutableArray.Create(Descriptors.UnsupportedConstruct);
+        ImmutableArray.Create(Descriptors.UnsupportedConstruct, Descriptors.ArcClrDisagreement);
 
     public override void Initialize(AnalysisContext context)
     {
@@ -37,6 +38,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeStruct, SyntaxKind.StructDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeArrayType, SyntaxKind.ArrayType);
         context.RegisterSyntaxNodeAction(AnalyzeObjectCreation, SyntaxKind.ObjectCreationExpression);
+        context.RegisterSyntaxNodeAction(AnalyzeInvocation, SyntaxKind.InvocationExpression);
     }
 
     private static readonly SyntaxKind[] UnsupportedKinds =
@@ -86,7 +88,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleType,
         SyntaxKind.GlobalStatement,
         SyntaxKind.AttributeList,
-        SyntaxKind.DestructorDeclaration,
         SyntaxKind.OperatorDeclaration,
         SyntaxKind.ConversionOperatorDeclaration,
         SyntaxKind.IndexerDeclaration,
@@ -205,7 +206,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleExpression or SyntaxKind.TupleType => "tuples are not supported",
         SyntaxKind.GlobalStatement => "top-level statements are not supported: declare a class with 'static void Main()'",
         SyntaxKind.AttributeList => "attributes are not supported",
-        SyntaxKind.DestructorDeclaration => "finalisers ('~T()') are not supported",
         SyntaxKind.OperatorDeclaration or SyntaxKind.ConversionOperatorDeclaration =>
             "operator overloading is not supported",
         SyntaxKind.IndexerDeclaration => "indexers are not supported",
@@ -390,6 +390,36 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             context.ReportDiagnostic(Diagnostic.Create(
                 Descriptors.UnsupportedConstruct, a.GetLocation(),
                 "multi-dimensional and jagged arrays are not supported"));
+        }
+    }
+
+    // The GC calls that ArcSharp rejects or accepts as no-ops. The compiler
+    // reports the same ids and messages from the shared catalogue.
+    private static void AnalyzeInvocation(SyntaxNodeAnalysisContext context)
+    {
+        var invocation = (InvocationExpressionSyntax)context.Node;
+        if (context.SemanticModel.GetSymbolInfo(invocation, context.CancellationToken).Symbol is not IMethodSymbol
+            {
+                ContainingType: { Name: "GC", ContainingNamespace: { Name: "System", ContainingNamespace.IsGlobalNamespace: true } }
+            } method)
+        {
+            return;
+        }
+
+        switch (method.Name)
+        {
+            case "ReRegisterForFinalize":
+                context.ReportDiagnostic(Diagnostic.Create(
+                    Descriptors.UnsupportedConstruct, invocation.GetLocation(), DiagnosticCatalog.GcReRegisterMessage));
+                break;
+            case "Collect" when method.Parameters.Length == 0:
+                context.ReportDiagnostic(Diagnostic.Create(
+                    Descriptors.ArcClrDisagreement, invocation.GetLocation(), DiagnosticCatalog.GcCollectMessage));
+                break;
+            case "WaitForPendingFinalizers":
+                context.ReportDiagnostic(Diagnostic.Create(
+                    Descriptors.ArcClrDisagreement, invocation.GetLocation(), DiagnosticCatalog.GcWaitMessage));
+                break;
         }
     }
 
