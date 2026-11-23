@@ -39,7 +39,7 @@ count reaches zero.
 | Pauses          | Stop-the-world phases               | None (work is spread inline)                 |
 | Per-object cost | Amortised                           | A counter field + retain/release traffic     |
 | Cycles          | Collected automatically             | Warned, permitted, and a leak if the warning is ignored |
-| Determinism     | Finalisers run later, on another thread, and may resurrect | At the last strong release, on that thread. No resurrection. `~T()` is not accepted yet |
+| Determinism     | Finalisers run later, on another thread, and may resurrect | At the last strong release, on that thread. No resurrection |
 
 The same source, compiled both ways, is measured in
 [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
@@ -142,10 +142,15 @@ Every heap value (class instance, array, string) is preceded by a fixed header:
 ```c
 typedef struct ObjHeader {
     intptr_t   strong;   // strong reference count
-    intptr_t   weak;     // weak reference count (+1 while object is live)
+    intptr_t   weak;     // weak count in the low 32 bits (+1 while object is live), flags above
     TypeInfo*  type;     // pointer to the type descriptor
 } ObjHeader;
 ```
+
+The weak word carries two flags above the count. Bit 32 means
+`GC.SuppressFinalize` was called, and bit 33 means a finaliser is running.
+Only the runtime reads or writes the word, so the emitter's offsets are
+unchanged.
 
 The object's fields follow immediately after the header. A reference (`T r`) is
 just a pointer to the header; field/element access adds the field offset.
@@ -171,6 +176,7 @@ typedef struct TypeInfo {
     TypeInfo*   base;             // base class, or NULL; used by is/as
     ArcSlot*    slots;            // strong edges; weak fields are omitted
     intptr_t    slotCount;
+    void      (*finalizer)(void*); // nearest user finaliser chain, or NULL
 } TypeInfo;
 ```
 
@@ -205,15 +211,18 @@ ArcSharp uses a deliberately simple, locally-checkable discipline that is
 ```
 arc_alloc(type)            → strong=1, weak=1, zeroed fields
 arc_retain(p)              → if p: ++p->strong
-arc_release(p)             → if p && --p->strong == 0:
+arc_release(p)             → if p && --p->strong == 0: arc_destroy(p), which for each
+                             object it destroys, from a worklist:
+                                 p->type->finalizer(p)   // user ~T() chain, if any
                                  p->type->deinit(p)      // release strong fields
                                  arc_weak_release(p)     // drop the implicit live-count
 arc_weak_retain(p)         → if p: ++p->weak
-arc_weak_release(p)        → if p && --p->weak == 0: free(p)
+arc_weak_release(p)        → if p && weak count of p becomes 0: free(p)
 arc_assign_take(slot,v)    → old=*slot; *slot=v; release old   // v is already +1
 arc_store_strong(slot,v)   → retain v; old=*slot; *slot=v; release old
 arc_store_weak(slot,v)     → weak_retain v; old=*slot; *slot=v; weak_release old
-arc_load_weak(slot)        → p=*slot; (p && p->strong>0) ? (retain p, p) : null
+arc_load_weak(slot)        → p=*slot; (p && p->strong>0 && no finaliser running) ? (retain p, p) : null
+arc_suppress_finalize(p)   → set the "finalisation suppressed" flag in p's header
 ```
 
 The `weak=1`-at-birth trick keeps the *allocation* alive (so weak slots never
@@ -252,19 +261,20 @@ Two cleanup scopes guarantee balance:
 Object teardown: the emitter generates `<Type>__deinit` for every class. It
 releases each strong reference field and clears each weak field; the runtime
 releases each element when an array of references dies. `arc_release` calls
-that function when `strong` hits 0, and the field releases recurse. This is
-the compiler's behaviour today. It is not a C# finaliser. `~T()` is rejected.
+`arc_destroy` when `strong` hits 0. `__deinit` is the generated teardown. It is
+not a C# finaliser.
 
-The [finalisation contract](memory-model.md#finalisation) changes the order
-inside that function once `~T()` is accepted. The user finaliser runs first,
-derived class before base, while children are still alive. Field release
-happens afterwards, through a worklist rather than a recursive call. A
-suppressed finaliser skips the user body and still releases fields.
-`__deinit` remains the generated teardown. It gains the user finaliser in
-front of the releases it already performs. `GC.SuppressFinalize` needs a flag
-on the object. Where that flag sits in the header is chosen with the
-implementation, and the emitter, the runtime, and this layout are updated
-together. The header does not change before then.
+The [finalisation contract](memory-model.md#finalisation) is implemented in
+`arc_destroy`. For each object it runs the user finaliser chain first, derived
+class before base, while the children are still alive. It then runs `__deinit`
+and drops the implicit weak count. A class that declares `~T()` gets a
+generated chain function, and `TypeInfo.finalizer` points at the nearest one.
+A child that dies during `__deinit` is queued on a worklist instead of being
+destroyed recursively, so a very deep object graph cannot overflow the stack.
+`GC.SuppressFinalize` skips the chain through a flag in the header, and
+`__deinit` still releases the fields. See
+[Deterministic finalisers](features/finalisers.md) for the reasons behind each
+choice.
 
 The lifetime pass preserves these cleanup boundaries for shared values and
 moves. The [lifetime feature notes](features/lifetime-reads-and-moves.md)
@@ -410,8 +420,9 @@ Two lists. The first is inherent in the memory model. The second is inside the
   allows resurrection. ArcSharp's contract is the opposite, and it is
   documented in the [memory model](memory-model.md#finalisation): synchronous
   finalisation at the last strong release, no resurrection, no finaliser
-  queue. `GC.Collect` and `GC.WaitForPendingFinalizers` become no-ops.
-  `GC.ReRegisterForFinalize` is rejected. User finalisers are not accepted yet.
+  queue.   `GC.Collect` and `GC.WaitForPendingFinalizers` are no-ops that report info
+  `ARC3200`. `GC.ReRegisterForFinalize` is rejected. User finalisers are
+  accepted. See [Deterministic finalisers](features/finalisers.md).
 - **`async`/`await` and delegates.** Both are in the [compatibility target](roadmap.md#compatibility-target). A capture or a suspended local is an ARC-managed object. Strong captures stay strong. They wait until the lifetime pass and finalisers exist, because each one creates a lifetime the current emitter does not have.
 - **Closures / lambda capture.** Captured variables become heap closure objects. Capturing `this` can form a cycle, which `ARC3100` warns about and which remains legal. Closures are the lowering for delegates, and they wait with the rest of that target.
 
@@ -466,7 +477,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Roslyn and ArcSharp diagnostics with codes and severities | Implemented                        |
 | `ARC3001` unsupported-construct diagnostics            | Implemented (compiler and analyser)   |
 | `ARC3100` possible strong-cycle warning                 | Implemented (compiler and analyser)   |
-| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (68 xUnit cases)          |
+| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (73 xUnit cases)          |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Implemented for instance and static fields |
@@ -474,6 +485,8 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
 | Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |
 | Retain and release statistics (`ARC_STATS=1`) | Implemented: opt-in `[arc-stats]` line. The `[arc]` line is unchanged |
+| Deterministic finalisers (`~T()`, `GC.SuppressFinalize`, worklist release) | Implemented. `ARC2016` rejects a visible resurrection, and the runtime aborts a hidden one |
+| `ARC3200` info for `GC.Collect` and `GC.WaitForPendingFinalizers` | Implemented (compiler and analyser) |
 | Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 | Roslyn frontend | Landed. Roslyn parses and binds, and the lowering builds the bound tree. |
 | Lifetime pass | Classification, stable borrows, restricted last-use moves and confined allocation lifetimes implemented. See the [Roadmap](roadmap.md). |
@@ -538,8 +551,8 @@ any new language feature; every heap object keeps its header; a proved lifetime
 skips retain and release; every other reference uses ARC; there is no backup
 cycle collector. Finalisation runs on the releasing thread when the strong
 count reaches zero, before children are released, and it is not tied to
-lexical scope. `Dispose()` stays separate. Resurrection is rejected. The
-current compiler still rejects `~T()`.
+lexical scope. `Dispose()` stays separate. Resurrection is rejected. All of
+this is implemented in [M4](roadmap.md#m4--deterministic-finalisers).
 
 Still open, and not required to start the Roslyn transition:
 

@@ -133,6 +133,10 @@ results are in [Verification](verification.md).
 - The M3 lifetime pass. The original 34 samples have the same output and
   accounting, with 49 fewer retains and 49 fewer releases in total. See
   [Verification](verification.md) and the [M3 benchmark medians](features/gc-comparison.md#m3-medians-22-november-2026).
+- The M4 deterministic finalisers. `~T()` runs at the last strong release,
+  derived before base, with `GC.SuppressFinalize`, a worklist release that
+  handles very deep graphs, and rejected resurrection. See
+  [Deterministic finalisers](features/finalisers.md).
 - Diagnostics with stable codes and severities, `-Werror`, definite-assignment
   warnings (`ARC2100`), and `ARC3001` for unsupported constructs.
 - A Roslyn analyser that reports `ARC3001` and `ARC3100` in an ordinary
@@ -292,25 +296,36 @@ is safe.
 
 ## M4 — Deterministic finalisers
 
+**Landed.** See [Deterministic finalisers](features/finalisers.md).
+
 **Goal.** The [finalisation contract](memory-model.md#finalisation), in the
 compiler and the runtime.
 
 **Steps.**
 
 1. Accept `~T()`. Remove it from `ARC3001` in the compiler and the analyser.
+   **Implemented.**
 2. Generate the finaliser chain, derived class before base, at the start of the
-   generated teardown, before strong fields are released.
+   generated teardown, before strong fields are released. **Implemented.** The
+   chain is one generated function per class, reached through a new
+   `finalizer` field in the type descriptor, and the runtime calls it before
+   the teardown.
 3. Replace the recursive release in the runtime with a worklist, so a very deep
-   object graph cannot overflow the stack.
+   object graph cannot overflow the stack. **Implemented.** A list of 100,000
+   nodes is now destroyed by a loop.
 4. Support `GC.SuppressFinalize` with a flag on the object. The flag skips the
    user finaliser only. Where the flag sits in the header is decided in this
    step, and the emitter, the runtime, and the layout documentation change
-   together.
+   together. **Implemented.** The flag is packed into the weak word of the
+   header, above the weak count, so the header is still three slots and no
+   field offset moved.
 5. Reject resurrection. A finaliser that stores `this`, or a reference derived
    from it, into a longer-lived location is a compile-time error. A strong
    count above zero when the finaliser returns aborts the process.
+   **Implemented.** The compile-time check (`ARC2016`) covers the stores the
+   compiler can see. The runtime abort covers the rest.
 6. Accept `GC.Collect` and `GC.WaitForPendingFinalizers` as no-ops that report
-   info `ARC3200`. Reject `GC.ReRegisterForFinalize`.
+   info `ARC3200`. Reject `GC.ReRegisterForFinalize`. **Implemented.**
 
 **Done when.** Samples show the derived-then-base order, children still
 reachable inside the finaliser, a graph deep enough to overflow the old
@@ -561,7 +576,7 @@ than the compiler.
 |---|---|---|---|
 | Unsupported construct (`ARC3001`) | Error | Implemented | A construct this compiler cannot lower. Each milestone removes the entries it makes supported. |
 | Possible strong cycle (`ARC3100`) | Warning | Implemented | Classes whose strong fields can reach each other. The program stays legal, and an ignored warning leaks. `WeakReference<T>` is not an edge. |
-| ARC and CLR disagree (`ARC3200`) | Info | M4 | `GC.Collect` and `GC.WaitForPendingFinalizers` are no-ops. `GC.KeepAlive`, and a `TryGetTarget` check that waits for a collection, behave differently. |
+| ARC and CLR disagree (`ARC3200`) | Info | Implemented | `GC.Collect()` and `GC.WaitForPendingFinalizers()` are no-ops. Only these two calls report it today. `GC.KeepAlive` is not in the library, and a `TryGetTarget` check that waits for a collection is not detected. |
 | Threads (`ARC3300`) | Warning | Reserved | Cross-thread sharing, which the non-atomic counts make unsound. Not scheduled. |
 
 `ARC3xxx` is reserved for this catalogue. Ordinary compiler errors use the code

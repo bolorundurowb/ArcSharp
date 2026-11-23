@@ -127,21 +127,40 @@ method releases its locals, which is during the method's cleanup, not on a
 later collection.
 
 ```csharp
-public sealed class Resource
+using System;
+
+class Resource
 {
     ~Resource()
     {
-        Console.WriteLine("Resource finalized");
+        Console.WriteLine("Resource finalised");
     }
 }
 
-void Execute()
+class Program
 {
-    var resource = new Resource();
+    static void Execute()
+    {
+        Resource resource = new Resource();
+        Console.WriteLine("working");
+    }
+
+    static void Main()
+    {
+        Execute();
+        Console.WriteLine("after Execute");
+    }
 }
 ```
 
-If `resource` does not escape, `Resource` is finalised as `Execute` cleans up,
+```text
+working
+Resource finalised
+after Execute
+[arc] alloc=4 dead=4 freed=4 live=0
+```
+
+`resource` does not escape, so `Resource` is finalised as `Execute` cleans up,
 because that cleanup releases the last strong reference. On the CLR the same
 finaliser would wait for an unspecified future collection.
 
@@ -152,8 +171,15 @@ Order inside one object:
 - A derived finaliser runs, then the base finaliser. The most derived body
   runs first.
 - Children are released after that chain returns. A child whose strong count
-  falls to zero is finalised at that release, so a child's finaliser runs
-  after its parent's finaliser.
+  falls to zero is finalised as part of the same release that dropped its
+  parent, so a child's finaliser runs after its parent's finaliser. Children
+  are finalised in field order, and the first child's whole subtree is
+  finalised before the second child. Fields inherited from a base class come
+  first.
+- Inside a finaliser the object is already dead to weak references:
+  `TryGetTarget` returns `false`. The finaliser can still call methods on
+  `this`, read its fields, and release its children. An object that a
+  finaliser releases is finalised at that statement.
 - Two objects that die because of unrelated releases are ordered only by those
 releases. The compiler may delete a redundant retain or release. Deleting the
 count traffic does not delete the finaliser. A proved lifetime still runs the
@@ -169,43 +195,58 @@ because `throw` itself is rejected.
 
 Resurrection is prohibited. A finaliser must not store `this`, or a reference
 derived from it, into any location that outlives the finaliser. The compiler
-rejects that store. If a finaliser returns with the strong count above zero,
-the runtime aborts the process. It does not keep the object, and it does not
-run the finaliser again.
+rejects a store it can see, such as `Registry.last = this;`, with
+[`ARC2016`](diagnostics.md#arc2016). A store hidden inside another method
+cannot be seen, so the runtime checks as well: if a finaliser returns with the
+strong count above zero, the process aborts with a `ResurrectionException`
+message and exit code 70. The runtime does not keep the object, and it does
+not run the finaliser again.
 
 `GC.SuppressFinalize` sets a flag on the object. The flag skips the finaliser
 at the last strong release. It does not skip field release or reclamation, and
 it does not keep the object alive. Calling it while the finaliser is already
-running does not abort the chain that has started. `GC.ReRegisterForFinalize`
-is rejected. `GC.Collect` and `GC.WaitForPendingFinalizers` are accepted and
-do nothing, because there is nothing to collect and no queue to wait for. Each
-is reported with info `ARC3200`, so the difference from the CLR is visible.
+running does not abort the chain that has started. A `null` argument is
+ignored, because exceptions arrive in M5. `GC.ReRegisterForFinalize` is
+rejected with `ARC3001`. `GC.Collect()` and `GC.WaitForPendingFinalizers()` are
+accepted and do nothing, because there is nothing to collect and no queue to
+wait for. Each is reported with info [`ARC3200`](diagnostics.md#arc3200), so
+the difference from the CLR is visible.
 
-Deep graphs are released with a worklist. Tearing a child down must not recurse
-on the call stack that is already running a finaliser. The runtime today still
-releases fields recursively. The worklist arrives with user finalisers.
+Deep graphs are released with a worklist. A child whose count reaches zero
+while its parent is being torn down is queued, not destroyed on the spot, so a
+list of a hundred thousand nodes is destroyed by a loop and not by a hundred
+thousand nested calls. The release that dropped the parent still returns only
+after every queued object has been finalised and freed. A release made by user
+code, such as a finaliser that sets a field to `null`, is not queued: that
+object is finalised at the statement that released it.
 
 Objects in a strong cycle never reach a zero count, so their finalisers never
 run. Breaking the cycle with `WeakReference<T>` is what allows finalisation.
 
 | Feature | Contract | Compiler today |
 |---|---|---|
-| C# finaliser (`~ClassName()`) | Supported. Runs at the last strong release, on that thread. | Rejected (`ARC3001`). |
-| Finaliser inheritance | Supported. Derived body, then base body. | Not accepted. |
-| `GC.SuppressFinalize` | Supported. Skips the finaliser only. | Not implemented. |
-| `GC.ReRegisterForFinalize` | Unsupported. Rejected. | Not implemented. |
-| Object resurrection | Unsupported. A store of `this` out of the finaliser is rejected. A strong count above zero when the finaliser returns aborts the process. | Not applicable yet. |
-| `GC.Collect` | Documented no-op, with info `ARC3200`. | Not in the supported library. |
-| `GC.WaitForPendingFinalizers` | Documented no-op, with info `ARC3200`. | Not in the supported library. |
+| C# finaliser (`~ClassName()`) | Supported. Runs at the last strong release, on that thread. | Supported. |
+| Finaliser inheritance | Supported. Derived body, then base body. | Supported. |
+| `GC.SuppressFinalize` | Supported. Skips the finaliser only. | Supported. |
+| `GC.ReRegisterForFinalize` | Unsupported. Rejected. | Rejected (`ARC3001`). |
+| Object resurrection | Unsupported. A store of `this` out of the finaliser is rejected. A strong count above zero when the finaliser returns aborts the process. | A visible store is rejected (`ARC2016`). A hidden one aborts the process with exit code 70. |
+| `GC.Collect` | Documented no-op, with info `ARC3200`. | Supported as a no-op, with info `ARC3200`. |
+| `GC.WaitForPendingFinalizers` | Documented no-op, with info `ARC3200`. | Supported as a no-op, with info `ARC3200`. |
+| A finaliser that throws | Reported, and teardown continues. | Not applicable yet: `throw` is rejected until [M5](roadmap.md#m5--exceptions). |
 | `IDisposable` | Separate from finalisation. `Dispose()` runs only when the program calls it, including through `using`. | `using` is supported, with the limits in the [language reference](language-reference.md#using-and-idisposable). `Dispose` is structural. The compiler has no library `IDisposable` type. The reference assembly declares one so the Roslyn frontend can bind `using`. |
 | `IAsyncDisposable` | The same separation. `await using` disposes at the end of the statement. It is not a finaliser. | Not supported. `async` is not implemented. |
 | `WeakReference<T>` | Does not keep the target alive. The allocation outlives the object only for weak bookkeeping. | Supported. |
 
-What runs today, for every class, is a generated teardown. It releases strong
+For every class, the compiler generates a teardown that releases strong
 reference fields and drops struct fields when the strong count reaches zero.
-It is not a user finaliser, and there is no `~T()` body in it. The compiler
-still rejects a finaliser. The contract above is the semantics that teardown
-will grow into. It is scheduled in [M4](roadmap.md#m4--deterministic-finalisers) of the Roadmap.
+A class that declares `~T()`, or inherits one, also gets a finaliser chain that
+the runtime calls before that teardown. The teardown is not a finaliser, and a
+class without `~T()` runs no user code when it dies. The design and its
+verification are in [Deterministic finalisers](features/finalisers.md).
+
+A finaliser keeps an object alive only until it returns. Objects held in a
+static field are never released, so their finalisers never run, not even when
+`Main` returns. `live` in the accounting line counts them, as it always did.
 
 ## Why cycles leak
 

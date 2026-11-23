@@ -79,11 +79,14 @@ reclaimed.
 - `using` statements with deterministic `Dispose()` at scope exit
   (`IDisposable` is structural: any type with a `Dispose()` method qualifies).
 - Cycle breaking with the standard `System.WeakReference<T>`.
+- Finalisers (`~T()`) that run at the last strong release, derived class
+  before base, with `GC.SuppressFinalize`. Resurrection is rejected.
 - Several source files compiled into one program.
 - Diagnostics with stable codes, a definite-assignment warning, `ARC3001` for
-  unsupported constructs, and `ARC3100` for possible strong cycles.
+  unsupported constructs, `ARC3100` for possible strong cycles, and `ARC3200`
+  for `GC` calls that do nothing.
 - A Roslyn analyser in `analyzers/ArcSharp.Analyzers` that reports the same
-  `ARC3001` and `ARC3100` rules inside an ordinary `dotnet build`.
+  `ARC3001`, `ARC3100` and `ARC3200` rules inside an ordinary `dotnet build`.
 
 Exceptions, `foreach`, `switch`, `++`, lambdas, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
@@ -93,7 +96,7 @@ and library surface the project is aiming at: classes through `Span<T>` as
 full, and reflection, `dynamic`, and `unsafe` as limited. It is not a plan to
 implement the whole framework.
 
-## GC comparison (22 November 2026)
+## GC comparison (23 November 2026)
 
 The five-run comparison completed on Windows x64 with .NET SDK 11.0.100
 and clang 22.1.8. All checksums matched and every ArcSharp run reported
@@ -101,38 +104,39 @@ and clang 22.1.8. All checksums matched and every ArcSharp run reported
 
 | Workload | Runtime | Wall time | Peak working set | Peak private commit |
 |---|---|---:|---:|---:|
-| baseline | ArcSharp | 17.8 ms | 3.8 MiB | 0.6 MiB |
-| baseline | .NET | 58.9 ms | 23.1 MiB | 6.3 MiB |
-| retained | ArcSharp | 57.7 ms | 25.0 MiB | 23.4 MiB |
-| retained | .NET | 76.5 ms | 35.4 MiB | 18.6 MiB |
-| churn | ArcSharp | 148.0 ms | 35.7 MiB | 34.7 MiB |
-| churn | .NET | 105.8 ms | 61.0 MiB | 44.2 MiB |
+| baseline | ArcSharp | 18.3 ms | 3.9 MiB | 0.6 MiB |
+| baseline | .NET | 59.0 ms | 23.2 MiB | 6.3 MiB |
+| retained | ArcSharp | 63.9 ms | 25.1 MiB | 23.4 MiB |
+| retained | .NET | 75.0 ms | 35.4 MiB | 18.6 MiB |
+| churn | ArcSharp | 147.4 ms | 35.8 MiB | 34.8 MiB |
+| churn | .NET | 105.1 ms | 61.0 MiB | 44.1 MiB |
 
-The churn sampler observed both .NET pauses in three of the five runs. The
-median total for those three complete traces was 20.490 ms. The ArcSharp
-churn workload recorded 9,200,856 retains and 10,601,216 releases per run.
+The churn sampler observed both .NET pauses in one of the five runs, and the
+median of the longest pause in each run was 16.896 ms. The ArcSharp churn
+workload recorded 9,200,856 retains and 10,601,216 releases per run.
 
 [Benchmark method and previous results](docs/features/gc-comparison.md).
 
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 36 sample programs pass the test
-harness on Windows x64. The harness also runs four leak-report checks, 25
-must-fail diagnostics, three command-line checks, four cycle checks, and 68
-analyser unit tests. The
+executable, with ARC accounting) works, and 42 sample programs pass the test
+harness on Windows x64. The harness also runs four leak-report checks, 27
+must-fail diagnostics, a run-time abort check, three command-line checks, cycle
+and `ARC3200` checks, and 73 analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See
 [Verification](docs/verification.md) for the latest results.
 
 The M2 verification baseline checks exact ARC counts and destruction timing.
 Every heap object has a reference count. Roslyn parses and binds the source,
 and the lifetime pass proves selected borrows, moves and confined allocation
-lifetimes. [Deterministic finalisation](docs/roadmap.md#m4--deterministic-finalisers)
-is the next milestone. Its contract is in the
-[memory model](docs/memory-model.md#finalisation): a finaliser runs when the
+lifetimes. [Deterministic finalisation](docs/features/finalisers.md) has
+landed. Its contract is in the
+[memory model](docs/memory-model.md#finalisation): `~T()` runs when the
 last strong reference is released, not when a variable leaves scope, and
 `Dispose()` stays a separate call. ArcSharp is a separate runtime with that
-profile. It is not a collector dropped into the CLR.
+profile. It is not a collector dropped into the CLR. Exceptions are the
+[next milestone](docs/roadmap.md#m5--exceptions).
 
 ## Documentation
 
@@ -145,7 +149,7 @@ profile. It is not a collector dropped into the CLR.
 | [Diagnostics](docs/diagnostics.md) | Every error and warning code |
 | [Troubleshooting](docs/troubleshooting.md) | Build failures, crashes, and leaks |
 | [Architecture](docs/architecture.md) | Compiler internals, object layout, and the ARC rules |
-| [Roadmap](docs/roadmap.md) | Thirteen milestones, in order: the Roslyn frontend, a verification baseline, the lifetime pass, finalisers, exceptions, and then the rest of the compatibility target |
+| [Roadmap](docs/roadmap.md) | Thirteen milestones, in order: the Roslyn frontend, a verification baseline, the lifetime pass, finalisers (landed), exceptions, and then the rest of the compatibility target |
 
 Contributors should read [`AGENTS.md`](AGENTS.md), which lists the invariants
 the compiler and runtime depend on.
