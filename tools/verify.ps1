@@ -148,6 +148,29 @@ try {
         }
     }
 
+    # A program that compiles and then aborts at run time with exit code 70 and
+    # a message on stderr. The sources live in samples/negative.
+    function Invoke-RuntimeAbort {
+        param(
+            [string]   $Name,
+            [string]   $Want,
+            [string[]] $Sources
+        )
+        $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/negative/$_.cs" })
+        $outBase = Join-Path $build "out/abort_$Name"
+        $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
+        $run = Invoke-Captured -Arguments (@($dll) + $a) -Environment @{ ARC_CHECK = "1" }
+        $ok = ($run.ExitCode -eq 70) -and ($run.Err -match [regex]::Escape($Want)) -and ($run.Out -notmatch "not reached")
+        if ($ok) {
+            Write-Host "PASS  abort/$Name  ($Want)"
+            $script:pass++
+        }
+        else {
+            Write-Host "FAIL  abort/$Name  want='$Want' exit=$($run.ExitCode) output='$($run.Out)' errors='$($run.Err)'"
+            $script:fail++
+        }
+    }
+
     # A command line that must be rejected without crashing the compiler.
     function Invoke-Usage {
         param(
@@ -261,6 +284,12 @@ try {
     Invoke-Sample m2_properties_narrowing "alloc=5 dead=5 freed=5 live=0" "properties and narrowing PASS" @("m2_properties_narrowing")
     Invoke-Sample lifetime_reads_and_moves "alloc=10 dead=10 freed=10 live=0" "lifetime reads and moves PASS" @("lifetime_reads_and_moves")
     Invoke-Sample lifetime_confined "alloc=6 dead=6 freed=6 live=0" "confined lifetimes PASS" @("lifetime_confined")
+    Invoke-Sample finaliser_order "alloc=40 dead=40 freed=40 live=0" "finaliser order PASS" @("finaliser_order")             # derived, then base, then children
+    Invoke-Sample finaliser_release_point "alloc=17 dead=17 freed=17 live=0" "finaliser release points PASS" @("finaliser_release_point") # at the last release, not at scope exit
+    Invoke-Sample finaliser_suppress "alloc=8 dead=8 freed=8 live=0" "suppress finalizer PASS finalised=1" @("finaliser_suppress") # GC.SuppressFinalize, and the Collect no-ops
+    Invoke-Sample finaliser_graph "alloc=55 dead=55 freed=55 live=0" "finaliser graph PASS" @("finaliser_graph")           # weak refs, nested release, arrays, generics
+    Invoke-Sample finaliser_deep "alloc=100006 dead=100006 freed=100006 live=0" "deep graph finalised 100000" @("finaliser_deep") # 100000 links: no recursion
+    Invoke-Sample finaliser_cycle "alloc=5 dead=3 freed=3 live=2" "cycle finalised 0" @("finaliser_cycle")                # a strong cycle never finalises
 
     Write-Host "--- leak detector (ARC_LEAKS=1) ---"
     Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(
@@ -286,7 +315,7 @@ try {
     ) @("root=static")
     Invoke-LeakCheck cycle_weak 0 "done (weak cycle)" @("cycle_weak") @() @("\[arc\] survivor")
 
-    Write-Host "--- unsupported constructs must be rejected (ARC3001 / CS / ARC2011 / ARC2012 / ARC2013 / ARC2015) ---"
+    Write-Host "--- unsupported constructs must be rejected (ARC3001 / CS / ARC2011 / ARC2012 / ARC2013 / ARC2015 / ARC2016) ---"
     Invoke-MustFail break           "ARC3001" @("break")
     Invoke-MustFail try             "ARC3001" @("try")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
@@ -312,6 +341,11 @@ try {
     Invoke-MustFail abstract_new    "ARC2012" @("abstract_new")
     Invoke-MustFail ref_escape      "ARC3001" @("ref_escape")
     Invoke-MustFail ref_owner       "ARC2015" @("ref_owner")
+    Invoke-MustFail finaliser_resurrect "ARC2016" @("finaliser_resurrect")
+    Invoke-MustFail gc_reregister   "ARC3001" @("gc_reregister")
+
+    Write-Host "--- a finaliser that resurrects its object aborts the process ---"
+    Invoke-RuntimeAbort finaliser_resurrect_call "ResurrectionException" @("finaliser_resurrect_call")
 
     Write-Host "--- command line must report an error instead of crashing ---"
     Invoke-Usage missing_option "requires a value" @((Join-Path $root "samples/fib.cs"), "-o")
@@ -333,6 +367,11 @@ try {
     Invoke-Warns cycle_struct  "ARC3100" $true  @("cycle_struct")
     Invoke-Warns cycle_weak    "ARC3100" $false @("cycle_weak")
     Invoke-Warns cycle_weakref "ARC3100" $false @("cycle_weakref")
+    Invoke-Warns finaliser_cycle "ARC3100" $true @("finaliser_cycle")
+
+    Write-Host "--- GC calls that do nothing (ARC3200) ---"
+    Invoke-Warns finaliser_suppress "ARC3200" $true  @("finaliser_suppress")
+    Invoke-Warns finaliser_order    "ARC3200" $false @("finaliser_order")
 
     Write-Host "=== $($script:pass) passed, $($script:fail) failed ==="
     if ($script:fail -ne 0) { exit 1 }
