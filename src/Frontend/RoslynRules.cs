@@ -147,9 +147,6 @@ sealed partial class RoslynLowering
                 case SyntaxKind.CatchFilterClause:
                     Reject(node, "exception filters are not supported");
                     break;
-                case SyntaxKind.SwitchExpression:
-                    Reject(node, "'switch' is not supported");
-                    break;
                 case SyntaxKind.LockStatement:
                     Reject(node, "'lock' is not supported");
                     break;
@@ -173,9 +170,6 @@ sealed partial class RoslynLowering
                         or ConversionOperatorDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
                         or AccessorDeclarationSyntax):
                     Reject(node, "this expression-bodied member is not supported");
-                    break;
-                case SyntaxKind.ConditionalExpression:
-                    Reject(node, "the conditional operator is not supported");
                     break;
                 case SyntaxKind.QueryExpression:
                     Reject(node, "query expressions are not supported");

@@ -16,7 +16,7 @@ public sealed class UnsupportedConstructTests
         { "lambda", "class C { static void Main() { System.Func<int, int> f = x => x + 1; } }" },
         { "query", "class C { static void Main() { int[] xs = new int[1]; var q = from x in xs select x; } }" },
         { "recursive pattern", "class C { public int X; static bool Test(C value) => value is { X: 1 }; }" },
-        { "switch expression", "class C { static void Main() { int x = 1; int y = x switch { 1 => 2, _ => 3 }; } }" },
+        { "recursive switch expression", "class C { public int X; static int Test(C value) => value switch { { X: 1 } => 2, _ => 3 }; }" },
         { "conditional access", "class C { static void Main() { string s = null; int n = s?.Length ?? 0; } }" },
         { "coalesce", "class C { static void Main() { string s = null; string t = s ?? \"x\"; } }" },
         { "interpolated string", "class C { static void Main() { System.Console.WriteLine($\"x\"); } }" },

@@ -176,6 +176,18 @@ public sealed class BoundConversion : BoundExpr
     public bool IsChecked;
 }
 
+public sealed class BoundChoice : BoundExpr
+{
+    public required BoundExpr Condition;
+    public required BoundExpr WhenTrue;
+    public required BoundExpr WhenFalse;
+}
+
+public sealed class BoundSwitchFailure : BoundExpr
+{
+    public required BoundExpr Exception;
+}
+
 public sealed class BoundPatternInput : BoundExpr
 {
 }

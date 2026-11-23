@@ -356,7 +356,7 @@ error.
 | `try`, `catch`, `finally` | See [Exceptions](#exceptions). |
 | `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
-Not supported: switch expressions, recursive and list patterns, `goto`,
+Not supported: recursive and list patterns, `goto`,
 `lock`, `yield`, `unsafe`, `fixed`, and local functions.
 
 ### Exceptions
@@ -474,7 +474,8 @@ interface slots. See [Base interfaces](features/base-interfaces.md).
 
 User-defined unary, binary and conversion operators work with supported
 by-value signatures, including struct values. Overloaded compound assignment,
-increments and decrements, and overloaded `&&` and `||` remain unsupported.
+increment and decrement remain unsupported. Overloaded `&&` and `||`
+use the declared truth operator to decide whether to evaluate the right operand.
 
 | Category | Operators and forms |
 |---|---|
@@ -487,6 +488,7 @@ increments and decrements, and overloaded `&&` and `||` remain unsupported.
 | Type tests and patterns | `x is T`, `x as T`, casts `(T)x`, and supported constant, relational, declaration and logical patterns |
 | Object creation | `new T(args)`, `new T[n]`, `new WeakReference<T>(x)` |
 | Access | Fields, properties, static members, `this`, `base` constructor calls, array indexing `a[i]` |
+| Choice | `condition ? first : second` and `switch` expressions with supported patterns |
 | Grouping | Parentheses |
 
 Prefix and postfix `++` and `--` work on numeric locals, parameters, fields
@@ -494,10 +496,9 @@ array elements and non-virtual auto-properties. These storage forms also accept 
 assignments `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 and `>>>=`. String storage accepts `+=` for supported concatenation operands.
 
-Not supported: the conditional operator
-`?:`, `??` and `?.`, `typeof`, `sizeof`,
+Not supported: `??` and `?.`, `typeof`, `sizeof`,
 `nameof`, `default`, lambdas, anonymous types, tuples, pattern matching beyond
-scalar, declaration and type patterns, `switch` expressions, object and collection initialisers, and
+scalar, declaration and type patterns, object and collection initialisers, and
 interpolated strings (`$"..."`).
 
 ### Conversions

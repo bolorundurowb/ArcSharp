@@ -19,6 +19,72 @@ sealed partial class RoslynLowering
         };
     }
 
+    private BoundExpr LowerSwitchExpression(ISwitchExpressionOperation operation)
+    {
+        var value = LowerExpr(operation.Value);
+        var input = new BoundPatternInput { Type = value.Type };
+        var resultType = MapType(operation.Type, operation.Syntax.GetLocation());
+        var exceptionSymbol = _compilation.GetTypeByMetadataName("System.Runtime.CompilerServices.SwitchExpressionException");
+        var exceptionType = MapType(exceptionSymbol, operation.Syntax.GetLocation());
+        var constructor = exceptionType.Methods.Find(method => method.IsConstructor && method.Parameters.Count == 0);
+        if (constructor == null)
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        BoundExpr body = new BoundSwitchFailure
+        {
+            Type = resultType,
+            Exception = new BoundNewObject { Type = exceptionType, Ctor = constructor, Site = Site(operation.Syntax) }
+        };
+        for (var i = operation.Arms.Length - 1; i >= 0; i--)
+        {
+            var arm = operation.Arms[i];
+            body = new BoundChoice
+            {
+                Condition = LowerGuardedPattern(arm.Pattern, arm.Guard, input),
+                WhenTrue = LowerExpr(arm.Value),
+                WhenFalse = body,
+                Type = resultType
+            };
+        }
+
+        return new BoundPatternTest { Value = value, Input = input, Test = body, Type = resultType };
+    }
+
+    private BoundExpr LowerConditionalOperator(IBinaryOperation operation, IMethodSymbol method)
+    {
+        var name = operation.OperatorKind == BinaryOperatorKind.ConditionalAnd ? "op_False" : "op_True";
+        var tester = method.ContainingType.GetMembers(name).OfType<IMethodSymbol>().FirstOrDefault(candidate =>
+            candidate.Parameters.Length == 1
+            && SymbolEqualityComparer.Default.Equals(candidate.Parameters[0].Type, method.Parameters[0].Type));
+        var test = tester == null ? null : MapMethod(tester, operation.Syntax.GetLocation());
+        var combine = MapMethod(method, operation.Syntax.GetLocation());
+        if (test == null || combine == null || test.IsAbstract || combine.IsAbstract)
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        var value = LowerExpr(operation.LeftOperand);
+        var input = new BoundPatternInput { Type = value.Type };
+        return new BoundPatternTest
+        {
+            Type = combine.ReturnType,
+            Value = value,
+            Input = input,
+            Test = new BoundChoice
+            {
+                Type = combine.ReturnType,
+                Condition = new BoundCall { Type = _bool, Method = test, Arguments = [input] },
+                WhenTrue = input,
+                WhenFalse = new BoundCall
+                {
+                    Type = combine.ReturnType, Method = combine, Arguments = [input, LowerExpr(operation.RightOperand)]
+                }
+            }
+        };
+    }
+
     private BoundExpr LowerGuardedPattern(IPatternOperation pattern, IOperation? guard, BoundPatternInput input)
     {
         var test = LowerPattern(pattern, input);

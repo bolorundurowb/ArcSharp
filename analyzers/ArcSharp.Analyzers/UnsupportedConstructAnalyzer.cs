@@ -30,7 +30,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeMember, MemberKinds);
         context.RegisterSyntaxNodeAction(AnalyzeUsing, SyntaxKind.UsingStatement);
         context.RegisterSyntaxNodeAction(AnalyzeForEach, SyntaxKind.ForEachStatement);
-        context.RegisterSyntaxNodeAction(AnalyzePattern, SyntaxKind.IsPatternExpression, SyntaxKind.CasePatternSwitchLabel);
+        context.RegisterSyntaxNodeAction(AnalyzePattern, SyntaxKind.IsPatternExpression,
+            SyntaxKind.CasePatternSwitchLabel, SyntaxKind.SwitchExpressionArm);
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterOperationAction(AnalyzeOverloadedBinary, OperationKind.Binary);
         context.RegisterOperationAction(AnalyzeEnumConversion, OperationKind.Conversion);
@@ -61,7 +62,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.AnonymousMethodExpression,
         SyntaxKind.BaseExpression,
         SyntaxKind.QueryExpression,
-        SyntaxKind.SwitchExpression,
         SyntaxKind.WithExpression,
         SyntaxKind.AwaitExpression,
         SyntaxKind.ConditionalAccessExpression,
@@ -122,9 +122,13 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
 
     private static void AnalyzePattern(SyntaxNodeAnalysisContext context)
     {
-        var pattern = context.Node is IsPatternExpressionSyntax expression
-            ? expression.Pattern
-            : ((CasePatternSwitchLabelSyntax)context.Node).Pattern;
+        var pattern = context.Node switch
+        {
+            IsPatternExpressionSyntax expression => expression.Pattern,
+            CasePatternSwitchLabelSyntax label => label.Pattern,
+            SwitchExpressionArmSyntax arm => arm.Pattern,
+            _ => throw new System.InvalidOperationException("unexpected pattern syntax")
+        };
         var unsupported = pattern.DescendantNodesAndSelf()
             .FirstOrDefault(node => node is RecursivePatternSyntax or ListPatternSyntax or SlicePatternSyntax);
         if (unsupported != null)
@@ -137,9 +141,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeOverloadedBinary(OperationAnalysisContext context)
     {
         var operation = (Microsoft.CodeAnalysis.Operations.IBinaryOperation)context.Operation;
-        if (operation.OperatorMethod != null && (operation.IsLifted
-            || operation.OperatorKind is Microsoft.CodeAnalysis.Operations.BinaryOperatorKind.ConditionalAnd
-                or Microsoft.CodeAnalysis.Operations.BinaryOperatorKind.ConditionalOr))
+        if (operation.OperatorMethod != null && operation.IsLifted)
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
                 operation.Syntax.GetLocation(), "this overloaded binary operator is not supported"));
@@ -203,7 +205,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.BaseExpression =>
             "'base' member access is not supported: inherited members are called by name",
         SyntaxKind.QueryExpression => "LINQ is not supported",
-        SyntaxKind.SwitchExpression => "switch expressions are not supported: use 'if'/'else'",
         SyntaxKind.WithExpression => "'with' expressions are not supported",
         SyntaxKind.AwaitExpression => "'await' is not supported: there is no async support",
         SyntaxKind.ConditionalAccessExpression => "the null-conditional operator ('?.') is not supported",

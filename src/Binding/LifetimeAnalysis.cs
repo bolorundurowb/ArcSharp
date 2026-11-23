@@ -297,6 +297,8 @@ public sealed class LifetimeAnalysis
         BoundPatternTest pattern => [pattern.Value, pattern.Test],
         BoundPatternBinding binding => [binding.Test, binding.Value],
         BoundPatternInput => [],
+        BoundChoice choice => [choice.Condition, choice.WhenTrue, choice.WhenFalse],
+        BoundSwitchFailure failure => [failure.Exception],
         BoundAs cast => [cast.Operand],
         BoundLength length => [length.Receiver],
         BoundConsoleCall call => [call.Argument],

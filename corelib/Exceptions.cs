@@ -192,3 +192,13 @@ namespace System
         }
     }
 }
+
+namespace System.Runtime.CompilerServices
+{
+    public sealed class SwitchExpressionException : System.InvalidOperationException
+    {
+        public SwitchExpressionException() : base("Non-exhaustive switch expression failed to match its input.")
+        {
+        }
+    }
+}

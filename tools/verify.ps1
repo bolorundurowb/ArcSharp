@@ -301,6 +301,7 @@ try {
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
     Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
+    Invoke-Sample conditional_values "alloc=10 dead=10 freed=10 live=0" "conditional values PASS" @("conditional_values")
     Invoke-Sample patterns "alloc=4 dead=4 freed=4 live=0" "patterns PASS" @("patterns")
     Invoke-Sample struct_interfaces "alloc=9 dead=9 freed=9 live=0" "struct interfaces PASS" @("struct_interfaces")
     Invoke-Sample struct_storage "alloc=5 dead=5 freed=5 live=0" "struct storage PASS" @("struct_storage")
@@ -369,7 +370,7 @@ try {
     Invoke-MustFail shift           "CS0019" @("shift")
     Invoke-MustFail readonly_field "CS0191" @("readonly_field")
     Invoke-MustFail nested_generic_outer "ARC3001" @("nested_generic_outer")
-    Invoke-MustFail operator_conditional "ARC3001" @("operator_conditional")
+    Invoke-MustFail operator_update "ARC3001" @("operator_update")
     Invoke-MustFail expression_body "CS8701" @("expression_body")
     Invoke-MustFail named_arg       "CS1739" @("named_arg")
     Invoke-MustFail optional_param  "CS1737" @("optional_param")

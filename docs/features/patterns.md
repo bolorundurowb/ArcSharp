@@ -13,4 +13,4 @@ temporary ownership before entering a section.
 
 The verification harness checks numeric and string patterns, short circuiting,
 class and null bindings, and a failed guard followed by a matching case.
-Recursive and list patterns and switch expressions remain planned.
+See [Conditional values](conditional-values.md) for switch expressions.

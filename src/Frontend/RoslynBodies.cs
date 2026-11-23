@@ -596,6 +596,14 @@ sealed partial class RoslynLowering
         IIsTypeOperation { TypeOperand.TypeKind: RoslynKind.Enum } test => UnsupportedExpr(test),
         IIsTypeOperation test => LowerTypeTest(test),
         IIsPatternOperation pattern => LowerPatternTest(pattern),
+        ISwitchExpressionOperation expression => LowerSwitchExpression(expression),
+        IConditionalOperation { IsRef: false, WhenFalse: { } otherwise } choice => new BoundChoice
+        {
+            Condition = LowerExpr(choice.Condition),
+            WhenTrue = LowerExpr(choice.WhenTrue),
+            WhenFalse = LowerExpr(otherwise),
+            Type = MapType(choice.Type, choice.Syntax.GetLocation())
+        },
         ISimpleAssignmentOperation assignment => LowerAssignment(assignment),
         ICompoundAssignmentOperation assignment => LowerCompound(assignment),
         IIncrementOrDecrementOperation increment => LowerIncrement(increment),
@@ -1116,8 +1124,13 @@ sealed partial class RoslynLowering
     {
         if (binary.OperatorMethod is { } method)
         {
-            return binary.IsLifted || binary.OperatorKind is BinaryOperatorKind.ConditionalAnd or BinaryOperatorKind.ConditionalOr
-                ? UnsupportedExpr(binary)
+            if (binary.IsLifted)
+            {
+                return UnsupportedExpr(binary);
+            }
+
+            return binary.OperatorKind is BinaryOperatorKind.ConditionalAnd or BinaryOperatorKind.ConditionalOr
+                ? LowerConditionalOperator(binary, method)
                 : LowerOperator(binary, method, binary.LeftOperand, binary.RightOperand);
         }
 

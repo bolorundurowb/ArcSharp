@@ -1642,6 +1642,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundIs i: return EmitIs(i);
             case BoundUnbox unbox: return EmitUnbox(unbox);
             case BoundPatternTest pattern: return EmitPatternTest(pattern);
+            case BoundChoice choice: return EmitChoice(choice);
+            case BoundSwitchFailure failure: return EmitSwitchFailure(failure);
             case BoundPatternInput input: return EmitPatternInput(input);
             case BoundPatternBinding binding: return EmitPatternBinding(binding);
             case BoundAs a: return EmitAs(a);
@@ -2912,6 +2914,88 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             var inRange = Inst($"and i1 {aboveMin}, {belowMax}");
             EmitOverflowCheck(Inst($"xor i1 {inRange}, true"));
         }
+    }
+
+    private string EmitChoice(BoundChoice choice)
+    {
+        var test = EmitR(choice.Condition);
+        var result = choice.Type.Kind == TypeKind.Struct ? NewStructTemp(choice.Type) : null;
+        var trueLabel = L("choice.true");
+        var falseLabel = L("choice.false");
+        var end = L("choice.end");
+        Term($"br i1 {test}, label %{trueLabel}, label %{falseLabel}");
+
+        var incoming = new List<(string Value, string Label, List<string> References, List<(TypeSymbol Type, string Addr)> Structs)>();
+        void EmitArm(string label, BoundExpr arm)
+        {
+            Lbl(label);
+            var armMark = _stmtTemps.Count;
+            var armStructMark = _stmtStructTemps.Count;
+            var value = EmitR(arm);
+            if (_terminated)
+            {
+                _stmtTemps.RemoveRange(armMark, _stmtTemps.Count - armMark);
+                _stmtStructTemps.RemoveRange(armStructMark, _stmtStructTemps.Count - armStructMark);
+                return;
+            }
+
+            if (result != null)
+            {
+                CopyStruct(choice.Type, result, value);
+            }
+
+            var references = _stmtTemps.GetRange(armMark, _stmtTemps.Count - armMark);
+            var structs = _stmtStructTemps.GetRange(armStructMark, _stmtStructTemps.Count - armStructMark);
+            _stmtTemps.RemoveRange(armMark, references.Count);
+            _stmtStructTemps.RemoveRange(armStructMark, structs.Count);
+            incoming.Add((value, _block, references, structs));
+            Term($"br label %{end}");
+        }
+
+        EmitArm(trueLabel, choice.WhenTrue);
+        EmitArm(falseLabel, choice.WhenFalse);
+        Lbl(end);
+        if (incoming.Count == 0)
+        {
+            Term("unreachable");
+            return "undef";
+        }
+
+        for (var i = 0; i < incoming.Count; i++)
+        {
+            var arm = incoming[i];
+            string MergeTemp(string type, string value) => incoming.Count == 1
+                ? value
+                : Inst($"phi {type} [ {value}, %{arm.Label} ], [ null, %{incoming[1 - i].Label} ]");
+
+            foreach (var reference in arm.References)
+            {
+                _stmtTemps.Add(MergeTemp("i8*", reference));
+            }
+
+            foreach (var (type, address) in arm.Structs)
+            {
+                _stmtStructTemps.Add((type, MergeTemp(type.LlvmType + "*", address)));
+            }
+        }
+
+        if (result != null)
+        {
+            return result;
+        }
+
+        return incoming.Count == 1
+            ? incoming[0].Value
+            : Inst($"phi {choice.Type.LlvmType} {string.Join(", ", incoming.Select(arm => $"[ {arm.Value}, %{arm.Label} ]"))}");
+    }
+
+    private string EmitSwitchFailure(BoundSwitchFailure failure)
+    {
+        var exception = EmitR(failure.Exception);
+        Do($"call void @arc_throw(i8* {exception})");
+        EmitPendingCheck();
+        Term("unreachable");
+        return "undef";
     }
 
     private string EmitPatternTest(BoundPatternTest pattern)

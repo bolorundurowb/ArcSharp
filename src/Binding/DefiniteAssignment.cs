@@ -441,6 +441,20 @@ public static class DefiniteAssignment
                 case BoundUnary u: VisitExpr(u.Operand, assigned); break;
                 case BoundConversion cv: VisitExpr(cv.Operand, assigned); break;
                 case BoundUnbox unbox: VisitExpr(unbox.Operand, assigned); break;
+                case BoundChoice choice:
+                    VisitExpr(choice.Condition, assigned);
+                    var whenTrue = new HashSet<int>(assigned);
+                    var whenFalse = new HashSet<int>(assigned);
+                    VisitExpr(choice.WhenTrue, whenTrue);
+                    VisitExpr(choice.WhenFalse, whenFalse);
+                    whenTrue.IntersectWith(whenFalse);
+                    Replace(assigned, whenTrue);
+                    break;
+
+                case BoundSwitchFailure failure:
+                    VisitExpr(failure.Exception, assigned);
+                    break;
+
                 case BoundPatternTest pattern:
                     VisitExpr(pattern.Value, assigned);
                     VisitExpr(pattern.Test, assigned);
