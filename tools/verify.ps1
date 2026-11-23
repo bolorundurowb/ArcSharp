@@ -149,18 +149,25 @@ try {
     }
 
     # A program that compiles and then aborts at run time with exit code 70 and
-    # a message on stderr. The sources live in samples/negative.
+    # a message on stderr. The sources live in samples/negative. When
+    # $Accounting is given, the complete [arc] line must match it as well.
     function Invoke-RuntimeAbort {
         param(
             [string]   $Name,
             [string]   $Want,
-            [string[]] $Sources
+            [string[]] $Sources,
+            [string]   $Accounting = ""
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/negative/$_.cs" })
         $outBase = Join-Path $build "out/abort_$Name"
         $a = @() + $srcs + @("-o", $outBase, "--target", "windows", "--clang", $Clang, "--runtime", $runtime, "--run")
         $run = Invoke-Captured -Arguments (@($dll) + $a) -Environment @{ ARC_CHECK = "1" }
         $ok = ($run.ExitCode -eq 70) -and ($run.Err -match [regex]::Escape($Want)) -and ($run.Out -notmatch "not reached")
+        if ($ok -and $Accounting -ne "") {
+            $arc = ($run.Err -split "`r?`n" | Where-Object { $_ -match '\[arc\] alloc=' }) -join ""
+            $ok = ($arc -ceq "[arc] $Accounting")
+        }
+
         if ($ok) {
             Write-Host "PASS  abort/$Name  ($Want)"
             $script:pass++
@@ -290,6 +297,11 @@ try {
     Invoke-Sample finaliser_graph "alloc=55 dead=55 freed=55 live=0" "finaliser graph PASS" @("finaliser_graph")           # weak refs, nested release, arrays, generics
     Invoke-Sample finaliser_deep "alloc=100006 dead=100006 freed=100006 live=0" "deep graph finalised 100000" @("finaliser_deep") # 100000 links: no recursion
     Invoke-Sample finaliser_cycle "alloc=5 dead=3 freed=3 live=2" "cycle finalised 0" @("finaliser_cycle")                # a strong cycle never finalises
+    Invoke-Sample exceptions_basic "alloc=16 dead=16 freed=16 live=0" "outer caught inner" @("exceptions_basic")          # try, catch, finally, throw
+    Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
+    Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
+    Invoke-Sample exceptions_using "alloc=74 dead=74 freed=74 live=0" "exceptions using PASS" @("exceptions_using")       # Dispose runs while unwinding
+    Invoke-Sample exceptions_finaliser "alloc=32 dead=32 freed=32 live=0" "exceptions finaliser PASS" @("exceptions_finaliser") # a throwing finaliser is reported and teardown continues
 
     Write-Host "--- leak detector (ARC_LEAKS=1) ---"
     Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(
@@ -317,7 +329,9 @@ try {
 
     Write-Host "--- unsupported constructs must be rejected (ARC3001 / CS / ARC2011 / ARC2012 / ARC2013 / ARC2015 / ARC2016) ---"
     Invoke-MustFail break           "ARC3001" @("break")
-    Invoke-MustFail try             "ARC3001" @("try")
+    Invoke-MustFail exception_filter "ARC3001" @("exception_filter")
+    Invoke-MustFail throw_expression "throw expressions are not supported" @("throw_expression")
+    Invoke-MustFail throw_non_exception "CS0029" @("throw_non_exception")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
     Invoke-MustFail lambda          "ARC3001" @("lambda")
     Invoke-MustFail generic         "CS0246" @("generic")
@@ -346,6 +360,9 @@ try {
 
     Write-Host "--- a finaliser that resurrects its object aborts the process ---"
     Invoke-RuntimeAbort finaliser_resurrect_call "ResurrectionException" @("finaliser_resurrect_call")
+
+    Write-Host "--- an unhandled exception ends the program with exit code 70 ---"
+    Invoke-RuntimeAbort exception_unhandled "Unhandled exception. System.InvalidOperationException: nobody catches this" @("exception_unhandled") "alloc=4 dead=4 freed=4 live=0"
 
     Write-Host "--- command line must report an error instead of crashing ---"
     Invoke-Usage missing_option "requires a value" @((Join-Path $root "samples/fib.cs"), "-o")
