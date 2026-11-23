@@ -13,8 +13,8 @@ public sealed class UnsupportedConstructTests
         { "do", "class C { static void Main() { int i = 0; do { i = i + 1; } while (i < 3); } }" },
         { "foreach", "class C { static void Main() { int[] xs = new int[1]; foreach (int x in xs) { } } }" },
         { "switch", "class C { static void Main() { int x = 1; switch (x) { case 1: break; } } }" },
-        { "try", "class C { static void Main() { try { } catch { } } }" },
-        { "throw", "class C { static void Main() { throw new System.Exception(); } }" },
+        { "exception filter", "class C { static void Main() { try { } catch (System.Exception e) when (e != null) { } } }" },
+        { "throw expression", "class C { static int Main() { int x = 1; return x > 0 ? x : throw new System.Exception(); } }" },
         { "lock", "class C { static void Main() { object o = new object(); lock (o) { } } }" },
         { "lambda", "class C { static void Main() { System.Func<int, int> f = x => x + 1; } }" },
         { "query", "class C { static void Main() { int[] xs = new int[1]; var q = from x in xs select x; } }" },
@@ -60,6 +60,12 @@ public sealed class UnsupportedConstructTests
         { "generic method", "class C { static T Identity<T>(T value) { return value; } }" },
         { "generic interface and struct", "interface IValue<T> { T Get(); } struct Pair<T> { public T Item; public int Tag; }" },
         { "plain program", "class Program { static void Main() { System.Console.WriteLine(\"hi\"); } }" },
+        {
+            "try, catch, finally and throw",
+            "class Program { static void Main() { try { throw new System.InvalidOperationException(\"x\"); } " +
+            "catch (System.InvalidOperationException e) { System.Console.WriteLine(e.Message); throw; } " +
+            "finally { System.Console.WriteLine(\"done\"); } } }"
+        },
         {
             "inheritance and interfaces",
             "interface IShape { int Area(); } " +

@@ -73,8 +73,8 @@ and threads are not targets.
 | Delegates, events | Full | Rejected (`ARC3001`). | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
 | LINQ | Full | Rejected. | [M8](#m8--core-library-iterators-and-linq) | A library written against delegates, generics, iterators, and the core collections. Query syntax lowers to those methods. |
 | `async` / `await` | Full | Rejected. | [M9](#m9--async-and-await) | A state machine whose suspended locals follow the ARC rules. Continuations run on one thread. |
-| Exceptions | Full | Rejected. | [M5](#m5--exceptions) | Every unwind path releases live references. Finalisation and `using` both run on that path. |
-| `IDisposable` / `using` | Full | `using` runs `Dispose()` on the normal completion path, then releases the resource. | [M5](#m5--exceptions) | Disposal stays an explicit call. A finaliser does not call `Dispose()`. |
+| Exceptions | Full | `try`, `catch`, `finally`, `throw`, and a small `System` exception library. Exception filters and throw expressions are rejected. | [Shipped](#where-we-are) | Every unwind path releases live references. Finalisation and `using` both run on that path. |
+| `IDisposable` / `using` | Full | `using` runs `Dispose()` on normal completion, on `return`, and while an exception unwinds, then releases the resource. | [Shipped](#where-we-are) | Disposal stays an explicit call. A finaliser does not call `Dispose()`. |
 | `Span<T>` / `ref` struct | Full | A `ref` that would outlive the call is rejected. | [M10](#m10--spans-and-ref-structs) | Roslyn's escape rules stay. Stack storage does not, by itself, keep a heap object alive. |
 | `WeakReference<T>` | Full | Supported, including as a field, a local, and a generic argument. | [Shipped](#where-we-are) | The native weak reference. It does not keep the target alive. |
 | Reflection | Limited | Not implemented. | [M11](#m11--limited-surfaces) | Metadata the compiler has already emitted: type names, bases, fields, and methods. Not a runtime that loads or invokes arbitrary framework code. |
@@ -137,6 +137,11 @@ results are in [Verification](verification.md).
   derived before base, with `GC.SuppressFinalize`, a worklist release that
   handles very deep graphs, and rejected resurrection. See
   [Deterministic finalisers](features/finalisers.md).
+- The M5 exceptions. `try`, `catch`, `finally`, and `throw`, a small `System`
+  exception library, `using` disposal while unwinding, runtime checks that
+  raise catchable exceptions, an unhandled-exception exit with code 70, and a
+  throwing finaliser that is reported and ignored. See
+  [Exceptions](features/exceptions.md).
 - Diagnostics with stable codes and severities, `-Werror`, definite-assignment
   warnings (`ARC2100`), and `ARC3001` for unsupported constructs.
 - A Roslyn analyser that reports `ARC3001` and `ARC3100` in an ordinary
@@ -242,7 +247,7 @@ release, a use after free, or a moved destruction without the harness noticing.
    comparing references, get-only auto-properties that cannot be assigned,
    inherited auto-property lookup, rejected small integer casts, and reference
    temporaries on short-circuit paths. Defects that need exceptions, such as an
-   unchecked class cast, wait for M5. **Landed.**
+   unchecked class cast, waited for M5, which fixed them. **Landed.**
 6. Run `tools\verify.ps1` in CI on Windows x64. **Landed.** The existing
    workflow runs the harness for pull requests targeting `master`.
 
@@ -333,32 +338,50 @@ recursive release, `GC.SuppressFinalize`, and a cycle whose finaliser never
 runs. A must-fail sample shows resurrection is rejected. The "Compiler today"
 column of the memory model matches the compiler.
 
-**Not in this milestone.** A finaliser cannot throw yet, because `throw` is
-not accepted. The report-and-continue policy for finaliser exceptions lands in
-M5.
+**Not in this milestone.** A finaliser could not throw, because `throw` was
+not accepted. The report-and-continue policy for finaliser exceptions landed
+in M5.
 
 ---
 
 ## M5 — Exceptions
+
+**Landed.** See [Exceptions](features/exceptions.md).
 
 **Goal.** `try`, `catch`, `finally`, and `throw`, with deterministic ARC
 cleanup on every unwind path.
 
 **Steps.**
 
-1. Add a minimal `Exception` hierarchy to the reference surface.
-2. Emit Windows structured exception handling through LLVM. Every cleanup scope
-   becomes a landing pad that releases live temporaries and locals, so a
-   release that reaches zero still finalises on the unwind path.
+1. Add a minimal `Exception` hierarchy. **Implemented**, with one change from
+   the plan: the types are C# source in `corelib/Exceptions.cs`, embedded in
+   the compiler and compiled with each program, not types in the reference
+   assembly.
+2. Make every exit from a cleanup scope release live temporaries and locals, so
+   a release that reaches zero still finalises on the unwind path.
+   **Implemented**, with a different mechanism from the one first planned: a
+   pending-exception flag that the compiled code tests after each call and
+   runtime check, not Windows structured exception handling through LLVM. The
+   flag reuses `func.exit` and has no platform dependency. See
+   [Exceptions](features/exceptions.md#a-pending-exception-flag-not-structured-exception-handling).
 3. Run `using` cleanup and `finally` on both the normal and the unwind path.
+   **Implemented.**
 4. Teach the lifetime pass that an unwind edge is a use. A value whose lifetime
-   ends on that edge is destroyed there.
+   ends on that edge is destroyed there. **Implemented** conservatively: a
+   `return local` inside a `try` is never a move, and locals still die at
+   `func.exit`. Destroying a value on the unwind edge as early as the normal
+   path would is a possible refinement, not scheduled.
 5. Turn the runtime checks into exceptions: an index out of range, an invalid
    class cast, a null dereference, and division by zero. An unhandled exception
    prints a message, prints the accounting line, and exits with a documented
-   code.
+   code. **Implemented.** The exit code is 70.
 6. A finaliser that throws is reported, and teardown continues. The exception
-   does not reach the code that released the last reference.
+   does not reach the code that released the last reference. **Implemented.**
+
+**Later optimisation.** The compiled code tests the pending-exception flag after
+every call. Skipping the test after a call that provably cannot throw would
+remove most of those tests. It needs a pass over the call graph, so it waits
+until a measurement shows the cost matters.
 
 **Done when.** Samples show cleanup on every unwind path with `live=0`, each
 runtime exception caught, `using` disposal during unwinding, and a throwing

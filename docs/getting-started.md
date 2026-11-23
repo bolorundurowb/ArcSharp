@@ -154,14 +154,14 @@ each one, and checks both its output and its `live=` count. It also compiles
 the programs under `samples/negative/`, checks that a bad command line is
 reported instead of crashing the compiler, checks the `ARC3100` cycle
 warnings, and runs the analyser unit tests. It ends with a line such as
-`49 passed, 0 failed`. See [Verification](verification.md) for what each sample
+`94 passed, 0 failed`. See [Verification](verification.md) for what each sample
 tests.
 
 ## Next steps
 
 - Read the [Language reference](language-reference.md) to see which C# features
-  you can use. Many common ones, such as `try`/`catch`, `foreach`,
-  `++`, and lambdas, are not supported yet.
+  you can use. Many common ones, such as `foreach`, `++`, and lambdas, are not
+  supported yet.
 - Read the [Memory model](memory-model.md) before you write classes that refer
   to each other.
 - Browse `samples/` for small, working programs.

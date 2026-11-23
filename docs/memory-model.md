@@ -96,6 +96,18 @@ Built with `dotnet run`, the same program prints `alive: 1` twice, because the
 first object stays in memory until the garbage collector happens to run. Under
 ArcSharp the answer is the same every time.
 
+### When an exception unwinds
+
+An exception is another way out of a method, and it follows the same rules as a
+`return`. The temporaries of the interrupted statement are released first.
+Locals and parameters are released when the method exits, so a local that held
+the last reference to an object destroys it as the exception leaves that
+method, and the finaliser runs there. A `finally` block, and the `Dispose()` of
+a `using` statement, run before that. The exception object is itself an
+ordinary reference-counted object. It is released when the `catch` block that
+handled it finishes, or when the program ends if nothing handled it. See
+[Exceptions](features/exceptions.md).
+
 ## Finalisation
 
 Finalisation is a deliberate difference from the CLR. ArcSharp is a separate
@@ -190,8 +202,10 @@ finaliser past that point.
 A finaliser that throws does not stop teardown and does not propagate to the
 code that dropped the last reference. The runtime reports the exception and
 continues with field release and reclamation. The object cannot be resurrected
-by the exception. Until the language accepts `throw`, a finaliser cannot throw
-because `throw` itself is rejected.
+by the exception. The report is a line on stderr that starts `[arc] exception
+in finaliser of`. An exception that was already unwinding when the release
+happened is set aside while the finaliser runs and is put back afterwards, so
+the finaliser's failure never replaces it.
 
 Resurrection is prohibited. A finaliser must not store `this`, or a reference
 derived from it, into any location that outlives the finaliser. The compiler
@@ -206,7 +220,7 @@ not run the finaliser again.
 at the last strong release. It does not skip field release or reclamation, and
 it does not keep the object alive. Calling it while the finaliser is already
 running does not abort the chain that has started. A `null` argument is
-ignored, because exceptions arrive in M5. `GC.ReRegisterForFinalize` is
+ignored, where .NET throws `ArgumentNullException`. `GC.ReRegisterForFinalize` is
 rejected with `ARC3001`. `GC.Collect()` and `GC.WaitForPendingFinalizers()` are
 accepted and do nothing, because there is nothing to collect and no queue to
 wait for. Each is reported with info [`ARC3200`](diagnostics.md#arc3200), so
@@ -232,7 +246,7 @@ run. Breaking the cycle with `WeakReference<T>` is what allows finalisation.
 | Object resurrection | Unsupported. A store of `this` out of the finaliser is rejected. A strong count above zero when the finaliser returns aborts the process. | A visible store is rejected (`ARC2016`). A hidden one aborts the process with exit code 70. |
 | `GC.Collect` | Documented no-op, with info `ARC3200`. | Supported as a no-op, with info `ARC3200`. |
 | `GC.WaitForPendingFinalizers` | Documented no-op, with info `ARC3200`. | Supported as a no-op, with info `ARC3200`. |
-| A finaliser that throws | Reported, and teardown continues. | Not applicable yet: `throw` is rejected until [M5](roadmap.md#m5--exceptions). |
+| A finaliser that throws | Reported, and teardown continues. | Supported. The report goes to stderr and the exception is dropped. See [Exceptions](features/exceptions.md#finalisers-that-throw). |
 | `IDisposable` | Separate from finalisation. `Dispose()` runs only when the program calls it, including through `using`. | `using` is supported, with the limits in the [language reference](language-reference.md#using-and-idisposable). `Dispose` is structural. The compiler has no library `IDisposable` type. The reference assembly declares one so the Roslyn frontend can bind `using`. |
 | `IAsyncDisposable` | The same separation. `await using` disposes at the end of the statement. It is not a finaliser. | Not supported. `async` is not implemented. |
 | `WeakReference<T>` | Does not keep the target alive. The allocation outlives the object only for weak bookkeeping. | Supported. |

@@ -363,11 +363,28 @@ This section records only how the subset is lowered.
   pinned. Weak slots and writes through an `in` parameter are rejected before
   emission.
 - **`is` and `as`** call `arc_is_instance`, which walks the `TypeInfo` base
-  chain. An explicit cast `(T)x` is a `BoundConversion` with no runtime test,
-  for classes and interfaces alike.
+  chain. An explicit cast `(T)x` to a class is a `BoundConversion` with
+  `CastCheck` set, which calls `arc_cast_check` and raises
+  `InvalidCastException`. A cast to an interface has no runtime test.
 - **Array stores** into a reference-element array call
-  `arc_array_store_check`, which prints `ArrayTypeMismatchException` and exits
-  on a mismatch. Value-type arrays stay invariant.
+  `arc_array_store_check`, which raises `ArrayTypeMismatchException` on a
+  mismatch. Value-type arrays stay invariant.
+- **Exceptions** use a pending-exception flag, the global `arc_exception`. A
+  `throw` stores the exception there and branches to the nearest handler. After
+  every call and every runtime check that can fail, the emitter loads the flag
+  and, when it is set, releases the statement's temporaries and pins and
+  branches to the nearest handler, or to `func.unwind` and then `func.exit` when
+  there is none. `try` and `using` build regions on a stack in the emitter, and a
+  `finally` block or a `Dispose()` call is emitted once for each way out of its
+  region. Hidden stack slots hold the exception a `catch` block is handling and
+  a return value that waits for a `finally` block. The exception classes are the
+  C# source in `corelib/Exceptions.cs`. See [Exceptions](features/exceptions.md).
+- **Runtime checks that raise exceptions:** `arc_null_check` before a member
+  access, call, `.Length`, or element access on a possibly null reference,
+  `arc_bounds_check`, `arc_cast_check`, `arc_div_check` for `/` and `%`, and
+  `arc_array_store_check`. `main` registers the exception classes with
+  `arc_set_exception_types`, then calls `arc_unhandled` if `Main` returns with
+  an exception in flight.
 - **Generics** are monomorphised during binding. Open declarations remain
   templates; closed types cache an independent substituted AST, layout, vtable,
   itable, and destructor. Closed methods are cached and their bodies enter a
@@ -384,7 +401,8 @@ This section records only how the subset is lowered.
   resource is interface-typed — and then releases the resource and nulls the
   slot, so the `func.exit` release of that local sees `null`. A `return` inside
   the body runs the same cleanup, innermost first for nested `using`
-  statements, before branching to `func.exit`.
+  statements, before branching to `func.exit`. An exception in the body runs it
+  once more on the unwind path.
 - **`Console.Write` and `WriteLine`** and **`.Length`** are bound directly to
   runtime functions; there is no library behind them. A `bool` passed to the
   runtime, including one concatenated into a string, is zero-extended from
@@ -436,7 +454,6 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 
 - **Remaining generic features.** Virtual generic methods, interface generic methods, variance, full overload inference, and further constraint forms. Closed types stay specialised.
 - **Reflection, `dynamic`, and `unsafe`.** Limited, as that table says. Reflection is emitted metadata. `dynamic` binds only to members this compiler can lower. A pointer must not outlive the proved lifetime of the object it addresses.
-- **Exceptions** (`try`/`catch`/`finally`). Every unwinding path must release live locals. The cleanup model anticipates that, and the emitter does not yet emit landing pads.
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
 - **Struct forms still rejected.** Arrays of structs, struct return values, static struct fields, by-value struct parameters, properties of struct type, printing a struct, `virtual`/`override` members on structs, interfaces on structs, `using` a struct resource, and self-containing structs are `ARC3001`. They belong to the full struct row.
 - **Enums, indexers, and the rest of ordinary C#.** Enums, indexers, pattern matching, records, operator overloading, partial classes, extension methods, `params`, optional and named arguments, bitwise operators and shifts, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c). Bitwise and shift operators report `ARC3001`.
@@ -477,7 +494,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Roslyn and ArcSharp diagnostics with codes and severities | Implemented                        |
 | `ARC3001` unsupported-construct diagnostics            | Implemented (compiler and analyser)   |
 | `ARC3100` possible strong-cycle warning                 | Implemented (compiler and analyser)   |
-| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (73 xUnit cases)          |
+| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (74 xUnit cases)          |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Implemented for instance and static fields |
@@ -487,7 +504,8 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Retain and release statistics (`ARC_STATS=1`) | Implemented: opt-in `[arc-stats]` line. The `[arc]` line is unchanged |
 | Deterministic finalisers (`~T()`, `GC.SuppressFinalize`, worklist release) | Implemented. `ARC2016` rejects a visible resurrection, and the runtime aborts a hidden one |
 | `ARC3200` info for `GC.Collect` and `GC.WaitForPendingFinalizers` | Implemented (compiler and analyser) |
-| Async, closures, exceptions | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
+| Exceptions (`try`/`catch`/`finally`/`throw`, runtime checks that raise, `using` while unwinding, a throwing finaliser) | Implemented. Exception filters and throw expressions are `ARC3001`. See [Exceptions](features/exceptions.md) |
+| Async, closures | Not implemented (Section 7 / [Roadmap](roadmap.md)) |
 | Roslyn frontend | Landed. Roslyn parses and binds, and the lowering builds the bound tree. |
 | Lifetime pass | Classification, stable borrows, restricted last-use moves and confined allocation lifetimes implemented. See the [Roadmap](roadmap.md). |
 
@@ -567,9 +585,9 @@ Still open, and not required to start the Roslyn transition:
    exists.
 3. **`unowned`.** `WeakReference<T>` is the weak surface. A non-zeroing
    `unowned` reference is not decided.
-4. **Exceptions.** They are a full row of the compatibility target. Landing
-   pads have to release proved and shared values, and run `using` cleanup and
-   finalisers. They come after deterministic finalisers, not before.
+4. **Exceptions.** Landed in [M5](roadmap.md#m5--exceptions). The unwind path
+   releases proved and shared values, and runs `using` cleanup and finalisers.
+   A tighter lifetime treatment of the unwind edge is not scheduled.
 5. **How precise the first lifetime pass is.** The fallback is ARC, so a weak
    first proof is safe. Which escapes the first version must prove (repeated
    local reads, a call that only borrows, a local-to-local move) and which ones

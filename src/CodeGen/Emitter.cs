@@ -21,8 +21,29 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private readonly List<string> _stmtTemps = [];
     // Struct temporaries live in allocas and need __drop, not arc_release.
     private readonly List<(TypeSymbol Type, string Addr)> _stmtStructTemps = [];
-    private readonly List<BoundUsing> _usingScopes = []; // open using statements, innermost last
     private int _tmp, _lbl, _strId;
+
+    // Exceptions. A thrown exception is the one reference stored in the global
+    // @arc_exception. A call or runtime check that can fail is followed by a test
+    // of it, and a pending exception branches to the unwind target of the
+    // innermost open region, or to func.unwind when no region is open. The
+    // branch first releases the statement temporaries that are live at that
+    // point, so an unwind path performs the same releases as a normal exit.
+    private sealed class Region
+    {
+        public required string Label;
+        public bool Used;
+
+        // Runs when control leaves the region by an exception, a return, or
+        // normal completion. Null for a try block that only has catch clauses.
+        public Action? Cleanup;
+    }
+
+    private readonly List<Region> _regions = []; // open try and using statements, innermost last
+    private readonly List<string> _hiddenSlots = []; // owned references released at func.exit
+    private readonly List<string> _catchSlots = []; // the exception each enclosing catch block holds
+    private readonly List<List<string>> _pinScopes = []; // pins of the calls being emitted
+    private bool _funcUnwindUsed;
     private bool _terminated;
     private string _block = "entry";
     private MethodSymbol _curMethod = null!;
@@ -104,6 +125,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         EmitStaticRoots();
+        EmitExceptionTypeTable();
         _mod.AppendLine();
 
         foreach (var b in _program.MethodBodies)
@@ -159,10 +181,38 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             "declare void @arc_suppress_finalize(i8*)",
             "declare void @arc_set_roots(i8***, i64)",
             "declare void @arc_report()",
+            "declare void @arc_set_exception_types(%TypeInfo**, i64)",
+            "declare void @arc_throw(i8*)",
+            "declare void @arc_unhandled()",
+            "declare void @arc_finaliser_exception(i8*)",
+            "declare void @arc_null_check(i8*)",
+            "declare void @arc_cast_check(i8*, %TypeInfo*)",
+            "declare void @arc_div_check(i64, i64, i32)",
+            "@arc_exception = external global i8*",
                  })
         {
             _mod.AppendLine(d);
         }
+    }
+
+    // The classes the runtime raises itself. The order is the ARC_EXC_* order in
+    // the runtime. They come from corelib/Exceptions.cs and are always compiled.
+    private static readonly string[] RuntimeExceptionTypes =
+    [
+        "System.NullReferenceException",
+        "System.IndexOutOfRangeException",
+        "System.InvalidCastException",
+        "System.DivideByZeroException",
+        "System.OverflowException",
+        "System.ArrayTypeMismatchException"
+    ];
+
+    private void EmitExceptionTypeTable()
+    {
+        var entries = RuntimeExceptionTypes.Select(name => _program.Types.Find(type => type.Name == name))
+            .Select(type => type == null ? "%TypeInfo* null" : $"%TypeInfo* @{type.Name}__ti");
+        _mod.AppendLine(
+            $"@arc_exception_types = private constant [{RuntimeExceptionTypes.Length} x %TypeInfo*] [ {string.Join(", ", entries)} ]");
     }
 
     private static string ZeroOf(TypeSymbol t) =>
@@ -376,7 +426,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         fns.AppendLine($"define void @{t.Name}__finalisers(i8* %self) {{");
         fns.AppendLine("entry:");
+        // A finaliser that throws is reported and cleared before the next one
+        // runs, so the inherited finaliser never starts with an exception in flight.
         fns.AppendLine($"  call void @{t.Finaliser!.MangledName}(i8* %self)");
+        fns.AppendLine("  call void @arc_finaliser_exception(i8* %self)");
         var inherited = NearestFinaliser(t.BaseType);
         if (inherited != null)
         {
@@ -548,7 +601,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         _body = [];
         _stmtTemps.Clear();
         _stmtStructTemps.Clear();
-        _usingScopes.Clear();
+        _regions.Clear();
+        _hiddenSlots.Clear();
+        _catchSlots.Clear();
+        _pinScopes.Clear();
+        _funcUnwindUsed = false;
         _localSlot.Clear();
         _tmp = 0;
         _lbl = 0;
@@ -655,6 +712,16 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         Term("br label %func.exit");
 
+        if (_funcUnwindUsed)
+        {
+            // An exception that no region in this method handles. Locals and
+            // hidden slots are released at func.exit as on a normal return. A
+            // return statement stores %retval only after its cleanups have
+            // run, so nothing is left in it here.
+            Lbl("func.unwind");
+            Term("br label %func.exit");
+        }
+
         Lbl("func.exit");
         foreach (var loc in b.AllLocals)
         {
@@ -675,6 +742,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             {
                 Do($"call void @{loc.Type.Name}__drop({loc.Type.LlvmType}* %loc{loc.Id})");
             }
+        }
+
+        foreach (var slot in _hiddenSlots)
+        {
+            var held = Inst($"load i8*, i8** {slot}");
+            Do($"call void @arc_release(i8* {held})");
         }
 
         if (isVoid)
@@ -737,6 +810,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundFor f: EmitFor(f); break;
             case BoundReturn r: EmitReturn(r); break;
             case BoundUsing u: EmitUsing(u); break;
+            case BoundTry t: EmitTry(t); break;
+            case BoundThrow th: EmitThrow(th); break;
         }
     }
 
@@ -803,11 +878,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var cmark = _stmtTemps.Count;
         if (n.Ctor != null)
         {
-            var pins = new List<string>();
+            var pins = BeginPins();
             var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"{ty}* {slot}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
-            ReleasePins(pins);
+            EmitPendingCheck();
+            EndPins(pins);
         }
 
         ReleaseTemps(cmark);
@@ -938,12 +1014,27 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         var mark = _stmtTemps.Count;
         var smark = _stmtStructTemps.Count;
+
+        // Cleanups run after the value is evaluated and before it is returned.
+        // One of them can throw into a handler in this same method, and the
+        // method then carries on. An owned value waiting in %retval would be
+        // overwritten and lost, so it waits in a hidden slot instead, which is
+        // released at func.exit whichever way control leaves.
+        string? held = null;
         if (r.Value != null)
         {
             var v = EmitR(r.Value);
             ReleaseTemps(mark);
             ReleaseStructTemps(smark);
-            StoreRet(v, _curMethod.ReturnType);
+            if (_curMethod.ReturnType.IsReferenceType && _regions.Exists(region => region.Cleanup != null))
+            {
+                held = NewHiddenSlot();
+                Do($"store i8* {v}, i8** {held}");
+            }
+            else
+            {
+                StoreRet(v, _curMethod.ReturnType);
+            }
         }
         else
         {
@@ -951,14 +1042,299 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             ReleaseStructTemps(smark);
         }
 
-        // using scopes still open run their cleanup on the way out, innermost
-        // first, mirroring how C# finally blocks run before control leaves
-        for (var i = _usingScopes.Count - 1; i >= 0; i--)
+        EmitReturnCleanups();
+        if (held != null)
         {
-            EmitUsingCleanup(_usingScopes[i]);
+            var v = Inst($"load i8*, i8** {held}");
+            Do($"store i8* null, i8** {held}");
+            StoreRet(v, _curMethod.ReturnType);
         }
 
         Term("br label %func.exit");
+    }
+
+    // Regions still open run their cleanup on the way out, innermost first,
+    // mirroring how C# finally blocks run before control leaves. While one
+    // cleanup is emitted, the regions it was inside are closed, so an exception
+    // it throws goes to the enclosing handler.
+    private void EmitReturnCleanups()
+    {
+        for (var i = _regions.Count - 1; i >= 0; i--)
+        {
+            var region = _regions[i];
+            if (region.Cleanup == null)
+            {
+                continue;
+            }
+
+            var closed = _regions.GetRange(i, _regions.Count - i);
+            _regions.RemoveRange(i, _regions.Count - i);
+            region.Cleanup();
+            _regions.AddRange(closed);
+        }
+    }
+
+    private string NewHiddenSlot()
+    {
+        var slot = $"%hidden{_hiddenSlots.Count}";
+        _entry.Add($"  {slot} = alloca i8*");
+        _entry.Add($"  store i8* null, i8** {slot}");
+        _hiddenSlots.Add(slot);
+        return slot;
+    }
+
+    private string UnwindTarget()
+    {
+        if (_regions.Count == 0)
+        {
+            _funcUnwindUsed = true;
+            return "func.unwind";
+        }
+
+        var region = _regions[^1];
+        region.Used = true;
+        return region.Label;
+    }
+
+    // Tests the pending exception after a call or runtime check. The branch to
+    // the unwind target first releases everything the statement still owns.
+    // 'extra' lists owned values that are not yet in _stmtTemps.
+    private void EmitPendingCheck(IEnumerable<string>? extra = null)
+    {
+        var pending = Inst("load i8*, i8** @arc_exception");
+        var has = Inst($"icmp ne i8* {pending}, null");
+        string unwindL = L("exc"), continueL = L("cont");
+        Term($"br i1 {has}, label %{unwindL}, label %{continueL}");
+        Lbl(unwindL);
+        if (extra != null)
+        {
+            foreach (var value in extra)
+            {
+                Do($"call void @arc_release(i8* {value})");
+            }
+        }
+
+        for (var scope = _pinScopes.Count - 1; scope >= 0; scope--)
+        {
+            ReleasePins(_pinScopes[scope]);
+        }
+
+        for (var i = _stmtTemps.Count - 1; i >= 0; i--)
+        {
+            Do($"call void @arc_release(i8* {_stmtTemps[i]})");
+        }
+
+        for (var i = _stmtStructTemps.Count - 1; i >= 0; i--)
+        {
+            var (type, addr) = _stmtStructTemps[i];
+            Do($"call void @{type.Name}__drop({type.LlvmType}* {addr})");
+        }
+
+        Term($"br label %{UnwindTarget()}");
+        Lbl(continueL);
+    }
+
+    private bool NeedsNullCheck(BoundExpr receiver) =>
+        receiver.Type.IsReferenceType
+        && receiver is not (BoundThis or BoundNewObject or BoundNewArray or BoundLiteral { LitKind: LiteralKind.String });
+
+    private void EmitNullCheck(BoundExpr receiver, string value)
+    {
+        if (!NeedsNullCheck(receiver))
+        {
+            return;
+        }
+
+        Do($"call void @arc_null_check(i8* {value})");
+        EmitPendingCheck();
+    }
+
+    private List<string> BeginPins()
+    {
+        var pins = new List<string>();
+        _pinScopes.Add(pins);
+        return pins;
+    }
+
+    private void EndPins(List<string> pins)
+    {
+        ReleasePins(pins);
+        _pinScopes.RemoveAt(_pinScopes.Count - 1);
+    }
+
+    private void EmitThrow(BoundThrow s)
+    {
+        string exception;
+        if (s.Value != null)
+        {
+            var mark = _stmtTemps.Count;
+            var smark = _stmtStructTemps.Count;
+            exception = EmitR(s.Value);
+            ReleaseTemps(mark);
+            ReleaseStructTemps(smark);
+        }
+        else if (_catchSlots.Count > 0)
+        {
+            // 'throw;' passes on the exception the enclosing catch block holds.
+            exception = Inst($"load i8*, i8** {_catchSlots[^1]}");
+            Do($"call void @arc_retain(i8* {exception})");
+        }
+        else
+        {
+            exception = "null";
+        }
+
+        // arc_throw takes the reference. Throwing null raises NullReferenceException.
+        Do($"call void @arc_throw(i8* {exception})");
+        Term($"br label %{UnwindTarget()}");
+    }
+
+    private void EmitTry(BoundTry t)
+    {
+        if (t.Finally == null)
+        {
+            EmitTryCatch(t.Body, t.Catches);
+        }
+        else if (t.Catches.Count == 0)
+        {
+            EmitProtected(() => EmitStmt(t.Body), () => EmitStmt(t.Finally));
+        }
+        else
+        {
+            // try { try { body } catch { ... } } finally { ... }
+            EmitProtected(() => EmitTryCatch(t.Body, t.Catches), () => EmitStmt(t.Finally));
+        }
+    }
+
+    // Emits a body whose cleanup has to run however control leaves it: by
+    // falling off the end, by a return, or by an exception. The cleanup is
+    // emitted once for each of those paths. On the exception path the exception
+    // is set aside while the cleanup runs, so that code such as Dispose or a
+    // finally block does not see it as its own. If the cleanup throws, that
+    // exception replaces the one that was set aside.
+    private void EmitProtected(Action emitBody, Action cleanup)
+    {
+        var region = new Region { Label = L("unwind"), Cleanup = cleanup };
+        _regions.Add(region);
+        emitBody();
+        _regions.Remove(region);
+
+        var endL = L("protected.end");
+        if (!_terminated)
+        {
+            cleanup();
+            if (!_terminated)
+            {
+                Term($"br label %{endL}");
+            }
+        }
+
+        if (region.Used)
+        {
+            Lbl(region.Label);
+            var saved = NewHiddenSlot();
+            var pending = Inst("load i8*, i8** @arc_exception");
+            Do("store i8* null, i8** @arc_exception");
+            Do($"call void @arc_assign_take(i8** {saved}, i8* {pending})");
+            cleanup();
+            var restored = Inst($"load i8*, i8** {saved}");
+            Do($"store i8* null, i8** {saved}");
+            Do($"store i8* {restored}, i8** @arc_exception");
+            Term($"br label %{UnwindTarget()}");
+        }
+
+        Lbl(endL);
+    }
+
+    private void EmitTryCatch(BoundBlock body, List<BoundCatch> catches)
+    {
+        var region = new Region { Label = L("catch.dispatch") };
+        _regions.Add(region);
+        EmitStmt(body);
+        _regions.Remove(region);
+
+        var endL = L("try.end");
+        if (!_terminated)
+        {
+            Term($"br label %{endL}");
+        }
+
+        if (region.Used)
+        {
+            // The catch clauses are outside the region: an exception thrown in
+            // one goes to the enclosing handler.
+            Lbl(region.Label);
+            var pending = Inst("load i8*, i8** @arc_exception");
+            var caughtAll = false;
+            foreach (var clause in catches)
+            {
+                var bodyL = L("catch.body");
+                string? nextL = null;
+                if (clause.ExceptionType == null)
+                {
+                    caughtAll = true;
+                    Term($"br label %{bodyL}");
+                }
+                else
+                {
+                    nextL = L("catch.next");
+                    var test = Inst($"call i32 @arc_is_instance(i8* {pending}, %TypeInfo* @{clause.ExceptionType.Name}__ti)");
+                    var matches = Inst($"icmp ne i32 {test}, 0");
+                    Term($"br i1 {matches}, label %{bodyL}, label %{nextL}");
+                }
+
+                Lbl(bodyL);
+                EmitCatchBody(clause, endL);
+                if (caughtAll)
+                {
+                    break;
+                }
+
+                Lbl(nextL!);
+            }
+
+            if (!caughtAll)
+            {
+                Term($"br label %{UnwindTarget()}");
+            }
+        }
+
+        Lbl(endL);
+    }
+
+    // The catch block owns the exception from here on. It holds one reference
+    // in a hidden slot, which 'throw;' reads, and a second in the catch
+    // variable. Both are released when the block completes normally, and at
+    // func.exit if it leaves by a return or another exception.
+    private void EmitCatchBody(BoundCatch clause, string endL)
+    {
+        var held = NewHiddenSlot();
+        var exception = Inst("load i8*, i8** @arc_exception");
+        Do("store i8* null, i8** @arc_exception");
+        Do($"call void @arc_assign_take(i8** {held}, i8* {exception})");
+        string? variableSlot = null;
+        if (clause.Variable != null)
+        {
+            variableSlot = _localSlot[clause.Variable.Id];
+            Do($"call void @arc_retain(i8* {exception})");
+            Do($"call void @arc_assign_take(i8** {variableSlot}, i8* {exception})");
+        }
+
+        _catchSlots.Add(held);
+        EmitStmt(clause.Body);
+        _catchSlots.RemoveAt(_catchSlots.Count - 1);
+        if (_terminated)
+        {
+            return;
+        }
+
+        if (variableSlot != null)
+        {
+            Do($"call void @arc_assign_take(i8** {variableSlot}, i8* null)");
+        }
+
+        Do($"call void @arc_assign_take(i8** {held}, i8* null)");
+        Term($"br label %{endL}");
     }
 
     private void EmitUsing(BoundUsing u)
@@ -984,16 +1360,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             ReleaseStructTemps(smark);
         }
 
-        // 2. body; a return inside it runs the cleanup on the way out
-        _usingScopes.Add(u);
-        EmitStmt(u.Body);
-        _usingScopes.RemoveAt(_usingScopes.Count - 1);
-
-        // 3. cleanup on the normal path (a terminated body has already run it)
-        if (!_terminated)
-        {
-            EmitUsingCleanup(u);
-        }
+        // 2. body and cleanup. The cleanup runs on the normal path, before a
+        //    return, and when an exception leaves the body.
+        EmitProtected(() => EmitStmt(u.Body), () => EmitUsingCleanup(u));
     }
 
     private void EmitUsingCleanup(BoundUsing u)
@@ -1238,6 +1607,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 {
                     basePtr = EmitR(receiver);
                     _stmtTemps.Add(basePtr);
+                    EmitNullCheck(receiver, basePtr);
                     PinOwner(pins, basePtr);
                 }
                 else if (receiver.Type.Kind == TypeKind.Struct)
@@ -1312,6 +1682,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (receiver.Type.IsReferenceType)
         {
             _stmtTemps.Add(recv);
+            EmitNullCheck(receiver, recv);
         }
 
         return FieldAddr(recv, receiver.Type, fa.Field);
@@ -1322,6 +1693,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (field.Owner.StaticFieldInitialiser is { } initialiser && _curMethod != initialiser)
         {
             Do($"call void @{initialiser.MangledName}()");
+            EmitPendingCheck();
         }
 
         return field.MangledStatic;
@@ -1349,6 +1721,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var receiver = fa.Receiver!;
         var recv = EmitR(receiver);
         TrackReferenceTemp(receiver, recv);
+        EmitNullCheck(receiver, recv);
 
         var addr = FieldAddr(recv, receiver.Type, fa.Field);
         if (fa.Field.IsWeak)
@@ -1370,6 +1743,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         var recv = EmitR(len.Receiver);
         TrackReferenceTemp(len.Receiver, recv);
+        EmitNullCheck(len.Receiver, recv);
         var l = Inst($"call i64 @arc_array_length(i8* {recv})");
         return Inst($"trunc i64 {l} to i32");
     }
@@ -1379,7 +1753,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         // Pins keep the heap object behind an interior reference alive until
         // this call returns. The callee can drop every named reference to that
         // object; the pin is a retain it cannot see, released only afterwards.
-        var pins = new List<string>();
+        var pins = BeginPins();
         string? recv = null;
         if (c.Receiver != null)
         {
@@ -1395,6 +1769,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         var argVals = EmitArguments(c.Arguments, c.Method.Parameters, pins);
+        if (c.Receiver != null && recv != null)
+        {
+            // A call on null fails after the arguments have been evaluated.
+            EmitNullCheck(c.Receiver, recv);
+        }
+
         var m = c.Method;
         var ret = m.ReturnType.LlvmType;
         var isVoid = m.ReturnType.Kind == TypeKind.Void;
@@ -1446,7 +1826,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
-        ReleasePins(pins);
+        EmitPendingCheck();
+        EndPins(pins);
         return result;
     }
 
@@ -1503,11 +1884,17 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var obj = Inst($"call i8* @arc_alloc(%TypeInfo* @{n.Type.Name}__ti, i8* {SiteOperand(n.Site)})");
         if (n.Ctor != null)
         {
-            var pins = new List<string>();
+            // The object is a temporary until the constructor returns, so an
+            // exception from an argument or from the constructor releases it.
+            var objIndex = _stmtTemps.Count;
+            _stmtTemps.Add(obj);
+            var pins = BeginPins();
             var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"i8* {obj}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
-            ReleasePins(pins);
+            EmitPendingCheck();
+            EndPins(pins);
+            _stmtTemps.RemoveAt(objIndex);
         }
 
         return obj;
@@ -1528,11 +1915,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         if (n.Ctor != null)
         {
-            var pins = new List<string>();
+            var pins = BeginPins();
             var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"{ty}* {temp}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
-            ReleasePins(pins);
+            EmitPendingCheck();
+            EndPins(pins);
         }
 
         return temp;
@@ -1555,6 +1943,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (checkBounds && _boundsChecks)
         {
             Do($"call void @arc_bounds_check(i8* {arr}, i64 {i64})");
+            EmitPendingCheck();
         }
 
         var mul = Inst($"mul i64 {i64}, 8");
@@ -1582,8 +1971,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         switch (b.Kind)
         {
-            case BinKind.IntArith: return Inst($"{ArithOp(b.Op, b.IsUnsigned)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
-            case BinKind.LongArith: return Inst($"{ArithOp(b.Op, b.IsUnsigned)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.IntArith: return EmitIntegerArithmetic(b, 32);
+            case BinKind.LongArith: return EmitIntegerArithmetic(b, 64);
             case BinKind.FloatArith: return Inst($"{FloatArithOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleArith: return Inst($"{FloatArithOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.IntCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
@@ -1612,6 +2001,28 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             default: return "0";
         }
     }
+
+    private string EmitIntegerArithmetic(BoundBinary b, int bits)
+    {
+        var left = EmitR(b.Left);
+        var right = EmitR(b.Right);
+        if (b.Op is TokenKind.Slash or TokenKind.Percent && !IsSafeDivisor(right))
+        {
+            // Hardware division traps on zero and on the minimum value divided
+            // by -1. The runtime turns both into exceptions.
+            var widen = b.IsUnsigned ? "zext" : "sext";
+            var wideLeft = bits == 64 ? left : Inst($"{widen} i32 {left} to i64");
+            var wideRight = bits == 64 ? right : Inst($"{widen} i32 {right} to i64");
+            Do($"call void @arc_div_check(i64 {wideLeft}, i64 {wideRight}, i32 {(b.IsUnsigned ? 0 : bits)})");
+            EmitPendingCheck();
+        }
+
+        return Inst($"{ArithOp(b.Op, b.IsUnsigned)} i{bits} {left}, {right}");
+    }
+
+    // A literal divisor other than zero and -1 cannot fail.
+    private static bool IsSafeDivisor(string operand) =>
+        long.TryParse(operand, out var value) && value is not (0 or -1);
 
     private static string ArithOp(TokenKind op, bool unsigned) => op switch
     {
@@ -1696,9 +2107,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private string EmitConcat(BoundBinary b)
     {
+        // The left operand is tracked before the right one is evaluated, which
+        // can throw.
         var l = EmitStringOperand(b.Left);
-        var r = EmitStringOperand(b.Right);
         _stmtTemps.Add(l);
+        var r = EmitStringOperand(b.Right);
         _stmtTemps.Add(r);
         return Inst($"call i8* @arc_str_concat(i8* {l}, i8* {r})");
     }
@@ -1780,6 +2193,16 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         var value = EmitR(a.Value);
+
+        // Evaluating a field or element target can throw, and the value is an
+        // owned reference that nothing else tracks yet.
+        var inFlight = -1;
+        if (a.Type.IsReferenceType && a.Target is BoundFieldAccess or BoundIndex)
+        {
+            inFlight = _stmtTemps.Count;
+            _stmtTemps.Add(value);
+        }
+
         switch (a.Target)
         {
             case BoundLocal lo:
@@ -1820,7 +2243,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 return value;
             }
             case BoundFieldAccess fa:
-                return EmitFieldStore(fa, value);
+                return EmitFieldStore(fa, value, inFlight);
             case BoundIndex ix:
             {
                 var arr = EmitR(ix.Receiver);
@@ -1830,8 +2253,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 if (ix.Type.IsReferenceType)
                 {
                     Do($"call void @arc_array_store_check(i8* {arr}, i64 {i64}, i8* {value})");
+                    EmitPendingCheck();
                     var addr = ElemAddr(arr, idx, ix.Type, checkBounds: false);
                     var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
+                    UntrackInFlight(inFlight);
                     Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
                     Do($"call void @arc_retain(i8* {value})");
                 }
@@ -1868,7 +2293,15 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         return src;
     }
 
-    private string EmitFieldStore(BoundFieldAccess fa, string value)
+    private void UntrackInFlight(int index)
+    {
+        if (index >= 0)
+        {
+            _stmtTemps.RemoveAt(index);
+        }
+    }
+
+    private string EmitFieldStore(BoundFieldAccess fa, string value, int inFlight)
     {
         string addr;
         if (fa.Field.IsStatic)
@@ -1884,8 +2317,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 _stmtTemps.Add(recv);
             }
 
+            EmitNullCheck(receiver, recv);
             addr = FieldAddr(recv, receiver.Type, fa.Field);
         }
+
+        // No check point follows, so the caller owns the value again.
+        UntrackInFlight(inFlight);
 
         if (fa.Field.Type.Kind == TypeKind.Struct)
         {
@@ -1920,6 +2357,14 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var to = cv.Type;
         if (from.IsReferenceType && to.IsReferenceType)
         {
+            if (cv.CastCheck)
+            {
+                // The operand is an owned value that nothing tracks yet, so the
+                // unwind path has to release it.
+                Do($"call void @arc_cast_check(i8* {v}, %TypeInfo* @{to.Name}__ti)");
+                EmitPendingCheck(new[] { v });
+            }
+
             return v;
         }
 
@@ -2053,6 +2498,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 break;
             case BoundFieldAccess fa:
             {
+                // The value is owned and untracked while the target is evaluated.
+                var inFlight = _stmtTemps.Count;
+                _stmtTemps.Add(value);
                 string addr;
                 if (fa.Field.IsStatic)
                 {
@@ -2067,20 +2515,25 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                         _stmtTemps.Add(recv);
                     }
 
+                    EmitNullCheck(receiver, recv);
                     addr = FieldAddr(recv, receiver.Type, fa.Field);
                 }
 
                 var pp = Inst($"bitcast {fa.Field.Type.LlvmType}* {addr} to i8**");
+                UntrackInFlight(inFlight);
                 Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
                 break;
             }
             case BoundIndex ix:
             {
+                var inFlight = _stmtTemps.Count;
+                _stmtTemps.Add(value);
                 var arr = EmitR(ix.Receiver);
                 _stmtTemps.Add(arr);
                 var idx = EmitR(ix.Index);
                 var addr = ElemAddr(arr, idx, ix.Type);
                 var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
+                UntrackInFlight(inFlight);
                 Do($"call void @arc_assign_take(i8** {pp}, i8* {value})");
                 break;
             }
@@ -2189,15 +2642,32 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             return;
         }
 
+        fns.AppendLine(
+            $"  call void @arc_set_exception_types(%TypeInfo** getelementptr ([{RuntimeExceptionTypes.Length} x %TypeInfo*], [{RuntimeExceptionTypes.Length} x %TypeInfo*]* @arc_exception_types, i64 0, i64 0), i64 {RuntimeExceptionTypes.Length})");
         if (entry.ReturnType.Kind == TypeKind.Void)
         {
             fns.AppendLine($"  call void @{entry.MangledName}()");
+        }
+        else
+        {
+            fns.AppendLine($"  %r = call {entry.ReturnType.LlvmType} @{entry.MangledName}()");
+        }
+
+        // An exception that no handler caught ends the program here.
+        fns.AppendLine("  %pending = load i8*, i8** @arc_exception");
+        fns.AppendLine("  %unhandled = icmp ne i8* %pending, null");
+        fns.AppendLine("  br i1 %unhandled, label %main.unhandled, label %main.done");
+        fns.AppendLine("main.unhandled:");
+        fns.AppendLine("  call void @arc_unhandled()");
+        fns.AppendLine("  unreachable");
+        fns.AppendLine("main.done:");
+        if (entry.ReturnType.Kind == TypeKind.Void)
+        {
             fns.AppendLine("  call void @arc_report()");
             fns.AppendLine("  ret i32 0");
         }
         else
         {
-            fns.AppendLine($"  %r = call {entry.ReturnType.LlvmType} @{entry.MangledName}()");
             fns.AppendLine("  call void @arc_report()");
             if (entry.ReturnType.LlvmType == "i32")
             {

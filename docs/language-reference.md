@@ -278,7 +278,9 @@ finalised after its owner. The `Derived` finaliser could still have used
 - `GC.ReRegisterForFinalize` is rejected (`ARC3001`).
 - Objects in a strong cycle, and objects held by a static field, are never
   released, so their finalisers do not run.
-- A finaliser cannot throw, because `throw` is not supported yet.
+- A finaliser that throws is reported on stderr and then ignored. Teardown of
+  the object continues, and the code that released the last reference does not
+  see the exception.
 
 The contract and the design are in the [memory model](memory-model.md#finalisation)
 and [Deterministic finalisers](features/finalisers.md).
@@ -338,11 +340,81 @@ error.
 | `for` | Each of the three clauses is optional. |
 | `using` | `using (var x = expr) { ... }` or `using (expr) { ... }`. See below. |
 | `return` | With or without a value. |
+| `try`, `catch`, `finally` | See [Exceptions](#exceptions). |
+| `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
 Not supported: `do`/`while`, `foreach`, `switch`, `break`, `continue`, `goto`,
-`try`/`catch`/`finally`, `throw`, `lock`, `yield`, `checked`,
+`lock`, `yield`, `checked`,
 `unchecked`, `unsafe`, `fixed`, and local functions. Because `break` and
 `continue` are missing, end a loop by making its condition false.
+
+### Exceptions
+
+`try` accepts any number of `catch` clauses, an optional `finally` block, or
+both. A `catch` names an exception type, optionally with a variable, or it has
+no type and catches everything. Clauses are tried in order, and a clause
+matches when the exception is an instance of its type.
+
+```csharp
+try
+{
+    Process(order);
+}
+catch (ArgumentException e)
+{
+    Console.WriteLine("bad argument: " + e.Message);
+}
+catch
+{
+    Console.WriteLine("something else");
+    throw;
+}
+finally
+{
+    Console.WriteLine("done");
+}
+```
+
+ArcSharp ships a small exception library in the `System` namespace. The
+compiler adds it to every program, so no reference is needed:
+
+| Type | Base |
+|---|---|
+| `Exception` | `object` |
+| `SystemException` | `Exception` |
+| `ArithmeticException` | `SystemException` |
+| `DivideByZeroException`, `OverflowException` | `ArithmeticException` |
+| `IndexOutOfRangeException`, `InvalidCastException`, `NullReferenceException`, `ArrayTypeMismatchException`, `InvalidOperationException`, `NotSupportedException`, `NotImplementedException`, `ArgumentException` | `SystemException` |
+| `ArgumentNullException` | `ArgumentException` |
+
+Each type has a parameterless constructor, which sets a default message, and a
+constructor that takes a `string` message. `Message` is a read-only property.
+You can derive your own exception classes from any of these, and a derived
+class may add fields.
+
+The runtime raises these exceptions itself: `NullReferenceException` for a
+member access, call, `.Length`, element access, or `throw null` on a null
+reference, `IndexOutOfRangeException` for an array index outside the array,
+`InvalidCastException` for a failed class cast, `DivideByZeroException` for `/`
+and `%` by zero, `OverflowException` for the minimum value divided by -1, and
+`ArrayTypeMismatchException` for a store into a covariant array that the
+element type does not accept.
+
+Every reference the code owns is released on the way out, whether the exit is a
+normal return or an exception. A `finally` block, and the `Dispose()` call of a
+`using` statement, run on both paths. A release that reaches zero during
+unwinding runs the object's finaliser at that point. An exception thrown while
+another is already unwinding replaces it. See
+[Exceptions](features/exceptions.md) for how this is built.
+
+An exception that nothing catches ends the program. The runtime prints
+`Unhandled exception. Type: message` on stderr, then the `[arc]` line, and the
+process exits with code 70. The counts on that line are balanced, because the
+unwind released everything.
+
+Not supported: exception filters (`catch ... when`) and throw expressions are
+rejected with `ARC3001`. There is no `InnerException`, `StackTrace`, or
+`ToString()`.
 
 ### `using` and `IDisposable`
 
@@ -368,9 +440,9 @@ not disposable.
 
 Differences from .NET:
 
-- There is no exception unwinding yet, so the cleanup runs on normal paths
-  only: block completion and `return` inside the body. A runtime abort, such as
-  an index-out-of-range exit, skips it.
+- The cleanup runs on every path out of the body: block completion, `return`,
+  and an exception. If the body throws and `Dispose()` then throws too, the
+  exception from `Dispose()` replaces the first one, as in .NET.
 - A `null` resource does nothing at scope exit, where .NET throws
   `NullReferenceException` from the `Dispose` call.
 - `using var x = ...;` declarations without a block, and multiple resources in
@@ -413,8 +485,9 @@ Implicit conversions:
 
 Explicit casts `(T)x` are accepted when `T` is `int`, `long`, `bool`, `string`,
 `char`, `float`, `double`, or a class or interface name. A cast to a class is
-**not checked** at run time; see [Known issues](#known-issues). Use `as` or
-`is` when the object might be of a different type.
+checked at run time and throws `InvalidCastException` when the object is not an
+instance of that class. A `null` passes the cast. Use `as` or `is` when the
+object might be of a different type.
 
 ## Literals
 
@@ -466,7 +539,8 @@ runtime is aiming at. It is smaller than the whole of C# and the whole of the
 items that target marks as full and items it marks as limited.
 
 - Generic features outside the subset described under [Generics](#generics).
-- Exceptions: `try`, `catch`, `finally`, and `throw`.
+- Exception filters (`catch ... when`), throw expressions, and the exception
+  types that are not listed under [Exceptions](#exceptions).
 - Enums, delegates, events, indexers, and records.
 - Lambdas, closures, local functions, `async`, `await`, and iterators.
 - LINQ.
@@ -500,18 +574,17 @@ says so. The finalisation contract is the runtime's compatibility profile.
 | `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false`. The weak reference does not keep the object alive |
 | `string.Length` | UTF-16 code units | UTF-8 bytes. `"héllo".Length` is 6, not 5. |
 | Formatting a `double` or `float` | Shortest round-trippable form, such as `0.3333333333333333` | Six significant digits, such as `0.333333` |
-| Null dereference | `NullReferenceException` | The process crashes with an access violation |
-| Integer division by zero | `DivideByZeroException` | The process crashes |
-| Array index out of range | `IndexOutOfRangeException`, which can be caught | A message, then the process exits with code 70 |
-| Invalid cast to a class | `InvalidCastException` | No check; the program continues with a wrongly typed reference |
+| Null dereference, index out of range, invalid class cast, integer division by zero, array type mismatch | `NullReferenceException`, `IndexOutOfRangeException`, `InvalidCastException`, `DivideByZeroException`, `ArrayTypeMismatchException`, all catchable | The same exceptions, all catchable. See [Exceptions](#exceptions) |
+| Unhandled exception | Prints the type, message, and stack trace, and exits with a non-zero code | Prints `Unhandled exception. Type: message`, then the `[arc]` line, and exits with code 70. There is no stack trace |
+| Exception members | `Message`, `InnerException`, `StackTrace`, `ToString()`, and more | `Message` only. There is no `InnerException`, because a field of its own type would trigger `ARC3100` |
+| Exception filters and throw expressions | Supported | `ARC3001` |
+| Exception while another is in flight | A `finally` block that throws replaces the exception in flight | The same. The replaced exception is released |
+| `catch` of a type that is not an exception | Compile error | Compile error from Roslyn |
+| Exception thrown by a finaliser | Terminates the process on current .NET | Reported on stderr as `[arc] exception in finaliser of T ignored: ...`, then ignored. Teardown continues, and the code that released the last reference does not see it |
 
 ## Known issues
 
-The current known defect has a workaround.
+No defects are recorded at the moment.
 
-| Issue | Workaround |
-|---|---|
-| **Class casts are unchecked.** `(Dog)animal` succeeds even when `animal` is a `Cat`. | Use `animal as Dog` and test for `null`. |
-
-If you find another difference, check it against `dotnet run` first, then
-record it here with a reproduction.
+If you find a difference that is not listed above, check it against
+`dotnet run` first, then record it here with a reproduction.

@@ -128,9 +128,75 @@ public static class DefiniteAssignment
                     assigned.Add(u.Resource.Id);
                     return VisitStmt(u.Body, assigned);
 
+                case BoundThrow t:
+                    if (t.Value != null)
+                    {
+                        VisitExpr(t.Value, assigned);
+                    }
+
+                    return false;
+
+                case BoundTry t:
+                    return VisitTry(t, assigned);
+
                 default:
                     return true;
             }
+        }
+
+        // A catch clause can start after any part of the body has run, so it
+        // sees only what was assigned before the try. What is assigned after the
+        // statement is what every path that completes has in common, plus
+        // whatever the finally block assigns.
+        private bool VisitTry(BoundTry t, HashSet<int> assigned)
+        {
+            var before = new HashSet<int>(assigned);
+            var paths = new List<HashSet<int>>();
+
+            var bodySet = new HashSet<int>(before);
+            if (VisitStmt(t.Body, bodySet))
+            {
+                paths.Add(bodySet);
+            }
+
+            foreach (var clause in t.Catches)
+            {
+                var catchSet = new HashSet<int>(before);
+                if (clause.Variable != null)
+                {
+                    catchSet.Add(clause.Variable.Id);
+                }
+
+                if (VisitStmt(clause.Body, catchSet))
+                {
+                    paths.Add(catchSet);
+                }
+            }
+
+            HashSet<int> after = paths.Count > 0 ? paths[0] : [];
+            foreach (var path in paths.Skip(1))
+            {
+                after.IntersectWith(path);
+            }
+
+            if (t.Finally != null)
+            {
+                var finallySet = new HashSet<int>(before);
+                if (!VisitStmt(t.Finally, finallySet))
+                {
+                    return false;
+                }
+
+                after.UnionWith(finallySet);
+            }
+
+            if (paths.Count == 0)
+            {
+                return false;
+            }
+
+            Replace(assigned, after);
+            return true;
         }
 
         private static void Replace(HashSet<int> dst, HashSet<int> src)

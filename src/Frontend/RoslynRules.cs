@@ -148,10 +148,11 @@ sealed partial class RoslynLowering
                 case SyntaxKind.ForEachVariableStatement:
                     Reject(node, "'foreach' is not supported");
                     break;
-                case SyntaxKind.TryStatement:
-                case SyntaxKind.ThrowStatement:
                 case SyntaxKind.ThrowExpression:
-                    Reject(node, "exceptions are not supported");
+                    Reject(node, "throw expressions are not supported: use a 'throw' statement");
+                    break;
+                case SyntaxKind.CatchFilterClause:
+                    Reject(node, "exception filters are not supported");
                     break;
                 case SyntaxKind.SwitchStatement:
                 case SyntaxKind.SwitchExpression:

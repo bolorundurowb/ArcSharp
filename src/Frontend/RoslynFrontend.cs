@@ -23,6 +23,7 @@ public static class RoslynFrontend
             // CompilationOptions.Usings is not applied to ordinary compilations.
             CSharpSyntaxTree.ParseText("global using System;", parse, path: "global-usings.cs")
         };
+        trees.AddRange(CoreLibrary(parse));
         foreach (var input in inputs)
         {
             var text = File.ReadAllText(input);
@@ -51,6 +52,19 @@ public static class RoslynFrontend
         lowering.ReportFinaliserRules();
         lowering.Lower(program);
         return program;
+    }
+
+    // The library written in ArcSharp C#, compiled with every program. The
+    // trees come first so that its types are lowered before the program's.
+    private static IEnumerable<SyntaxTree> CoreLibrary(CSharpParseOptions parse)
+    {
+        var assembly = typeof(RoslynFrontend).Assembly;
+        foreach (var name in assembly.GetManifestResourceNames().Where(name => name.StartsWith("corelib/", StringComparison.Ordinal)).Order())
+        {
+            using var stream = assembly.GetManifestResourceStream(name)!;
+            using var reader = new StreamReader(stream);
+            yield return CSharpSyntaxTree.ParseText(reader.ReadToEnd(), parse, path: name);
+        }
     }
 
     private static string? ReferenceAssembly()
