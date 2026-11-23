@@ -68,7 +68,7 @@ reclaimed.
 - Generic classes, structs, interfaces, and methods through monomorphisation,
   with basic type inference and generic constraints.
 - Constructors, instance and static methods and fields, and instance
-  auto-properties, constants, readonly fields, and expression-bodied methods
+  properties, indexers, constants, readonly fields, and expression-bodied methods
   and constructors. Calls support named arguments, optional defaults, and
   parameter arrays.
 - Structs with value semantics, including reference fields, nested structs,

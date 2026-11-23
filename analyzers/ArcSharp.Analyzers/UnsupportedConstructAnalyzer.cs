@@ -34,8 +34,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterOperationAction(AnalyzeOverloadedBinary, OperationKind.Binary);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
-        context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration);
-        context.RegisterSyntaxNodeAction(AnalyzeAccessor, AccessorKinds);
+        context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration, SyntaxKind.IndexerDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeStruct, SyntaxKind.StructDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeArrayType, SyntaxKind.ArrayType);
         context.RegisterSyntaxNodeAction(AnalyzeObjectCreation, SyntaxKind.ObjectCreationExpression);
@@ -83,7 +82,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleType,
         SyntaxKind.GlobalStatement,
         SyntaxKind.AttributeList,
-        SyntaxKind.IndexerDeclaration,
         SyntaxKind.EnumDeclaration,
         SyntaxKind.DelegateDeclaration,
         SyntaxKind.EventDeclaration,
@@ -112,15 +110,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.EventDeclaration,
         SyntaxKind.OperatorDeclaration,
         SyntaxKind.ConversionOperatorDeclaration
-    };
-
-    private static readonly SyntaxKind[] AccessorKinds =
-    {
-        SyntaxKind.GetAccessorDeclaration,
-        SyntaxKind.SetAccessorDeclaration,
-        SyntaxKind.InitAccessorDeclaration,
-        SyntaxKind.AddAccessorDeclaration,
-        SyntaxKind.RemoveAccessorDeclaration
     };
 
     private static void AnalyzeNode(SyntaxNodeAnalysisContext context)
@@ -230,7 +219,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleExpression or SyntaxKind.TupleType => "tuples are not supported",
         SyntaxKind.GlobalStatement => "top-level statements are not supported: declare a class with 'static void Main()'",
         SyntaxKind.AttributeList => "attributes are not supported",
-        SyntaxKind.IndexerDeclaration => "indexers are not supported",
         SyntaxKind.EnumDeclaration => "enums are not supported: use named constants or plain 'int' fields",
         SyntaxKind.DelegateDeclaration => "delegates are not supported",
         SyntaxKind.EventDeclaration or SyntaxKind.EventFieldDeclaration => "events are not supported",
@@ -238,7 +226,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.LocalFunctionStatement => "local functions are not supported",
         SyntaxKind.ArrowExpressionClause when node.Parent is not
             (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
-                or ConversionOperatorDeclarationSyntax) => "this expression-bodied member is not supported",
+                or ConversionOperatorDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
+                or AccessorDeclarationSyntax) => "this expression-bodied member is not supported",
         SyntaxKind.CollectionExpression => "collection expressions ('[...]') are not supported",
         SyntaxKind.ImplicitArrayCreationExpression => "array initialisers are not supported: use 'new T[n]'",
         _ => null
@@ -341,25 +330,18 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
 
     private static void AnalyzeProperty(SyntaxNodeAnalysisContext context)
     {
-        var p = (PropertyDeclarationSyntax)context.Node;
-        var hasSetter = p.AccessorList?.Accessors.Any(a =>
-            a.IsKind(SyntaxKind.SetAccessorDeclaration) || a.IsKind(SyntaxKind.InitAccessorDeclaration)) == true;
-        if (!hasSetter)
+        var property = (BasePropertyDeclarationSyntax)context.Node;
+        var expression = property switch
         {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, p.Identifier.GetLocation(),
-                "get-only auto-properties are not supported: declare 'get; set;'"));
-        }
-    }
-
-    private static void AnalyzeAccessor(SyntaxNodeAnalysisContext context)
-    {
-        var a = (AccessorDeclarationSyntax)context.Node;
-        if (a.Body != null || a.ExpressionBody != null)
+            PropertyDeclarationSyntax declaration => declaration.ExpressionBody,
+            IndexerDeclarationSyntax declaration => declaration.ExpressionBody,
+            _ => null
+        };
+        if (property.Parent is InterfaceDeclarationSyntax && (expression != null
+            || property.AccessorList?.Accessors.Any(accessor => accessor.Body != null || accessor.ExpressionBody != null) == true))
         {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, a.GetLocation(),
-                "properties with accessor bodies are not supported: use an auto-property"));
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                property.GetLocation(), "default interface accessors are not supported"));
         }
     }
 

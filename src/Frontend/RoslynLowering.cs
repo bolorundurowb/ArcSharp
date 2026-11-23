@@ -507,15 +507,18 @@ sealed partial class RoslynLowering
 
     private static bool HasAccessorBody(IMethodSymbol? accessor)
     {
-        if (accessor == null || accessor.IsImplicitlyDeclared)
+        if (accessor == null)
         {
             return false;
         }
 
         foreach (var reference in accessor.DeclaringSyntaxReferences)
         {
-            if (reference.GetSyntax() is AccessorDeclarationSyntax syntax
-                && (syntax.Body != null || syntax.ExpressionBody != null))
+            if (reference.GetSyntax() is AccessorDeclarationSyntax { Body: not null }
+                or AccessorDeclarationSyntax { ExpressionBody: not null }
+                or PropertyDeclarationSyntax { ExpressionBody: not null }
+                or IndexerDeclarationSyntax { ExpressionBody: not null }
+                or ArrowExpressionClauseSyntax)
             {
                 return true;
             }
@@ -542,47 +545,62 @@ sealed partial class RoslynLowering
         _fields[new MemberKey(field.OriginalDefinition, owner)] = created;
         if (field.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is VariableDeclaratorSyntax { Initializer: { } syntax })
         {
-            if (!_fieldInitialisers.TryGetValue(owner, out var initialisers))
-            {
-                initialisers = [];
-                _fieldInitialisers.Add(owner, initialisers);
-            }
-
-            initialisers.Add((created, syntax));
+            RegisterInitialiser(created, syntax);
         }
 
         return created;
     }
 
+    private void RegisterInitialiser(FieldSymbol field, EqualsValueClauseSyntax syntax)
+    {
+        if (!_fieldInitialisers.TryGetValue(field.Owner, out var initialisers))
+        {
+            initialisers = [];
+            _fieldInitialisers.Add(field.Owner, initialisers);
+        }
+
+        initialisers.Add((field, syntax));
+    }
+
     private void CreateProperty(TypeSymbol owner, IPropertySymbol property, List<FieldSymbol> fields, List<MethodSymbol> methods)
     {
-        if (property.IsIndexer || property.Parameters.Length > 0)
+        if (property.ReturnsByRef || property.ReturnsByRefReadonly)
         {
-            ReportOnce(property, "indexers are not supported yet");
+            ReportOnce(property, "ref-returning properties and indexers are not supported");
             return;
         }
 
         var location = property.Locations.FirstOrDefault();
-        if (HasAccessorBody(property.GetMethod) || HasAccessorBody(property.SetMethod))
+        var hasBody = HasAccessorBody(property.GetMethod) || HasAccessorBody(property.SetMethod);
+        if (owner.Kind == BoundKind.Interface && hasBody)
         {
-            ReportOnce(property, "accessor bodies are not supported yet: use an auto-property");
+            ReportOnce(property, "default interface accessors are not supported");
             return;
         }
 
         var mapped = MapType(property.Type, location);
         if (mapped.Kind == BoundKind.Struct)
         {
-            Report(location, "auto-properties of struct type are not supported yet: use a public field", DiagnosticCatalog.UnsupportedConstructId);
+            Report(location, "properties of struct type are not supported yet: use a public field", DiagnosticCatalog.UnsupportedConstructId);
+            return;
         }
 
-        var backing = new FieldSymbol
+        FieldSymbol? backing = null;
+        if (!hasBody && !property.IsAbstract && !property.IsIndexer && owner.Kind != BoundKind.Interface)
         {
-            Name = $"<{property.Name}>k__BackingField",
-            Type = mapped,
-            Owner = owner,
-            IsStatic = property.IsStatic
-        };
-        fields.Add(backing);
+            backing = new FieldSymbol
+            {
+                Name = $"<{property.Name}>k__BackingField",
+                Type = mapped,
+                Owner = owner,
+                IsStatic = property.IsStatic
+            };
+            fields.Add(backing);
+            if (property.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is PropertyDeclarationSyntax { Initializer: { } initialiser })
+            {
+                RegisterInitialiser(backing, initialiser);
+            }
+        }
         var prop = new PropertySymbol
         {
             Name = property.Name,
@@ -594,6 +612,23 @@ sealed partial class RoslynLowering
             BackingField = backing
         };
         owner.Properties.Add(prop);
+        if (backing == null)
+        {
+            if (property.GetMethod is { } declaredGetter)
+            {
+                CreateMethod(owner, declaredGetter, methods);
+                prop.Getter = _methods.GetValueOrDefault(new MemberKey(declaredGetter.OriginalDefinition, owner));
+            }
+
+            if (property.SetMethod is { } declaredSetter)
+            {
+                CreateMethod(owner, declaredSetter, methods);
+                prop.Setter = _methods.GetValueOrDefault(new MemberKey(declaredSetter.OriginalDefinition, owner));
+            }
+
+            return;
+        }
+
         if (property.GetMethod != null)
         {
             var getter = Accessor(owner, property.GetMethod, "get_" + property.Name, mapped, []);
@@ -620,6 +655,8 @@ sealed partial class RoslynLowering
             Owner = owner,
             ReturnType = returnType,
             IsStatic = roslyn.IsStatic,
+            IsVirtual = roslyn.IsVirtual,
+            IsOverride = roslyn.IsOverride,
             DeclarationLine = Line(roslyn),
             Parameters = parameters
         };
@@ -664,7 +701,8 @@ sealed partial class RoslynLowering
 
     private void CreateMethod(TypeSymbol owner, IMethodSymbol method, List<MethodSymbol> methods)
     {
-        if (method.IsImplicitlyDeclared && (method.MethodKind != MethodKind.Constructor || owner.Kind != BoundKind.Class))
+        if (method.IsImplicitlyDeclared && (method.MethodKind != MethodKind.Constructor || owner.Kind != BoundKind.Class)
+            && !HasAccessorBody(method))
         {
             return;
         }
@@ -772,6 +810,11 @@ sealed partial class RoslynLowering
 
     private static bool HasBody(IMethodSymbol method)
     {
+        if (method.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet)
+        {
+            return HasAccessorBody(method);
+        }
+
         foreach (var reference in method.DeclaringSyntaxReferences)
         {
             switch (reference.GetSyntax())

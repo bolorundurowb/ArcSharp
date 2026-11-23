@@ -52,7 +52,8 @@ public sealed class BoundCall : BoundExpr
     public required MethodSymbol Method;
     public List<BoundExpr> Arguments = [];
     public bool Virtual;
-    public bool Interface; // interface dispatch
+    public bool Interface;
+    public bool ReturnsAssignedValue; // interface dispatch
     public int Selector = -1; // global interface selector when Interface
 }
 

@@ -170,7 +170,8 @@ sealed partial class RoslynLowering
                     break;
                 case SyntaxKind.ArrowExpressionClause when node.Parent is not
                     (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
-                        or ConversionOperatorDeclarationSyntax):
+                        or ConversionOperatorDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
+                        or AccessorDeclarationSyntax):
                     Reject(node, "this expression-bodied member is not supported");
                     break;
                 case SyntaxKind.ConditionalExpression:
@@ -195,9 +196,6 @@ sealed partial class RoslynLowering
                 case SyntaxKind.EventDeclaration:
                 case SyntaxKind.EventFieldDeclaration:
                     Reject(node, "events are not supported");
-                    break;
-                case SyntaxKind.IndexerDeclaration:
-                    Reject(node, "indexers are not supported");
                     break;
             }
 

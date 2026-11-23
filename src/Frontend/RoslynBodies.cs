@@ -87,6 +87,13 @@ sealed partial class RoslynLowering
                 case IBlockOperation blockOperation:
                     AppendBlock(block, blockOperation);
                     break;
+                default:
+                    if (roslyn.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet)
+                    {
+                        AppendAccessorBody(block, model, syntax);
+                    }
+
+                    break;
             }
         }
 
@@ -96,6 +103,39 @@ sealed partial class RoslynLowering
         {
             _substitution[pair.Key] = pair.Value;
         }
+    }
+
+    private void AppendAccessorBody(BoundBlock block, SemanticModel model, SyntaxNode syntax)
+    {
+        var body = syntax switch
+        {
+            AccessorDeclarationSyntax accessor => (SyntaxNode?)accessor.Body ?? accessor.ExpressionBody,
+            PropertyDeclarationSyntax property => property.ExpressionBody,
+            IndexerDeclarationSyntax indexer => indexer.ExpressionBody,
+            ArrowExpressionClauseSyntax arrow => arrow,
+            _ => null
+        };
+        if (body != null && model.GetOperation(body) is IBlockOperation statements)
+        {
+            AppendBlock(block, statements);
+            return;
+        }
+
+        if (body is ArrowExpressionClauseSyntax expression && model.GetOperation(expression.Expression) is { } operation)
+        {
+            while (operation.Parent is IConversionOperation conversion && conversion.IsImplicit)
+            {
+                operation = conversion;
+            }
+
+            var value = LowerExpr(operation);
+            block.Statements.Add(_currentMethod.ReturnType == _void
+                ? new BoundExprStmt { Expression = value }
+                : new BoundReturn { Value = value });
+            return;
+        }
+
+        Report(syntax, "could not lower the accessor body", "ARC2001");
     }
 
     private void AppendFieldInitialisers(BoundBlock block, MethodSymbol method)
@@ -113,7 +153,13 @@ sealed partial class RoslynLowering
             }
 
             var model = _compilation.GetSemanticModel(syntax.SyntaxTree);
-            if (model.GetOperation(syntax) is not IFieldInitializerOperation operation)
+            var value = model.GetOperation(syntax) switch
+            {
+                IFieldInitializerOperation fieldInitialiser => fieldInitialiser.Value,
+                IPropertyInitializerOperation propertyInitialiser => propertyInitialiser.Value,
+                _ => null
+            };
+            if (value == null)
             {
                 Report(syntax, $"could not lower initialiser for '{field.Name}'", "ARC2001");
                 continue;
@@ -127,7 +173,7 @@ sealed partial class RoslynLowering
             };
             block.Statements.Add(new BoundExprStmt
             {
-                Expression = new BoundAssign { Target = target, Value = LowerExpr(operation.Value), Type = field.Type }
+                Expression = new BoundAssign { Target = target, Value = LowerExpr(value), Type = field.Type }
             });
         }
     }
@@ -698,7 +744,7 @@ sealed partial class RoslynLowering
             instance = operation.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(operation.Instance);
         }
 
-        return new BoundCall { Receiver = instance, Method = getter, Arguments = [], Type = getter.ReturnType };
+        return BindMemberCall(instance, getter, LowerArguments(operation.Arguments, getter));
     }
 
     private BoundExpr LowerInvocation(IInvocationOperation call)
@@ -744,6 +790,11 @@ sealed partial class RoslynLowering
             receiver = call.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(call.Instance);
         }
 
+        return BindMemberCall(receiver, method, LowerArguments(call.Arguments, method));
+    }
+
+    private BoundCall BindMemberCall(BoundExpr? receiver, MethodSymbol method, List<BoundExpr> arguments)
+    {
         var interfaceCall = false;
         var selector = 0;
         if (method.Owner.Kind == BoundKind.Interface)
@@ -764,18 +815,16 @@ sealed partial class RoslynLowering
             }
         }
 
-        var bound = new BoundCall
+        return new BoundCall
         {
             Receiver = receiver,
             Method = method,
-            Arguments = LowerArguments(call.Arguments, method),
+            Arguments = arguments,
             Type = method.ReturnType,
             Interface = interfaceCall,
             Selector = selector,
             Virtual = !interfaceCall && (method.IsVirtual || method.IsOverride)
         };
-
-        return bound;
     }
 
     private BoundExpr LowerConsole(IInvocationOperation call)
@@ -1381,13 +1430,12 @@ sealed partial class RoslynLowering
             receiver = property.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(property.Instance);
         }
 
-        return new BoundCall
-        {
-            Receiver = receiver,
-            Method = setter,
-            Arguments = [value],
-            Type = _void
-        };
+        var arguments = LowerArguments(property.Arguments, setter);
+        arguments.Add(value);
+        var call = BindMemberCall(receiver, setter, arguments);
+        call.Type = setter.Parameters[^1].Type;
+        call.ReturnsAssignedValue = true;
+        return call;
     }
 
     private List<BoundExpr> LowerArguments(ImmutableArray<IArgumentOperation> arguments, MethodSymbol method)

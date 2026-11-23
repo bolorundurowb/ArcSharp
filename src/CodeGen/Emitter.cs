@@ -1850,7 +1850,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
-        var argVals = EmitArguments(c.Arguments, c.Method.Parameters, pins);
+        var argVals = EmitArguments(c.Arguments, c.Method.Parameters, pins, out var lastValue);
         if (c.Receiver != null && recv != null)
         {
             // A call on null fails after the arguments have been evaluated.
@@ -1910,11 +1910,25 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         EmitPendingCheck();
         EndPins(pins);
+        if (c.ReturnsAssignedValue)
+        {
+            if (c.Type.IsReferenceType)
+            {
+                Do($"call void @arc_retain(i8* {lastValue})");
+            }
+
+            return lastValue;
+        }
+
         return result;
     }
 
-    private string[] EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins)
+    private string[] EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins) =>
+        EmitArguments(args, parameters, pins, out _);
+
+    private string[] EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins, out string lastValue)
     {
+        lastValue = "";
         var argVals = new string[args.Count];
         for (var i = 0; i < args.Count; i++)
         {
@@ -1938,6 +1952,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 TrackReferenceTemp(a, v);
 
                 argVals[ordinal] = $"{a.Type.LlvmType} {v}";
+                if (ordinal == args.Count - 1)
+                {
+                    lastValue = v;
+                }
             }
         }
 

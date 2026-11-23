@@ -210,7 +210,7 @@ Supported:
 - `virtual` and `override` methods, dispatched through a virtual table.
 - The modifiers `public`, `private`, `protected`, `internal`, `static`, and
   `abstract` on a class, and `new` on a member.
-- Instance and static auto-properties with both accessors:
+- Instance and static properties and indexers with accessor bodies, and auto-properties:
   `public string Name { get; set; }` and `public static int Count { get; set; }`.
 - A finaliser, `~T()`, with no parameters and no modifiers. See
   [Finalisers](#finalisers).
@@ -220,9 +220,9 @@ types can contain nested types. Methods, constructors and supported operators
 can use an expression body (`=> expr`).
 
 Not supported yet: `sealed`, `partial`, static constructors, types nested in
-generic types, expression-bodied properties and accessors,
-properties with accessor bodies, get-only auto-properties, indexers, overloaded updates and extension
-methods. Method and constructor calls accept
+generic types,
+default interface accessor bodies, ref-returning properties and indexers,
+overloaded updates, and extension methods. Method and constructor calls accept
 named arguments, optional defaults and `params T[]`.
 
 Access modifiers are accepted but **not enforced**. Code in one class can read
@@ -556,7 +556,7 @@ items that target marks as full and items it marks as limited.
 - Generic features outside the subset described under [Generics](#generics).
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
-- Enums, delegates, events, indexers, and records.
+- Enums, delegates, events, and records.
 - Lambdas, closures, local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
