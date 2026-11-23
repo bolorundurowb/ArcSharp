@@ -1,12 +1,17 @@
-// Expected: ARC3001 struct return values are not supported.
-struct Point {
-    public int x;
+struct Point
+{
+    public int X;
 }
-class Program {
-    static Point Make() {
-        Point p;
-        return p;
+
+static class Program
+{
+    static Point Make()
+    {
+        Point point;
+        return point;
     }
-    static void Main() {
+
+    static void Main()
+    {
     }
 }

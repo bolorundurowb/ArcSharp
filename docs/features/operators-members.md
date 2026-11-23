@@ -3,8 +3,8 @@
 ArcSharp supports direct calls to user-defined unary, binary and conversion
 operators with supported by-value signatures. Roslyn picks the method and
 the compiler emits a static call. Conversion symbols include the return type
-to distinguish conversions with the same source type. Overloaded updates,
-short-circuiting operators and struct signatures are still planned.
+to distinguish conversions with the same source type. Overloaded updates
+and short-circuiting operators are still planned.
 
 Methods, constructors and supported operators can use expression bodies.
 Roslyn represents the expression body as a block with the appropriate

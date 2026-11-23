@@ -73,7 +73,7 @@ reclaimed.
   and constructors. Calls support named arguments, optional defaults, and
   parameter arrays. Static constructors run lazily on first use.
 - Structs with value semantics, including reference fields, nested structs,
-  and structs inside classes.
+  structs inside classes, and struct parameters and return values.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
   `string`, enums, and single-dimensional arrays.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept

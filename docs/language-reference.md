@@ -112,7 +112,8 @@ class Program
 Supported:
 
 - Instance fields of value, reference, struct, and `WeakReference<T>` type.
-- Constructors, instance methods, and `ref`/`out`/`in` parameters.
+- Constructors, instance methods, return values, and parameters passed by value
+  or by `ref`/`out`/`in`.
 - Struct locals, struct fields inside classes and other structs, and struct
   assignment.
 - Copying a struct retains its reference fields; dropping a struct value
@@ -120,8 +121,7 @@ Supported:
 
 Not supported yet, each reported as `ARC3001`:
 
-- Arrays of structs, struct return values, static struct fields, and by-value
-  struct parameters.
+- Arrays of structs and static struct fields.
 - Properties whose type is a struct, and printing a struct value with
   `Console.Write` or `Console.WriteLine`.
 - `virtual` or `override` members on a struct, and interfaces on a struct.
@@ -474,7 +474,7 @@ interface slots. See [Base interfaces](features/base-interfaces.md).
 ## Expressions and operators
 
 User-defined unary, binary and conversion operators work with supported
-by-value signatures. Struct signatures, overloaded compound assignment,
+by-value signatures, including struct values. Overloaded compound assignment,
 increments and decrements, and overloaded `&&` and `||` remain unsupported.
 
 | Category | Operators and forms |

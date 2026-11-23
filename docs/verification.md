@@ -28,10 +28,10 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (61 samples, Windows x64, 23 November 2026)
+## Results (62 samples, Windows x64, 23 November 2026)
 
-`tools\verify.ps1` reported **119 passed, 0 failed** with the .NET 11.0.100 SDK:
-61 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 40 must-fail
+`tools\verify.ps1` reported **120 passed, 0 failed** with the .NET 11.0.100 SDK:
+62 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 40 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 5 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests, and one
 reference-surface check. `live=0` means every object was reclaimed.
@@ -86,6 +86,7 @@ asserts on purpose.
 | `exceptions_basic` | `try`, `catch`, `finally`, a `throw` caught in the same method and one caught across a call, a runtime division by zero, and a catch clause that does not match | alloc=16 dead=16 freed=16 **live=0** | `outer caught inner` |
 | `exceptions_unwind` | cleanup on every unwind path: argument temporaries, locals across frames, a throwing constructor, a store that throws, a concatenation that throws, `return` through `finally`, nested `finally`, rethrow, a `finally` that replaces an exception, and a thrown stored exception | alloc=97 dead=97 freed=97 **live=0** | `exceptions unwind PASS` |
 | `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, `throw null`, and a base-class catch | alloc=53 dead=53 freed=53 **live=0** | `exceptions runtime PASS` |
+| `struct_calls` | Argument snapshots, interface calls, result copies before finally, and ARC cleanup when a later argument throws | alloc=6 dead=6 freed=6 **live=0** | `struct calls PASS` |
 | `base_interfaces` | Diamond inheritance, explicit implementations and inherited virtual overrides | alloc=2 dead=2 freed=2 **live=0** | `base interfaces PASS` |
 | `enums` | Enum widths, struct copies, arrays, switches, compound updates and unsigned constants | alloc=2 dead=2 freed=2 **live=0** | `enums PASS` |
 | `static_constructor` | First-use initialisation, argument order, recursive access, and cached failure with its cause | alloc=11 dead=11 freed=11 **live=0** | `static constructor PASS` |

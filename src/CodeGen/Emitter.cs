@@ -591,11 +591,24 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var ps = new List<string> { "i8*" };
         foreach (var p in m.Parameters)
         {
-            ps.Add(p.RefKind != RefKind.None ? p.Type.LlvmType + "*" : p.Type.LlvmType);
+            ps.Add(ParameterAbiType(p));
         }
 
-        return $"{m.ReturnType.LlvmType} ({string.Join(", ", ps)})*";
+        if (m.ReturnType.Kind == TypeKind.Struct)
+        {
+            ps.Add(m.ReturnType.LlvmType + "*");
+        }
+
+        return $"{ReturnAbiType(m)} ({string.Join(", ", ps)})*";
     }
+
+    private static string ParameterAbiType(ParamSymbol parameter) =>
+        parameter.RefKind != RefKind.None || parameter.Type.Kind == TypeKind.Struct
+            ? parameter.Type.LlvmType + "*"
+            : parameter.Type.LlvmType;
+
+    private static string ReturnAbiType(MethodSymbol method) =>
+        method.ReturnType.Kind == TypeKind.Struct ? "void" : method.ReturnType.LlvmType;
 
     private void EmitMethod(BoundMethodBody b, StringBuilder fns)
     {
@@ -625,8 +638,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         foreach (var p in m.Parameters)
         {
-            var ty = p.RefKind != RefKind.None ? p.Type.LlvmType + "*" : p.Type.LlvmType;
-            ps.Add($"{ty} %a{p.Index}");
+            ps.Add($"{ParameterAbiType(p)} %a{p.Index}");
+        }
+
+        if (m.ReturnType.Kind == TypeKind.Struct)
+        {
+            ps.Add($"{m.ReturnType.LlvmType}* %struct.result");
         }
 
         if (!m.IsStatic)
@@ -653,7 +670,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 _entry.Add($"  %arg{p.Index} = alloca {p.Type.LlvmType}*");
                 _entry.Add($"  store {p.Type.LlvmType}* %a{p.Index}, {p.Type.LlvmType}** %arg{p.Index}");
             }
-            else
+            else if (p.Type.Kind != TypeKind.Struct)
             {
                 _entry.Add($"  %arg{p.Index} = alloca {p.Type.LlvmType}");
                 _entry.Add($"  store {p.Type.LlvmType} %a{p.Index}, {p.Type.LlvmType}* %arg{p.Index}");
@@ -683,7 +700,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             _entry.Add($"  store i8* null, i8** %moved.arg{owner.Id}");
         }
 
-        var isVoid = m.ReturnType.Kind == TypeKind.Void;
+        var returnType = ReturnAbiType(m);
+        var isVoid = returnType == "void";
         if (!isVoid)
         {
             _entry.Add($"  %retval = alloca {m.ReturnType.LlvmType}");
@@ -781,7 +799,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             Term($"ret {m.ReturnType.LlvmType} {r}");
         }
 
-        fns.AppendLine($"define {m.ReturnType.LlvmType} @{m.MangledName}({string.Join(", ", ps)}) {{");
+        fns.AppendLine($"define {returnType} @{m.MangledName}({string.Join(", ", ps)}) {{");
         fns.AppendLine("entry:");
         foreach (var l in _entry)
         {
@@ -902,10 +920,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (n.Ctor != null)
         {
             var pins = BeginPins();
-            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
+            var (argVals, _, copies) = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"{ty}* {slot}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
             EmitPendingCheck();
+            ReleaseArgumentCopies(copies);
             EndPins(pins);
         }
 
@@ -1115,24 +1134,24 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (r.Value != null)
         {
             var v = EmitR(r.Value);
-            ReleaseTemps(mark);
-            ReleaseStructTemps(smark);
-            if (_curMethod.ReturnType.IsReferenceType && _regions.Exists(region => region.Cleanup != null))
+            var type = _curMethod.ReturnType;
+            if (type.Kind == TypeKind.Struct)
+            {
+                CopyStruct(type, "%struct.result", v);
+            }
+            else if (type.IsReferenceType && _regions.Exists(region => region.Cleanup != null))
             {
                 held = NewHiddenSlot();
                 Do($"store i8* {v}, i8** {held}");
             }
             else
             {
-                StoreRet(v, _curMethod.ReturnType);
+                StoreRet(v, type);
             }
         }
-        else
-        {
-            ReleaseTemps(mark);
-            ReleaseStructTemps(smark);
-        }
 
+        ReleaseTemps(mark);
+        ReleaseStructTemps(smark);
         EmitRegionCleanups(0);
         if (_terminated)
         {
@@ -1654,7 +1673,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             // passed by reference).
             if (!p.ByRef)
             {
-                return $"%arg{p.Symbol.Index}";
+                return $"%a{p.Symbol.Index}";
             }
 
             return Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}");
@@ -1690,7 +1709,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                     return Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}");
                 }
 
-                return $"%arg{p.Symbol.Index}";
+                return p.Type.Kind == TypeKind.Struct ? $"%a{p.Symbol.Index}" : $"%arg{p.Symbol.Index}";
             case BoundThis th when th.Type.Kind == TypeKind.Struct:
             {
                 var ty = th.Type.LlvmType;
@@ -1904,7 +1923,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
-        var argVals = EmitArguments(c.Arguments, c.Method.Parameters, pins, out var lastValue);
+        var (argVals, lastValue, copies) = EmitArguments(c.Arguments, c.Method.Parameters, pins);
         if (c.Receiver != null && recv != null)
         {
             // A call on null fails after the arguments have been evaluated.
@@ -1912,8 +1931,15 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         var m = c.Method;
-        var ret = m.ReturnType.LlvmType;
-        var isVoid = m.ReturnType.Kind == TypeKind.Void;
+        var ret = ReturnAbiType(m);
+        var isVoid = ret == "void";
+        string? structResult = null;
+        if (m.ReturnType.Kind == TypeKind.Struct)
+        {
+            structResult = NewStructTemp(m.ReturnType);
+            argVals = [..argVals, $"{m.ReturnType.LlvmType}* {structResult}"];
+        }
+
         string result;
 
         if (c.Virtual || c.Interface)
@@ -1963,6 +1989,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         EmitPendingCheck();
+        ReleaseArgumentCopies(copies);
         EndPins(pins);
         if (c.ReturnsAssignedValue)
         {
@@ -1974,15 +2001,14 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             return lastValue;
         }
 
-        return result;
+        return structResult ?? result;
     }
 
-    private string[] EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins) =>
-        EmitArguments(args, parameters, pins, out _);
-
-    private string[] EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins, out string lastValue)
+    private (string[] Values, string LastValue, List<(TypeSymbol Type, string Addr)> Copies)
+        EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins)
     {
-        lastValue = "";
+        var lastValue = "";
+        var copies = new List<(TypeSymbol Type, string Addr)>();
         var argVals = new string[args.Count];
         for (var i = 0; i < args.Count; i++)
         {
@@ -2000,6 +2026,14 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 var addr = bra.Kind == RefKind.In ? EmitInAddress(bra.Lvalue, pins) : EmitManagedAddress(bra.Lvalue, pins);
                 argVals[ordinal] = $"{p.Type.LlvmType}* {addr}";
             }
+            else if (p?.Type.Kind == TypeKind.Struct)
+            {
+                var source = EmitR(a);
+                var copy = NewStructTemp(p.Type);
+                CopyStruct(p.Type, copy, source);
+                copies.Add((p.Type, copy));
+                argVals[ordinal] = $"{p.Type.LlvmType}* {copy}";
+            }
             else
             {
                 var v = EmitR(a);
@@ -2013,7 +2047,33 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
-        return argVals;
+        return (argVals, lastValue, copies);
+    }
+
+    private string NewStructTemp(TypeSymbol type)
+    {
+        var address = T();
+        var ty = type.LlvmType;
+        _entry.Add($"  {address} = alloca {ty}");
+        Do($"store {ty} zeroinitializer, {ty}* {address}");
+        _stmtStructTemps.Add((type, address));
+        return address;
+    }
+
+    private void CopyStruct(TypeSymbol type, string destination, string source)
+    {
+        var ty = type.LlvmType;
+        Do($"call void @{type.Name}__copy({ty}* {destination}, {ty}* {source})");
+    }
+
+    private void ReleaseArgumentCopies(List<(TypeSymbol Type, string Addr)> copies)
+    {
+        for (var i = copies.Count - 1; i >= 0; i--)
+        {
+            var (type, address) = copies[i];
+            Do($"call void @{type.Name}__drop({type.LlvmType}* {address})");
+            _stmtStructTemps.Remove(copies[i]);
+        }
     }
 
     private string EmitInAddress(BoundExpr value, List<string> pins)
@@ -2064,7 +2124,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         var pins = BeginPins();
-        var argVals = n.Ctor == null ? [] : EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
+        var (argVals, _, copies) = n.Ctor == null
+            ? (Array.Empty<string>(), "", new List<(TypeSymbol Type, string Addr)>())
+            : EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
         if (n.Type.HasExplicitStaticConstructor)
         {
             EmitTypeInitialiserCall(n.Type);
@@ -2080,6 +2142,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             var args = string.Join(", ", new[] { $"i8* {obj}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
             EmitPendingCheck();
+            ReleaseArgumentCopies(copies);
             _stmtTemps.RemoveAt(objIndex);
         }
 
@@ -2093,20 +2156,16 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private string EmitNewObjectValue(BoundNewObject n)
     {
         var ty = n.Type.LlvmType;
-        var temp = Inst($"alloca {ty}");
-        _stmtStructTemps.Add((n.Type, temp));
-        if (n.Type.InstanceFields.Count > 0)
-        {
-            Do($"store {ty} zeroinitializer, {ty}* {temp}");
-        }
+        var temp = NewStructTemp(n.Type);
 
         if (n.Ctor != null)
         {
             var pins = BeginPins();
-            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
+            var (argVals, _, copies) = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"{ty}* {temp}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
             EmitPendingCheck();
+            ReleaseArgumentCopies(copies);
             EndPins(pins);
         }
 
@@ -2608,7 +2667,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             BoundLocal lo => _localSlot[lo.Symbol.Id],
             BoundParam p => p.ByRef
                 ? Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}")
-                : $"%arg{p.Symbol.Index}",
+                : $"%a{p.Symbol.Index}",
             BoundFieldAccess fa => EmitStructFieldAddress(fa),
             _ => "null"
         };

@@ -740,11 +740,6 @@ sealed partial class RoslynLowering
         var returnType = method.MethodKind == MethodKind.Constructor
             ? _void
             : MapType(method.ReturnType, method.Locations.FirstOrDefault());
-        if (method.MethodKind != MethodKind.Constructor && returnType.Kind == BoundKind.Struct)
-        {
-            ReportOnce(method, "struct return values are not supported yet: write through an 'out' parameter or a field instead");
-        }
-
         var created = new MethodSymbol
         {
             Name = method.MethodKind switch
@@ -768,13 +763,6 @@ sealed partial class RoslynLowering
         {
             var parameterType = MapType(parameter.Type, parameter.Locations.FirstOrDefault());
             var refKind = MapRef(parameter.RefKind);
-            if (parameterType.Kind == BoundKind.Struct && refKind == RefKind.None)
-            {
-                Report(parameter.Locations.FirstOrDefault(),
-                    $"parameter '{parameter.Name}' of struct type '{parameterType}' must be passed with 'ref', 'out', or 'in'",
-                    DiagnosticCatalog.UnsupportedConstructId);
-            }
-
             created.Parameters.Add(new ParamSymbol
             {
                 Name = parameter.Name,
@@ -1164,11 +1152,6 @@ sealed partial class RoslynLowering
         {
             var parameterType = MapType(parameter.Type, location);
             var refKind = MapRef(parameter.RefKind);
-            if (parameterType.Kind == BoundKind.Struct && refKind == RefKind.None)
-            {
-                Report(location, "generic struct arguments must be passed with 'ref', 'out', or 'in'", DiagnosticCatalog.UnsupportedConstructId);
-            }
-
             created.Parameters.Add(new ParamSymbol
             {
                 Name = parameter.Name,
@@ -1176,11 +1159,6 @@ sealed partial class RoslynLowering
                 RefKind = refKind,
                 Index = index++
             });
-        }
-
-        if (created.ReturnType.Kind == BoundKind.Struct)
-        {
-            Report(location, "struct return values are not supported yet", DiagnosticCatalog.UnsupportedConstructId);
         }
 
         owner.Methods.Add(created);

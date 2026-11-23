@@ -403,8 +403,8 @@ uses. Each step below ships on its own.
    are implemented.
 2. Operators: [bitwise operators and shifts](features/bitwise.md),
    [checked arithmetic](features/checked.md), and [direct operator overloads](features/operators-members.md)
-   are implemented. Overloaded compound assignment, increment and decrement,
-   short-circuiting operators and struct operator signatures still need support.
+   are implemented. Overloaded compound assignment, increment, decrement
+   and short-circuiting operators still need support.
 3. Member forms: [static constructors](features/static-constructors.md),
    [constants, readonly fields, nested types and expression-bodied methods and
    constructors](features/operators-members.md),
@@ -413,9 +413,9 @@ uses. Each step below ships on its own.
    implemented within the documented subset.
 4. [Enums](features/enums.md) and [indexer get and set](features/accessors.md)
    are implemented within the documented subset.
-5. The remaining struct forms: arrays of structs, struct returns, static struct
-   fields, by-value struct parameters, struct-typed properties,
-   `virtual`/`override` and interfaces on structs, and printing a struct.
+5. [Struct parameters and return values](features/struct-calls.md) are implemented.
+   Arrays of structs, static struct fields, struct-typed properties,
+   `virtual`/`override` and interfaces on structs, and printing a struct remain.
 6. Records with the members C# synthesises and pattern matching.
    [Base interface lists and explicit implementations](features/base-interfaces.md)
    are implemented.

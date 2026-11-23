@@ -206,13 +206,6 @@ sealed partial class RoslynLowering
                 Reject(node, "ref locals and ref returns are not supported: a managed reference must not outlive the call");
             }
 
-            if (_model.GetDeclaredSymbol(node) is IMethodSymbol method
-                && method.ReturnType.TypeKind == RoslynKind.Struct
-                && method.ReturnType.SpecialType == SpecialType.None)
-            {
-                Reject(node, "struct return values are not supported yet: write through an 'out' parameter or a field instead");
-            }
-
             base.VisitMethodDeclaration(node);
         }
 
