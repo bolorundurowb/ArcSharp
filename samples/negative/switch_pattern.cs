@@ -1,16 +1,18 @@
-class Tag
+class Sequence
 {
-    public int Count;
+    public int Length => 1;
+
+    public int this[int index] => index;
 }
 
 static class Program
 {
     static void Main()
     {
-        Tag value = new Tag();
-        switch (value)
+        var values = new Sequence();
+        switch (values)
         {
-            case { Count: 4 }:
+            case [4]:
                 break;
         }
     }

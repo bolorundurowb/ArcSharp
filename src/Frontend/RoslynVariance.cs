@@ -34,11 +34,15 @@ sealed partial class RoslynLowering
 
                         // Both interfaces specialise the same definition, so
                         // their declared methods keep the same ordinal.
-                        for (var i = 0; i < source.Methods.Count; i++)
+                        // Closed generic methods are added to each interface as
+                        // they are used, so only the declared methods line up.
+                        var sourceMethods = source.Methods.Where(method => method.TypeArguments.Count == 0).ToList();
+                        var targetMethods = target.Methods.Where(method => method.TypeArguments.Count == 0).ToList();
+                        for (var i = 0; i < sourceMethods.Count; i++)
                         {
-                            if (_selectors.TryGetValue(source.Methods[i], out var sourceSlot)
+                            if (_selectors.TryGetValue(sourceMethods[i], out var sourceSlot)
                                 && type.InterfaceImpl.TryGetValue(sourceSlot, out var implementation)
-                                && _selectors.TryGetValue(target.Methods[i], out var targetSlot))
+                                && _selectors.TryGetValue(targetMethods[i], out var targetSlot))
                             {
                                 type.InterfaceImpl.TryAdd(targetSlot, implementation);
                             }

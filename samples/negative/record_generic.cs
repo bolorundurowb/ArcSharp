@@ -1,11 +1,8 @@
-class Item
-{
-}
+record Box<T>(T Value);
 
 static class Program
 {
     static void Main()
     {
-        Console.WriteLine(new Item());
     }
 }

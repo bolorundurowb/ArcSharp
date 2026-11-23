@@ -177,9 +177,11 @@ sealed partial class RoslynLowering
                 case SyntaxKind.AwaitExpression:
                     Reject(node, "'await' is not supported");
                     break;
-                case SyntaxKind.RecordDeclaration:
                 case SyntaxKind.RecordStructDeclaration:
-                    Reject(node, "records are not supported");
+                    Reject(node, "record structs are not supported: declare a record class");
+                    break;
+                case SyntaxKind.RecordDeclaration when node is RecordDeclarationSyntax { TypeParameterList: not null }:
+                    Reject(node, "generic records are not supported");
                     break;
                 case SyntaxKind.DelegateDeclaration:
                     Reject(node, "delegates are not supported");

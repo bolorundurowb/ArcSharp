@@ -160,6 +160,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                      "declare i8* @arc_weakref_try_get(i8*)",
                      "declare void @arc_weakref_set(i8*, i8*)",
             "declare i8* @arc_array_new(i64, i32, %TypeInfo*, i8*)",
+            "declare i8* @arc_array_slice_new(i8*, i64, i8*)",
             "declare i64 @arc_array_length(i8*)",
             "declare void @arc_bounds_check(i8*, i64)",
             "declare void @arc_array_store_check(i8*, i64, i8*)",
@@ -168,12 +169,14 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                      "declare i8* @arc_str_concat(i8*, i8*)",
                      "declare i32 @arc_str_equal(i8*, i8*)",
                      "declare i8* @arc_str_from_int(i64)",
+                     "declare i8* @arc_str_from_uint(i64)",
                      "declare i8* @arc_str_from_char(i32)",
                      "declare i8* @arc_str_from_bool(i32)",
                      "declare i8* @arc_str_from_float(float)",
                      "declare i8* @arc_str_from_double(double)",
                      "declare void @arc_console_write(i8*, i32)",
                      "declare void @arc_console_write_int(i64, i32)",
+                     "declare void @arc_console_write_uint(i64, i32)",
                      "declare void @arc_console_write_char(i32, i32)",
                      "declare void @arc_console_write_bool(i32, i32)",
                      "declare void @arc_console_write_float(float, i32)",
@@ -191,6 +194,21 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             "declare void @arc_cast_check(i8*, %TypeInfo*)",
             "declare void @arc_div_check(i64, i64, i32)",
             "declare void @arc_overflow_check(i32)",
+            "declare void @arc_dec_set(i8*, i64, i64)",
+            "declare void @arc_dec_add(i8*, i8*, i8*)",
+            "declare void @arc_dec_sub(i8*, i8*, i8*)",
+            "declare void @arc_dec_mul(i8*, i8*, i8*)",
+            "declare void @arc_dec_div(i8*, i8*, i8*)",
+            "declare void @arc_dec_rem(i8*, i8*, i8*)",
+            "declare void @arc_dec_neg(i8*, i8*)",
+            "declare i32 @arc_dec_cmp(i8*, i8*)",
+            "declare void @arc_dec_from_i64(i64, i8*)",
+            "declare void @arc_dec_from_u64(i64, i8*)",
+            "declare void @arc_dec_from_double(double, i8*)",
+            "declare i64 @arc_dec_to_i64(i8*, i64, i64)",
+            "declare i64 @arc_dec_to_u64(i8*)",
+            "declare double @arc_dec_to_double(i8*)",
+            "declare i8* @arc_dec_to_str(i8*)",
             "declare float @llvm.trunc.f32(float)",
             "declare double @llvm.trunc.f64(double)",
             "@arc_exception = external global i8*",
@@ -507,7 +525,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private int NextGen() => ++_genTmp;
 
     // Byte-offset field address in generated (non-_body) code. Classes address
-    // fields by byte offset; structs are blobs of one 8-byte slot per field.
+    // fields by byte offset; structs are blobs of 8-byte slots, and a nested struct field spans several.
     // Every access is emitted as its own instruction so that the result is a
     // plain local value, usable as any pointer operand.
     private string FieldAddrFromBytes(StringBuilder into, string basePtr, FieldSymbol f)
@@ -515,7 +533,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var n = NextGen();
         if (f.Owner.Kind == TypeKind.Struct)
         {
-            into.AppendLine($"  %gp{n} = getelementptr {f.Owner.LlvmType}, {f.Owner.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+            into.AppendLine($"  %gp{n} = getelementptr {f.Owner.LlvmType}, {f.Owner.LlvmType}* {basePtr}, i64 0, i64 {f.ByteOffset / 8}");
             into.AppendLine($"  %fp{n} = bitcast i64* %gp{n} to {f.Type.LlvmType}*");
             return $"%fp{n}";
         }
@@ -611,7 +629,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private string FieldAddrFromGep(StringBuilder fns, string basePtr, TypeSymbol owner, FieldSymbol f)
     {
         var n = NextGen();
-        fns.AppendLine($"  %gp{n} = getelementptr {owner.LlvmType}, {owner.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+        fns.AppendLine($"  %gp{n} = getelementptr {owner.LlvmType}, {owner.LlvmType}* {basePtr}, i64 0, i64 {f.ByteOffset / 8}");
         fns.AppendLine($"  %fp{n} = bitcast i64* %gp{n} to {f.Type.LlvmType}*");
         return $"%fp{n}";
     }
@@ -848,16 +866,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private static string DefaultVal(TypeSymbol t) =>
         t.Kind == TypeKind.Struct ? "zeroinitializer" : t.IsReferenceType ? "null" : IsFloatType(t) ? "0.0" : "0";
 
-    private static string FormatFloatConstant(string s)
-    {
-        // LLVM float/double constants must contain a decimal point or exponent.
-        if (s.Contains('.') || s.Contains('e', StringComparison.OrdinalIgnoreCase))
-        {
-            return s;
-        }
-
-        return s + ".0";
-    }
+    // LLVM reads a decimal floating-point constant only when it has a point, and rejects 1E-05.
+    // The hexadecimal form of the IEEE bits is exact and also covers NaN and infinity.
+    private static string FormatFloatConstant(double value) =>
+        "0x" + BitConverter.DoubleToInt64Bits(value).ToString("X16");
 
     private void StoreRet(string val, TypeSymbol t) => Do($"store {t.LlvmType} {val}, {t.LlvmType}* %retval");
 
@@ -1632,10 +1644,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundNewObject n: return EmitNewObject(n);
             case BoundNewArray a: return EmitNewArray(a);
             case BoundIndex ix: return EmitIndexRead(ix);
+            case BoundArraySlice slice: return EmitArraySlice(slice);
             case BoundBinary b: return EmitBinary(b);
             case BoundUnary u: return EmitUnary(u);
             case BoundAssign asn: return EmitAssign(asn);
             case BoundIncrement increment: return EmitIncrement(increment);
+            case BoundSequence sequence: return EmitSequence(sequence);
             case BoundOperatorUpdate update: return EmitOperatorUpdate(update);
             case BoundNumericCompound compound: return EmitNumericCompound(compound);
             case BoundStringCompound compound: return EmitStringCompound(compound);
@@ -1648,6 +1662,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundPatternInput input: return EmitPatternInput(input);
             case BoundPatternBinding binding: return EmitPatternBinding(binding);
             case BoundAs a: return EmitAs(a);
+            case BoundSameType same: return EmitSameType(same);
+            case BoundDecimalOp decimalOp: return EmitDecimalOp(decimalOp);
             case BoundByRefArg br: return EmitR(br.Lvalue);
             case BoundWeakRefNew wn: return EmitWeakRefNew(wn);
             case BoundWeakRefTryGet wt: return EmitWeakRefTryGet(wt);
@@ -1669,12 +1685,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case Syntax.LiteralKind.ULong: return ((ulong)l.IntValue).ToString();
             case Syntax.LiteralKind.Float:
             {
-                var d = FormatFloatConstant(
-                    ((double)l.FloatValue).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                var d = FormatFloatConstant((double)l.FloatValue);
                 return Inst($"fptrunc double {d} to float");
             }
             case Syntax.LiteralKind.Double:
-                return FormatFloatConstant(l.FloatValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                return FormatFloatConstant(l.FloatValue);
             case Syntax.LiteralKind.Bool: return l.BoolValue ? "1" : "0";
             case Syntax.LiteralKind.Null: return "null";
             case Syntax.LiteralKind.String:
@@ -1823,7 +1838,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         {
             // Struct storage is an opaque blob of 8-byte slots: address the
             // field by its slot index, then cast to the field's type.
-            var sp = Inst($"getelementptr {recvType.LlvmType}, {recvType.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+            var sp = Inst($"getelementptr {recvType.LlvmType}, {recvType.LlvmType}* {basePtr}, i64 0, i64 {f.ByteOffset / 8}");
             return Inst($"bitcast i64* {sp} to {f.Type.LlvmType}*");
         }
 
@@ -2272,6 +2287,56 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         return array;
     }
 
+    private string EmitArraySlice(BoundArraySlice slice)
+    {
+        var array = EmitR(slice.Receiver);
+        TrackReferenceTemp(slice.Receiver, array);
+        var start = EmitR(slice.Start);
+        var length = EmitR(slice.Length);
+        var wideLength = Inst($"sext i32 {length} to i64");
+        var result = Inst($"call i8* @arc_array_slice_new(i8* {array}, i64 {wideLength}, i8* {SiteOperand(slice.Site)})");
+
+        var slot = T();
+        _entry.Add($"  {slot} = alloca i32");
+        Do($"store i32 0, i32* {slot}");
+        var condition = L("slice.cond");
+        var body = L("slice.body");
+        var end = L("slice.end");
+        Term($"br label %{condition}");
+        Lbl(condition);
+        var index = Inst($"load i32, i32* {slot}");
+        var more = Inst($"icmp slt i32 {index}, {length}");
+        Term($"br i1 {more}, label %{body}, label %{end}");
+        Lbl(body);
+        var sourceIndex = Inst($"add i32 {start}, {index}");
+        var element = slice.ElementType;
+        var source = ElemAddr(array, sourceIndex, element, checkBounds: false);
+        var destination = ElemAddr(result, index, element, checkBounds: false);
+        if (element.Kind == TypeKind.Struct)
+        {
+            CopyStruct(element, destination, source);
+        }
+        else
+        {
+            var type = element.LlvmType;
+            var value = Inst($"load {type}, {type}* {source}");
+            if (element.IsReferenceType)
+            {
+                Do($"call void @arc_store_strong(i8** {destination}, i8* {value})");
+            }
+            else
+            {
+                Do($"store {type} {value}, {type}* {destination}");
+            }
+        }
+
+        var next = Inst($"add i32 {index}, 1");
+        Do($"store i32 {next}, i32* {slot}");
+        Term($"br label %{condition}");
+        Lbl(end);
+        return result;
+    }
+
     private string ElemAddr(string arr, string idx, TypeSymbol elem, bool checkBounds = true)
     {
         var i64 = Inst($"sext i32 {idx} to i64");
@@ -2516,7 +2581,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         if (e.Type.LlvmType == "i64")
         {
-            return Inst($"call i8* @arc_str_from_int(i64 {v})");
+            var convert = e.Type.IsUnsignedInteger ? "arc_str_from_uint" : "arc_str_from_int";
+            return Inst($"call i8* @{convert}(i64 {v})");
         }
 
         if (e.Type.LlvmType == "i32")
@@ -2974,9 +3040,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             var truncated = Inst($"call {type} @llvm.trunc.{intrinsic}({type} {value})");
             var bound = Math.ScaleB(1.0, unsigned ? bits : bits - 1);
             var lower = unsigned ? 0.0 : -bound;
-            var culture = System.Globalization.CultureInfo.InvariantCulture;
-            var min = FormatFloatConstant(lower.ToString(culture));
-            var max = FormatFloatConstant(bound.ToString(culture));
+            var min = FormatFloatConstant(lower);
+            var max = FormatFloatConstant(bound);
             var aboveMin = Inst($"fcmp oge {type} {truncated}, {min}");
             var belowMax = Inst($"fcmp olt {type} {truncated}, {max}");
             var inRange = Inst($"and i1 {aboveMin}, {belowMax}");
@@ -3066,6 +3131,20 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         return "undef";
     }
 
+    private string EmitSequence(BoundSequence sequence)
+    {
+        foreach (var effect in sequence.Effects)
+        {
+            var value = EmitR(effect);
+            if (effect.Type.IsReferenceType)
+            {
+                _stmtTemps.Add(value);
+            }
+        }
+
+        return EmitR(sequence.Value);
+    }
+
     private string EmitPatternTest(BoundPatternTest pattern)
     {
         _patternInputs.Add(pattern.Input, CapturePatternInput(pattern.Value));
@@ -3132,6 +3211,127 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         TrackReferenceTemp(i.Operand, v);
         var r = Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{i.TestType.Name}__ti)");
         return Inst($"icmp ne i32 {r}, 0");
+    }
+
+    private string EmitSameType(BoundSameType same)
+    {
+        var left = EmitR(same.Left);
+        TrackReferenceTemp(same.Left, left);
+        var right = EmitR(same.Right);
+        TrackReferenceTemp(same.Right, right);
+        return Inst($"icmp eq %TypeInfo* {LoadTypeInfo(left)}, {LoadTypeInfo(right)}");
+    }
+
+    // A decimal is passed to the runtime by address. The runtime raises through
+    // arc_raise like the other checks, so every operation that can fail is
+    // followed by a pending-exception check.
+    private string EmitDecimalOp(BoundDecimalOp op)
+    {
+        string AddressOf(BoundExpr argument)
+        {
+            var value = EmitR(argument);
+            return Inst($"bitcast {argument.Type.LlvmType}* {value} to i8*");
+        }
+
+        string NewResult(out string bytes)
+        {
+            var temp = NewStructTemp(op.Type);
+            bytes = Inst($"bitcast {op.Type.LlvmType}* {temp} to i8*");
+            return temp;
+        }
+
+        string result;
+        switch (op.Op)
+        {
+            case DecimalOp.Constant:
+            {
+                result = NewResult(out var bytes);
+                Do($"call void @arc_dec_set(i8* {bytes}, i64 {op.Low}, i64 {op.High})");
+                return result;
+            }
+
+            case DecimalOp.Add or DecimalOp.Subtract or DecimalOp.Multiply or DecimalOp.Divide or DecimalOp.Remainder:
+            {
+                var function = op.Op switch
+                {
+                    DecimalOp.Add => "arc_dec_add",
+                    DecimalOp.Subtract => "arc_dec_sub",
+                    DecimalOp.Multiply => "arc_dec_mul",
+                    DecimalOp.Divide => "arc_dec_div",
+                    _ => "arc_dec_rem"
+                };
+                var left = AddressOf(op.Arguments[0]);
+                var right = AddressOf(op.Arguments[1]);
+                result = NewResult(out var bytes);
+                Do($"call void @{function}(i8* {left}, i8* {right}, i8* {bytes})");
+                EmitPendingCheck();
+                return result;
+            }
+
+            case DecimalOp.Negate:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                result = NewResult(out var bytes);
+                Do($"call void @arc_dec_neg(i8* {operand}, i8* {bytes})");
+                return result;
+            }
+
+            case DecimalOp.Compare:
+            {
+                var left = AddressOf(op.Arguments[0]);
+                var right = AddressOf(op.Arguments[1]);
+                return Inst($"call i32 @arc_dec_cmp(i8* {left}, i8* {right})");
+            }
+
+            case DecimalOp.FromInteger or DecimalOp.FromUnsigned or DecimalOp.FromDouble:
+            {
+                var argument = EmitR(op.Arguments[0]);
+                result = NewResult(out var bytes);
+                var (function, type) = op.Op switch
+                {
+                    DecimalOp.FromInteger => ("arc_dec_from_i64", "i64"),
+                    DecimalOp.FromUnsigned => ("arc_dec_from_u64", "i64"),
+                    _ => ("arc_dec_from_double", "double")
+                };
+                Do($"call void @{function}({type} {argument}, i8* {bytes})");
+                EmitPendingCheck();
+                return result;
+            }
+
+            case DecimalOp.ToInteger:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                var value = Inst($"call i64 @arc_dec_to_i64(i8* {operand}, i64 {op.Low}, i64 {op.High})");
+                EmitPendingCheck();
+                return value;
+            }
+
+            case DecimalOp.ToUnsigned:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                var value = Inst($"call i64 @arc_dec_to_u64(i8* {operand})");
+                EmitPendingCheck();
+                return value;
+            }
+
+            case DecimalOp.ToDouble:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                return Inst($"call double @arc_dec_to_double(i8* {operand})");
+            }
+
+            default:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                return Inst($"call i8* @arc_dec_to_str(i8* {operand})");
+            }
+        }
+    }
+    private string LoadTypeInfo(string objectPointer)
+    {
+        var address = Inst($"getelementptr i8, i8* {objectPointer}, i64 16");
+        var typed = Inst($"bitcast i8* {address} to %TypeInfo**");
+        return Inst($"load %TypeInfo*, %TypeInfo** {typed}");
     }
 
     private string EmitAs(BoundAs a)
@@ -3302,7 +3502,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (t.LlvmType == "i64")
         {
             var v = EmitR(c.Argument);
-            Do($"call void @arc_console_write_int(i64 {v}, i32 {nl})");
+            var write = t.IsUnsignedInteger ? "arc_console_write_uint" : "arc_console_write_int";
+            Do($"call void @{write}(i64 {v}, i32 {nl})");
             return "";
         }
 

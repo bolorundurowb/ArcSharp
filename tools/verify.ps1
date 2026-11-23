@@ -270,7 +270,7 @@ try {
     Invoke-Sample cycle_strong  "alloc=3 dead=1 freed=1 live=2" "done (strong cycle)"        @("cycle_strong")   # intentional leak without weak
     Invoke-Sample cycle_struct  "alloc=3 dead=1 freed=1 live=2" "done (struct cycle)"        @("cycle_struct")   # strong cycle through an inline struct field
     Invoke-Sample multifile     "alloc=4 dead=4 freed=4 live=0" "twice=42"                   @("mf_main", "mf_lib")   # two source files compiled together
-    Invoke-Sample numerics      "alloc=0 dead=0 freed=0 live=0" "150"                        @("numerics")             # byte/sbyte/short/ushort/uint/ulong
+    Invoke-Sample numerics      "alloc=4 dead=4 freed=4 live=0" "18446744073709551615"                        @("numerics")             # byte/sbyte/short/ushort/uint/ulong
     Invoke-Sample byref         "alloc=0 dead=0 freed=0 live=0" "3"                          @("byref")                # ref/out/in parameters
     Invoke-Sample properties    "alloc=2 dead=2 freed=2 live=0" "Alice"                      @("properties")           # auto-properties
     Invoke-Sample isas          "alloc=5 dead=5 freed=5 live=0" "as Cat: null"               @("isas")                 # is/as runtime type checks
@@ -305,7 +305,7 @@ try {
     Invoke-Sample nullable_values "alloc=4 dead=4 freed=4 live=0" "nullable values PASS" @("nullable_values")
     Invoke-Sample operator_updates "alloc=9 dead=9 freed=9 live=0" "operator updates PASS" @("operator_updates")
     Invoke-Sample conditional_values "alloc=10 dead=10 freed=10 live=0" "conditional values PASS" @("conditional_values")
-    Invoke-Sample patterns "alloc=4 dead=4 freed=4 live=0" "patterns PASS" @("patterns")
+    Invoke-Sample patterns "alloc=6 dead=6 freed=6 live=0" "patterns PASS" @("patterns")
     Invoke-Sample struct_interfaces "alloc=9 dead=9 freed=9 live=0" "struct interfaces PASS" @("struct_interfaces")
     Invoke-Sample struct_storage "alloc=5 dead=5 freed=5 live=0" "struct storage PASS" @("struct_storage")
     Invoke-Sample struct_calls "alloc=6 dead=6 freed=6 live=0" "struct calls PASS" @("struct_calls")
@@ -313,6 +313,16 @@ try {
     Invoke-Sample enums "alloc=2 dead=2 freed=2 live=0" "enums PASS" @("enums")
     Invoke-Sample static_constructor "alloc=11 dead=11 freed=11 live=0" "static constructor PASS" @("static_constructor")
     Invoke-Sample accessors "alloc=4 dead=4 freed=4 live=0" "accessors PASS" @("accessors")
+    Invoke-Sample accessor_updates "alloc=13 dead=13 freed=13 live=0" "accessor updates PASS" @("accessor_updates")
+    Invoke-Sample nullable_updates "alloc=3 dead=3 freed=3 live=0" "nullable updates PASS" @("nullable_updates") # lifted compound and increment, user-defined lifted operators and conversions
+    Invoke-Sample nullable_struct_boxing "alloc=6 dead=6 freed=6 live=0" "nullable struct boxing PASS" @("nullable_struct_boxing") # boxing a nullable struct, as and casts back, interfaces
+    Invoke-Sample decimals "alloc=292 dead=292 freed=292 live=0" "decimals PASS" @("decimals") # decimal arithmetic, scale, rounding, conversions, overflow, lifted decimal?
+    Invoke-Sample object_initialisers "alloc=24 dead=24 freed=24 live=0" "object initialisers PASS" @("object_initialisers") # member initialisers, nested initialisers, evaluation order
+    Invoke-Sample records "alloc=197 dead=197 freed=197 live=0" "records PASS" @("records") # record classes: equality, hashing, formatting, with, deconstruction, inheritance
+    Invoke-Sample generic_dispatch "alloc=31 dead=31 freed=31 live=0" "generic dispatch PASS" @("generic_dispatch") # virtual, abstract and interface generic methods
+    Invoke-Sample generic_inference "alloc=43 dead=43 freed=43 live=0" "generic inference PASS" @("generic_inference") # Roslyn inference for method type arguments
+    Invoke-Sample static_abstract "alloc=21 dead=21 freed=21 live=0" "static abstract PASS" @("static_abstract")    # static abstract members called on a type parameter
+    Invoke-Sample extensions "alloc=15 dead=15 freed=15 live=0" "extensions PASS" @("extensions_main", "extensions_lib") # extension methods and a partial class across two files
     Invoke-Sample arguments "alloc=9 dead=9 freed=9 live=0" "arguments PASS" @("arguments")
     Invoke-Sample operators_members "alloc=4 dead=4 freed=4 live=0" "operators and members PASS" @("operators_members")
     Invoke-Sample checked_arithmetic "alloc=13 dead=13 freed=13 live=0" "checked PASS" @("checked_arithmetic")
@@ -355,9 +365,20 @@ try {
     Invoke-MustFail exception_filter "ARC3001" @("exception_filter")
     Invoke-MustFail throw_expression "throw expressions are not supported" @("throw_expression")
     Invoke-MustFail throw_non_exception "CS0029" @("throw_non_exception")
-    Invoke-MustFail recursive_pattern "ARC3001" @("recursive_pattern")
+    Invoke-MustFail list_pattern "ARC3001" @("list_pattern")
     Invoke-MustFail switch_pattern "ARC3001" @("switch_pattern")
-    Invoke-MustFail increment_property "ARC3001" @("increment_property")
+    Invoke-MustFail accessor_update_struct "ARC3001" @("accessor_update_struct")
+    Invoke-MustFail extension_scope "CS1061" @("extension_scope")
+    Invoke-MustFail generic_interface_struct "ARC3001" @("generic_interface_struct")
+    Invoke-MustFail initialiser_struct "ARC3001" @("initialiser_struct")
+    Invoke-MustFail initialiser_collection "ARC3001" @("initialiser_collection")
+    Invoke-MustFail record_struct "ARC3001" @("record_struct")
+    Invoke-MustFail record_generic "ARC3001" @("record_generic")
+    Invoke-MustFail record_struct_member "ARC3001" @("record_struct_member")
+    Invoke-MustFail record_array_member "ARC3001" @("record_array_member")
+    Invoke-MustFail decimal_constructor "ARC3001" @("decimal_constructor")
+    Invoke-MustFail decimal_parse "CS0117" @("decimal_parse")
+    Invoke-MustFail static_abstract_generic "ARC3001" @("static_abstract_generic")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
     Invoke-MustFail lambda          "ARC3001" @("lambda")
     Invoke-MustFail generic         "CS0246" @("generic")
@@ -367,9 +388,7 @@ try {
     Invoke-MustFail generic_method_constraint "CS0453" @("generic_method_constraint")
     Invoke-MustFail generic_constructor_constraint "CS0310" @("generic_constructor_constraint")
     Invoke-MustFail generic_expansion "ARC2013" @("generic_expansion")
-    Invoke-MustFail generic_virtual_method "ARC3001" @("generic_virtual_method")
     Invoke-MustFail checked_constant "CS0220" @("checked_constant")
-    Invoke-MustFail shift_right "ARC3001" @("shift_right")
     Invoke-MustFail shift           "CS0019" @("shift")
     Invoke-MustFail readonly_field "CS0191" @("readonly_field")
     Invoke-MustFail nested_generic_outer "ARC3001" @("nested_generic_outer")
@@ -385,7 +404,6 @@ try {
     Invoke-MustFail invalid_variance "CS1961" @("invalid_variance")
     Invoke-MustFail nullable_as "ARC3001" @("nullable_as")
     Invoke-MustFail nullable_boxing "ARC3001" @("nullable_boxing")
-    Invoke-MustFail print_class "ARC3001" @("print_class")
     Invoke-MustFail struct_boxing_missing_member "CS0535" @("struct_boxing_missing_member")
     Invoke-MustFail struct_array    "ARC3001" @("struct_array")
     Invoke-MustFail struct_self     "ARC3001" @("struct_self")

@@ -58,6 +58,67 @@ return 0;
 
 static SurfaceCase[] Cases() =>
 [
+    new("decimal arithmetic", """
+        class P
+        {
+            static decimal Test(decimal a, int b)
+            {
+                decimal total = a * b + 1.25m;
+                total += decimal.One;
+                total++;
+                return -total % 7m;
+            }
+        }
+        """),
+    new("decimal conversions", """
+        class P
+        {
+            static double Test(decimal value, long whole, double real)
+            {
+                decimal sum = value + whole + (decimal)real;
+                return (double)sum + (int)value;
+            }
+        }
+        """),
+    new("nullable decimal", """
+        class P
+        {
+            static decimal? Test(decimal? a, decimal b) => a * b > 1m ? a : null;
+        }
+        """),
+    new("decimal parse is absent", """
+        class P
+        {
+            static decimal Test() => decimal.Parse("1");
+        }
+        """, "CS0117"),    new("list pattern", """
+        class P
+        {
+            static bool Test(int[] values) => values is [1, .. var tail] && tail.Length > 0;
+        }
+        """),
+    new("static abstract member", """
+        interface IZero<T> where T : IZero<T>
+        {
+            static abstract T Zero();
+        }
+
+        class P
+        {
+            static T Make<T>() where T : IZero<T> => T.Zero();
+        }
+        """),
+    new("extension method", """
+        static class Extensions
+        {
+            public static int Twice(this int value) => value * 2;
+        }
+
+        class P
+        {
+            static int Call() => 3.Twice();
+        }
+        """),
     new("unmanaged constraint", """
         class P
         {

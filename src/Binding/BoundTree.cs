@@ -78,6 +78,15 @@ public sealed class BoundNamedArgument : BoundExpr
     public required BoundExpr Value;
 }
 
+public sealed class BoundArraySlice : BoundExpr
+{
+    public required BoundExpr Receiver;
+    public required BoundExpr Start;
+    public required BoundExpr Length;
+    public required TypeSymbol ElementType;
+    public string Site = "";
+}
+
 public sealed class BoundIndex : BoundExpr
 {
     public required BoundExpr Receiver;
@@ -143,6 +152,13 @@ public sealed class BoundOperatorUpdate : BoundExpr
     public required BoundPatternInput Input;
     public required BoundExpr Result;
     public bool IsPostfix;
+}
+
+// Evaluates the effects in order and discards their values, then yields Value.
+public sealed class BoundSequence : BoundExpr
+{
+    public required List<BoundExpr> Effects;
+    public required BoundExpr Value;
 }
 
 public sealed class BoundStringCompound : BoundExpr
@@ -224,6 +240,44 @@ public sealed class BoundIs : BoundExpr
 {
     public required BoundExpr Operand;
     public required TypeSymbol TestType;
+}
+
+// True when two non-null objects have exactly the same runtime type. A record's
+// generated equality uses it in place of EqualityContract.
+public sealed class BoundSameType : BoundExpr
+{
+    public required BoundExpr Left;
+    public required BoundExpr Right;
+}
+
+public enum DecimalOp
+{
+    Constant,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    Negate,
+    Compare,
+    FromInteger,
+    FromUnsigned,
+    FromDouble,
+    ToInteger,
+    ToUnsigned,
+    ToDouble,
+    ToText
+}
+
+// One decimal operation, done by the runtime on 128-bit values. Constant holds
+// the two slots of the value in Low and High. ToInteger holds the smallest and
+// largest result the target type allows in Low and High.
+public sealed class BoundDecimalOp : BoundExpr
+{
+    public DecimalOp Op;
+    public List<BoundExpr> Arguments = [];
+    public long Low;
+    public long High;
 }
 
 public sealed class BoundAs : BoundExpr

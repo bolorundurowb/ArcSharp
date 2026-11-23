@@ -27,6 +27,19 @@ namespace System
             return null;
         }
 
+        // Roslyn binds the equality members that a record synthesises as
+        // overrides of these two. A direct call is not a supported library
+        // feature.
+        public virtual bool Equals(object other)
+        {
+            return false;
+        }
+
+        public virtual int GetHashCode()
+        {
+            return 0;
+        }
+
         // The C# compiler binds a '~T()' declaration as an override of this
         // method. It is not callable from user code, and ArcSharp never
         // dispatches through it: the generated teardown runs the finalisers.
@@ -158,6 +171,11 @@ namespace System
     }
 
     public struct UInt64
+    {
+    }
+
+    // Roslyn requires this predefined type when it emits a list pattern.
+    public struct UIntPtr
     {
     }
 

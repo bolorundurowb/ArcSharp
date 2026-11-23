@@ -9,35 +9,38 @@ public sealed class UnsupportedConstructTests
     public static TheoryData<string, string> UnsupportedSources => new()
     {
         { "foreach", "class C { static void Main() { string xs = \"x\"; foreach (char x in xs) { } } }" },
-        { "switch recursive pattern", "class C { public int X; static void Test(C value) { switch (value) { case { X: 1 }: break; } } }" },
+        { "switch list pattern", "class C { public int Length => 1; public int this[int i] => i; static void Test(C value) { switch (value) { case [1]: break; } } }" },
         { "exception filter", "class C { static void Main() { try { } catch (System.Exception e) when (e != null) { } } }" },
         { "throw expression", "class C { static int Main() { int x = 1; return x > 0 ? x : throw new System.Exception(); } }" },
         { "lock", "class C { static void Main() { object o = new object(); lock (o) { } } }" },
         { "lambda", "class C { static void Main() { System.Func<int, int> f = x => x + 1; } }" },
         { "query", "class C { static void Main() { int[] xs = new int[1]; var q = from x in xs select x; } }" },
-        { "recursive pattern", "class C { public int X; static bool Test(C value) => value is { X: 1 }; }" },
-        { "recursive switch expression", "class C { public int X; static int Test(C value) => value switch { { X: 1 } => 2, _ => 3 }; }" },
+        { "list pattern", "class C { public int Length => 1; public int this[int i] => i; static bool Test(C value) => value is [1]; }" },
+        { "list switch expression", "class C { public int Length => 1; public int this[int i] => i; static int Test(C value) => value switch { [1] => 2, _ => 3 }; }" },
         { "conditional access", "class C { static void Main() { string s = null; int n = s?.Length ?? 0; } }" },
         { "coalescing assignment", "class C { static void Main() { string s = null; s ??= \"x\"; } }" },
         { "interpolated string", "class C { static void Main() { System.Console.WriteLine($\"x\"); } }" },
         { "target-typed new", "class C { static void Main() { C c = new(); } }" },
-        { "object initializer", "class C { static void Main() { C c = new C { }; } }" },
+        { "struct object initializer", "struct S { public int X; } class C { static void Main() { S s = new S { X = 1 }; } }" },
+        { "collection initializer", "class B : System.Collections.IEnumerable { public void Add(int x) { } public System.Collections.IEnumerator GetEnumerator() { return null; } } class C { static void Main() { B b = new B { 1 }; } }" },
         { "attribute", "[System.Obsolete] class C { }" },
         { "delegate", "delegate void D(); class C { }" },
-        { "record", "record R(int X); class C { }" },
+        { "record struct", "record struct R(int X); class C { }" },
+        { "generic record", "record R<T>(T X); class C { }" },
         { "local function", "class C { static void Main() { void F() { } F(); } }" },
         { "expression body", "interface I { int One => 1; }" },
-        { "virtual generic method", "class C { public virtual T M<T>(T value) { return value; } }" },
-        { "interface generic method", "interface I { T M<T>(T value); }" },
+        { "generic static abstract method", "interface I { static abstract T Make<T>(); }" },
+        { "generic interface method on a struct", "interface I { T M<T>(T value); } struct S : I { public T M<T>(T value) { return value; } }" },
         { "using var", "class C { static void Main() { using var d = new System.IO.MemoryStream(); } }" },
         { "multi-dimensional array", "class C { static void Main() { int[,] xs = new int[1, 1]; } }" },
         { "sealed class", "sealed class C { }" },
-        { "partial class", "partial class C { }" },
         { "top-level statements", "System.Console.WriteLine(\"x\");" },
         { "tuple", "class C { static void Main() { (int a, int b) t = (1, 2); } }" },
         { "base access", "class B { public int X; } class C : B { public int Get() { return base.X; } }" },
         { "ref local", "class C { static void Main() { int n = 1; ref int a = ref n; } }" },
         { "ref return", "class C { static ref int Get(ref int x) { return ref x; } }" },
+        { "decimal constructor with parts", "class C { static void Main() { decimal d = new decimal(1, 2, 3, false, 0); } }" },
+        { "nullable primitive boxing", "class C { static void Main() { int? n = 1; object o = n; } }" },
         { "GC.ReRegisterForFinalize", "class C { static void Main() { System.GC.ReRegisterForFinalize(new C()); } }" }
     };
 
@@ -46,6 +49,12 @@ public sealed class UnsupportedConstructTests
         { "generic class", "class Box<T> where T : class { public T Value; }" },
         { "generic method", "class C { static T Identity<T>(T value) { return value; } }" },
         { "generic interface and struct", "interface IValue<T> { T Get(); } struct Pair<T> { public T Item; public int Tag; }" },
+        { "record class and with", "record R(int X); class C { static R Move(R r) { return r with { X = 2 }; } }" },
+        {
+            "deconstruction into existing variables",
+            "record R(int X, int Y); class C { static void Main() { int a; int b; (a, b) = new R(1, 2); } }"
+        },
+        { "class object initializer", "class N { public int X; } class C { static void Main() { N n = new N { X = 1 }; } }" },
         { "plain program", "class Program { static void Main() { System.Console.WriteLine(\"hi\"); } }" },
         {
             "try, catch, finally and throw",
@@ -116,6 +125,39 @@ public sealed class UnsupportedConstructTests
             "class Base { ~Base() { } } " +
             "class Resource : Base, System.IDisposable { ~Resource() { } public void Dispose() { System.GC.SuppressFinalize(this); } } " +
             "class Program { static void Main() { } }"
+        },
+        {
+            "virtual and interface generic methods on classes",
+            "interface I { T M<T>(T value); } class A : I { public virtual T M<T>(T value) { return value; } } " +
+            "class B : A { public override T M<T>(T value) { return value; } } abstract class C { public abstract T N<T>(T value); }"
+        },
+        {
+            "static abstract members",
+            "interface IZero<T> where T : IZero<T> { static abstract T Zero(); static abstract T operator +(T a, T b); " +
+            "static abstract int Id { get; } static virtual int Weight() { return 1; } }"
+        },
+        {
+            "partial classes and extension methods",
+            "partial class Box { public int Value; } partial class Box { public int Twice() { return Value * 2; } } " +
+            "static class Extensions { public static int Plus(this Box box, int amount) { return box.Value + amount; } }"
+        },
+        {
+            "updates through accessors",
+            "class Counter { private int _count; public int Count { get { return _count; } set { _count = value; } } " +
+            "public int this[int index] { get { return _count + index; } set { _count = value; } } " +
+            "void Bump() { Count += 2; Count++; this[1] -= 1; this[2]--; } }"
+        },
+        {
+            "decimal arithmetic and updates",
+            "class C { static decimal Sum(decimal a, decimal b) { decimal t = a * b + 1.5m; t += a; t++; return -t / 2; } }"
+        },
+        {
+            "lifted nullable updates",
+            "class C { static void Main() { int? a = 1; a += 2; a++; decimal? d = 1m; d *= 2m; d--; } }"
+        },
+        {
+            "nullable struct boxing",
+            "struct S { public int V; } class C { static void Main() { S? s = new S(); object o = s; S? back = o as S?; } }"
         },
         {
             "byref primitives",

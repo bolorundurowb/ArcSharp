@@ -33,9 +33,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzePattern, SyntaxKind.IsPatternExpression,
             SyntaxKind.CasePatternSwitchLabel, SyntaxKind.SwitchExpressionArm);
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
-        context.RegisterOperationAction(AnalyzeOverloadedBinary, OperationKind.Binary);
         context.RegisterOperationAction(AnalyzeBoxingConversion, OperationKind.Conversion);
-        context.RegisterOperationAction(AnalyzeLiftedCompound, OperationKind.CompoundAssignment);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
         context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration, SyntaxKind.IndexerDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeArrayType, SyntaxKind.ArrayType);
@@ -63,7 +61,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.AnonymousMethodExpression,
         SyntaxKind.BaseExpression,
         SyntaxKind.QueryExpression,
-        SyntaxKind.WithExpression,
         SyntaxKind.AwaitExpression,
         SyntaxKind.ConditionalAccessExpression,
         SyntaxKind.CoalesceAssignmentExpression,
@@ -82,7 +79,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.DelegateDeclaration,
         SyntaxKind.EventDeclaration,
         SyntaxKind.EventFieldDeclaration,
-        SyntaxKind.RecordDeclaration,
         SyntaxKind.RecordStructDeclaration,
         SyntaxKind.LocalFunctionStatement,
         SyntaxKind.ArrowExpressionClause,
@@ -94,7 +90,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     {
         SyntaxKind.ClassDeclaration,
         SyntaxKind.StructDeclaration,
-        SyntaxKind.InterfaceDeclaration
+        SyntaxKind.InterfaceDeclaration,
+        SyntaxKind.RecordDeclaration
     };
 
     private static readonly SyntaxKind[] MemberKinds =
@@ -111,11 +108,31 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeNode(SyntaxNodeAnalysisContext context)
     {
         var message = Describe(context.Node);
-        if (message != null)
+        if (message != null && !IsDeconstructionTarget(context.Node))
         {
             context.ReportDiagnostic(Diagnostic.Create(
                 Descriptors.UnsupportedConstruct, context.Node.GetLocation(), message));
         }
+    }
+
+    // `(a, b) = value;` deconstructs into existing variables. The tuple syntax is
+    // only the shape of the targets, so it is not a tuple value.
+    private static bool IsDeconstructionTarget(SyntaxNode node)
+    {
+        if (node is not TupleExpressionSyntax)
+        {
+            return false;
+        }
+
+        var current = node;
+        while (current.Parent is ArgumentSyntax { Parent: TupleExpressionSyntax outer })
+        {
+            current = outer;
+        }
+
+        return current.Parent is AssignmentExpressionSyntax assignment
+            && assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+            && assignment.Left == current;
     }
 
     private static void AnalyzePattern(SyntaxNodeAnalysisContext context)
@@ -127,57 +144,41 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             SwitchExpressionArmSyntax arm => arm.Pattern,
             _ => throw new System.InvalidOperationException("unexpected pattern syntax")
         };
-        var unsupported = pattern.DescendantNodesAndSelf()
-            .FirstOrDefault(node => node is RecursivePatternSyntax or ListPatternSyntax or SlicePatternSyntax);
-        if (unsupported != null)
+        foreach (var list in pattern.DescendantNodesAndSelf().OfType<ListPatternSyntax>())
         {
-            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
-                unsupported.GetLocation(), "recursive and list patterns are not supported"));
-        }
-    }
-
-    private static void AnalyzeOverloadedBinary(OperationAnalysisContext context)
-    {
-        var operation = (Microsoft.CodeAnalysis.Operations.IBinaryOperation)context.Operation;
-        if (operation.OperatorMethod != null && operation.IsLifted)
-        {
-            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
-                operation.Syntax.GetLocation(), "this overloaded binary operator is not supported"));
+            if (context.SemanticModel.GetOperation(list, context.CancellationToken)
+                is Microsoft.CodeAnalysis.Operations.IListPatternOperation { InputType: not IArrayTypeSymbol })
+            {
+                context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                    list.GetLocation(), "list patterns require a single-dimensional array"));
+            }
         }
     }
 
     private static void AnalyzeBoxingConversion(OperationAnalysisContext context)
     {
         var operation = (Microsoft.CodeAnalysis.Operations.IConversionOperation)context.Operation;
+        // Only a nullable struct declared in the program has a box. Primitives and
+        // enums have none, with or without the nullable wrapper.
         static bool UnsupportedValue(ITypeSymbol? type) =>
             type?.TypeKind == TypeKind.Enum
-            || type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+            || (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+                && (nullable.TypeArguments[0].TypeKind != TypeKind.Struct
+                    || nullable.TypeArguments[0].SpecialType != SpecialType.None));
 
         if ((UnsupportedValue(operation.Operand.Type) && operation.Type?.IsReferenceType == true)
             || (UnsupportedValue(operation.Type) && operation.Operand.Type?.IsReferenceType == true))
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
-                operation.Syntax.GetLocation(), "boxing and unboxing enum or nullable values are not supported"));
-        }
-    }
-
-    private static void AnalyzeLiftedCompound(OperationAnalysisContext context)
-    {
-        var operation = (Microsoft.CodeAnalysis.Operations.ICompoundAssignmentOperation)context.Operation;
-        if (operation.IsLifted)
-        {
-            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
-                operation.Syntax.GetLocation(), "lifted compound assignment is not supported"));
+                operation.Syntax.GetLocation(), "boxing and unboxing enum values, or nullable values of a built-in type, are not supported"));
         }
     }
 
     private static void AnalyzeIncrement(OperationAnalysisContext context)
     {
         var operation = (Microsoft.CodeAnalysis.Operations.IIncrementOrDecrementOperation)context.Operation;
-        if (operation.IsLifted
-            || operation.Target.Kind is not (OperationKind.LocalReference or OperationKind.ParameterReference
-                or OperationKind.FieldReference or OperationKind.ArrayElementReference or OperationKind.PropertyReference)
-            || operation.Target.Type?.SpecialType == SpecialType.System_Decimal)
+        if (operation.Target.Kind is not (OperationKind.LocalReference or OperationKind.ParameterReference
+                or OperationKind.FieldReference or OperationKind.ArrayElementReference or OperationKind.PropertyReference))
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
                 operation.Syntax.GetLocation(), "'++' and '--' require supported numeric storage"));
@@ -217,11 +218,10 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.BaseExpression =>
             "'base' member access is not supported: inherited members are called by name",
         SyntaxKind.QueryExpression => "LINQ is not supported",
-        SyntaxKind.WithExpression => "'with' expressions are not supported",
         SyntaxKind.AwaitExpression => "'await' is not supported: there is no async support",
         SyntaxKind.ConditionalAccessExpression => "the null-conditional operator ('?.') is not supported",
         SyntaxKind.CoalesceAssignmentExpression =>
-            "the null-coalescing operator ('??') is not supported",
+            "the null-coalescing assignment ('??=') is not supported",
         SyntaxKind.RangeExpression => "ranges ('..') are not supported",
         SyntaxKind.ImplicitObjectCreationExpression => "target-typed 'new()' is not supported: name the type",
         SyntaxKind.AnonymousObjectCreationExpression => "anonymous types are not supported",
@@ -237,7 +237,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.AttributeList => "attributes are not supported",
         SyntaxKind.DelegateDeclaration => "delegates are not supported",
         SyntaxKind.EventDeclaration or SyntaxKind.EventFieldDeclaration => "events are not supported",
-        SyntaxKind.RecordDeclaration or SyntaxKind.RecordStructDeclaration => "records are not supported",
+        SyntaxKind.RecordStructDeclaration => "record structs are not supported: declare a record class",
         SyntaxKind.LocalFunctionStatement => "local functions are not supported",
         SyntaxKind.ArrowExpressionClause when node.Parent is not
             (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
@@ -258,6 +258,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             message ??= "types nested in generic types are not supported";
         }
 
+        message ??= decl is RecordDeclarationSyntax { TypeParameterList: not null } ? "generic records are not supported" : null;
         message ??= (decl is ClassDeclarationSyntax && decl.ParameterList != null
                           ? "primary constructors are not supported"
                           : null);
@@ -272,13 +273,20 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     {
         var decl = (MemberDeclarationSyntax)context.Node;
         var message = ModifierMessage(decl.Modifiers, decl is FieldDeclarationSyntax);
-        if (decl is MethodDeclarationSyntax { TypeParameterList: not null } method
-            && (method.Parent is InterfaceDeclarationSyntax
-                || method.Modifiers.Any(SyntaxKind.VirtualKeyword)
-                || method.Modifiers.Any(SyntaxKind.OverrideKeyword)
-                || method.Modifiers.Any(SyntaxKind.AbstractKeyword)))
+        if (decl is MethodDeclarationSyntax { TypeParameterList: not null, Parent: InterfaceDeclarationSyntax } generic
+            && generic.Modifiers.Any(SyntaxKind.StaticKeyword)
+            && (generic.Modifiers.Any(SyntaxKind.AbstractKeyword) || generic.Modifiers.Any(SyntaxKind.VirtualKeyword)))
         {
-            message = "virtual and interface generic methods are not supported yet";
+            message = "generic static abstract and static virtual methods are not supported";
+        }
+        else if (decl is MethodDeclarationSyntax { TypeParameterList: not null, Parent: StructDeclarationSyntax } method
+            && context.SemanticModel.GetDeclaredSymbol(method, context.CancellationToken) is { } symbol
+            && symbol.ContainingType.AllInterfaces
+                .SelectMany(iface => iface.GetMembers().OfType<IMethodSymbol>())
+                .Any(member => member.IsGenericMethod
+                    && SymbolEqualityComparer.Default.Equals(symbol.ContainingType.FindImplementationForInterfaceMember(member), symbol)))
+        {
+            message = "generic interface methods are not supported on structs";
         }
         if (message != null)
         {
@@ -295,8 +303,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             {
                 case SyntaxKind.SealedKeyword:
                     return "'sealed' is not supported";
-                case SyntaxKind.PartialKeyword:
-                    return "'partial' is not supported";
                 case SyntaxKind.ReadOnlyKeyword when !field:
                     return "'readonly' is not supported on this declaration";
                 case SyntaxKind.ExternKeyword:
@@ -404,11 +410,30 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeObjectCreation(SyntaxNodeAnalysisContext context)
     {
         var o = (ObjectCreationExpressionSyntax)context.Node;
-        if (o.Initializer != null)
+        if (o.ArgumentList?.Arguments.Count > 1
+            && context.SemanticModel.GetTypeInfo(o, context.CancellationToken).Type?.SpecialType == SpecialType.System_Decimal)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                Descriptors.UnsupportedConstruct, o.GetLocation(),
+                "'new decimal' with several arguments is not supported: build the value from an integer and divide"));
+        }
+
+        if (o.Initializer == null)
+        {
+            return;
+        }
+
+        if (o.Initializer.IsKind(SyntaxKind.CollectionInitializerExpression))
         {
             context.ReportDiagnostic(Diagnostic.Create(
                 Descriptors.UnsupportedConstruct, o.Initializer.GetLocation(),
-                "object initialisers are not supported: assign the fields after 'new'"));
+                "collection initialisers are not supported: call 'Add' after 'new'"));
+        }
+        else if (context.SemanticModel.GetTypeInfo(o, context.CancellationToken).Type is { IsValueType: true })
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                Descriptors.UnsupportedConstruct, o.Initializer.GetLocation(),
+                "object initialisers on structs are not supported: assign the fields after 'new'"));
         }
     }
 }

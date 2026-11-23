@@ -4,6 +4,7 @@ using ArcSharp.Syntax;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using BoundKind = ArcSharp.Binding.TypeKind;
+using RefKind = ArcSharp.Syntax.RefKind;
 
 namespace ArcSharp.Frontend;
 
@@ -105,6 +106,8 @@ sealed partial class RoslynLowering
         IRelationalPatternOperation relational => LowerPatternComparison(pattern, input, relational.Value, BinaryToken(relational.OperatorKind)),
         ITypePatternOperation type => LowerPatternTypeCheck(type, input, MapType(type.MatchedType, type.Syntax.GetLocation())),
         IDeclarationPatternOperation declaration => LowerPatternDeclaration(declaration, input),
+        IRecursivePatternOperation recursive => LowerRecursivePattern(recursive, input),
+        IListPatternOperation list => LowerListPattern(list, input),
         INegatedPatternOperation negated => new BoundUnary
         {
             Type = _bool, Op = TokenKind.Bang, Operand = LowerPattern(negated.Pattern, input)
@@ -119,6 +122,163 @@ sealed partial class RoslynLowering
         },
         _ => UnsupportedExpr(pattern)
     };
+
+    private BoundExpr LowerListPattern(IListPatternOperation pattern, BoundPatternInput input)
+    {
+        if (input.Type.Kind != BoundKind.Array || input.Type.ElementType is not { } element)
+        {
+            return UnsupportedExpr(pattern);
+        }
+
+        var length = new BoundPatternInput { Type = _int };
+        BoundLiteral Number(int number) => new() { Type = _int, LitKind = LiteralKind.Int, IntValue = number };
+        BoundBinary Difference(int number) => new()
+        {
+            Op = TokenKind.Minus, Kind = BinKind.IntArith, Left = length, Right = Number(number), Type = _int
+        };
+        var count = pattern.Patterns.Length;
+        var hasSlice = pattern.Patterns.Any(item => item is ISlicePatternOperation);
+        var fixedCount = hasSlice ? count - 1 : count;
+        BoundExpr test = new BoundBinary
+        {
+            Op = hasSlice ? TokenKind.GreaterEquals : TokenKind.EqualsEquals,
+            Kind = BinKind.IntCmp, Left = length, Right = Number(fixedCount), Type = _bool
+        };
+
+        var afterSlice = false;
+        for (var i = 0; i < count; i++)
+        {
+            var item = pattern.Patterns[i];
+            BoundExpr value;
+            if (item is ISlicePatternOperation slice)
+            {
+                afterSlice = true;
+                if (slice.Pattern == null)
+                {
+                    continue;
+                }
+
+                item = slice.Pattern;
+                value = new BoundArraySlice
+                {
+                    Type = input.Type, Receiver = input, Start = Number(i),
+                    Length = Difference(fixedCount), ElementType = element, Site = Site(slice.Syntax)
+                };
+            }
+            else
+            {
+                value = new BoundIndex
+                {
+                    Type = element, Receiver = input,
+                    Index = afterSlice ? Difference(count - i) : Number(i)
+                };
+            }
+
+            var captured = new BoundPatternInput { Type = value.Type };
+            test = BoolAnd(test, Capture(value, captured, LowerPattern(item, captured)));
+        }
+
+        if (pattern.DeclaredSymbol is ILocalSymbol declaration)
+        {
+            test = new BoundPatternBinding { Type = _bool, Test = test, Local = Local(declaration), Value = input };
+        }
+
+        return BoolAnd(PatternNullCheck(input, TokenKind.BangEquals),
+            Capture(new BoundLength { Type = _int, Receiver = input }, length, test));
+    }
+
+    private BoundExpr LowerRecursivePattern(IRecursivePatternOperation pattern, BoundPatternInput input)
+    {
+        var type = MapType(pattern.MatchedType, pattern.Syntax.GetLocation());
+        var check = LowerPatternTypeCheck(pattern, input, type);
+        BoundExpr narrowed = input;
+        if (input.Type != type)
+        {
+            if (input.Type.NullableElementType == type)
+            {
+                narrowed = ReadNullableValue(input);
+            }
+            else if (type.Kind == BoundKind.Struct && input.Type.IsReferenceType)
+            {
+                narrowed = new BoundUnbox { Operand = input, BoxedValue = StructBox(type), Type = type };
+            }
+            else
+            {
+                narrowed = NumericConversion(input, type);
+            }
+        }
+
+        var receiver = new BoundPatternInput { Type = type };
+        BoundExpr properties = PatternResult(true);
+        foreach (var property in pattern.PropertySubpatterns)
+        {
+            var value = LowerRecursiveMember(property.Member, receiver);
+            if (value == null)
+            {
+                return UnsupportedExpr(property);
+            }
+
+            var captured = new BoundPatternInput { Type = value.Type };
+            properties = BoolAnd(properties, Capture(value, captured, LowerPattern(property.Pattern, captured)));
+        }
+
+        if (pattern.DeclaredSymbol is ILocalSymbol declaration)
+        {
+            properties = new BoundPatternBinding
+            {
+                Type = _bool, Test = properties, Local = Local(declaration), Value = receiver
+            };
+        }
+
+        if (pattern.DeconstructionSubpatterns.Length > 0)
+        {
+            if (pattern.DeconstructSymbol is not IMethodSymbol deconstruct
+                || MapMethod(deconstruct, pattern.Syntax.GetLocation()) is not { IsStatic: false } method
+                || method.Parameters.Count != pattern.DeconstructionSubpatterns.Length)
+            {
+                return UnsupportedExpr(pattern);
+            }
+
+            var arguments = new List<BoundExpr>();
+            BoundExpr tests = PatternResult(true);
+            for (var i = 0; i < method.Parameters.Count; i++)
+            {
+                var parameter = method.Parameters[i];
+                var local = new LocalSymbol { Name = "#deconstruct", Id = _localId++, Type = parameter.Type };
+                _methodLocals.Add(local);
+                arguments.Add(new BoundByRefArg
+                {
+                    Kind = RefKind.Out, Type = local.Type, Lvalue = new BoundLocal { Symbol = local, Type = local.Type }
+                });
+                var captured = new BoundPatternInput { Type = local.Type };
+                tests = BoolAnd(tests, Capture(new BoundLocal { Symbol = local, Type = local.Type },
+                    captured, LowerPattern(pattern.DeconstructionSubpatterns[i], captured)));
+            }
+
+            var call = BindMemberCall(receiver, method, arguments);
+            properties = Capture(call, new BoundPatternInput { Type = _void }, BoolAnd(tests, properties));
+        }
+
+        return BoolAnd(check, Capture(narrowed, receiver, properties));
+    }
+
+    private BoundExpr? LowerRecursiveMember(IOperation member, BoundPatternInput receiver)
+    {
+        if (member is IFieldReferenceOperation { Instance: IInstanceReferenceOperation } field
+            && MapField(field.Field, field.Syntax.GetLocation()) is { } fieldSymbol)
+        {
+            return new BoundFieldAccess { Receiver = receiver, Field = fieldSymbol, Type = fieldSymbol.Type };
+        }
+
+        if (member is IPropertyReferenceOperation { Instance: IInstanceReferenceOperation, Arguments.Length: 0 } property
+            && property.Property.GetMethod is { } getter
+            && MapMethod(getter, property.Syntax.GetLocation()) is { } method)
+        {
+            return BindMemberCall(receiver, method, []);
+        }
+
+        return null;
+    }
 
     private BoundExpr LowerPatternComparison(IOperation pattern, BoundExpr input, IOperation value, TokenKind op)
     {

@@ -28,5 +28,13 @@ class Program
 
         bool gt = ui > 1000000000u;
         Console.WriteLine(gt);
+
+        // The largest ulong must print unsigned by both routes, so it appears only when
+        // concatenation and Console.WriteLine agree.
+        ulong top = 18446744073709551615ul;
+        if (("v" + top) == "v18446744073709551615")
+        {
+            Console.WriteLine(top);
+        }
     }
 }

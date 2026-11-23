@@ -334,6 +334,25 @@ public static class DefiniteAssignment
             }
         }
 
+        private void VisitArguments(List<BoundExpr> arguments, HashSet<int> assigned)
+        {
+            var outputs = new List<int>();
+            foreach (var argument in arguments)
+            {
+                var value = argument is BoundNamedArgument named ? named.Value : argument;
+                if (value is BoundByRefArg { Kind: ArcSharp.Syntax.RefKind.Out, Lvalue: BoundLocal local })
+                {
+                    outputs.Add(local.Symbol.Id);
+                }
+                else
+                {
+                    VisitExpr(value, assigned);
+                }
+            }
+
+            assigned.UnionWith(outputs);
+        }
+
         // Visits an expression in evaluation order. Local reads are checked here;
         // local writes (assignment targets, out-targets) mark the local assigned.
         private void VisitExpr(BoundExpr e, HashSet<int> assigned)
@@ -365,6 +384,15 @@ public static class DefiniteAssignment
 
                 case BoundIncrement increment:
                     VisitExpr(increment.Target, assigned);
+                    break;
+
+                case BoundSequence sequence:
+                    foreach (var effect in sequence.Effects)
+                    {
+                        VisitExpr(effect, assigned);
+                    }
+
+                    VisitExpr(sequence.Value, assigned);
                     break;
 
                 case BoundAssign a:
@@ -414,19 +442,15 @@ public static class DefiniteAssignment
                         VisitExpr(c.Receiver, assigned);
                     }
 
-                    foreach (var arg in c.Arguments)
-                    {
-                        VisitExpr(arg, assigned);
-                    }
-
+                    VisitArguments(c.Arguments, assigned);
                     break;
 
                 case BoundNewObject n:
-                    foreach (var arg in n.Arguments)
-                    {
-                        VisitExpr(arg, assigned);
-                    }
+                    VisitArguments(n.Arguments, assigned);
+                    break;
 
+                case BoundByRefArg argument:
+                    VisitExpr(argument.Lvalue, assigned);
                     break;
 
                 case BoundNamedArgument argument:
@@ -441,6 +465,12 @@ public static class DefiniteAssignment
                     }
 
                     break;
+                case BoundArraySlice slice:
+                    VisitExpr(slice.Receiver, assigned);
+                    VisitExpr(slice.Start, assigned);
+                    VisitExpr(slice.Length, assigned);
+                    break;
+
                 case BoundIndex ix: VisitExpr(ix.Receiver, assigned); VisitExpr(ix.Index, assigned); break;
                 case BoundBinary b: VisitExpr(b.Left, assigned); VisitExpr(b.Right, assigned); break;
                 case BoundUnary u: VisitExpr(u.Operand, assigned); break;
@@ -472,6 +502,14 @@ public static class DefiniteAssignment
                     assigned.Add(binding.Local.Id);
                     break;
                 case BoundLength len: VisitExpr(len.Receiver, assigned); break;
+                case BoundSameType same: VisitExpr(same.Left, assigned); VisitExpr(same.Right, assigned); break;
+                case BoundDecimalOp decimalOp:
+                    foreach (var argument in decimalOp.Arguments)
+                    {
+                        VisitExpr(argument, assigned);
+                    }
+
+                    break;
                 case BoundConsoleCall cc: if (cc.Argument != null) { VisitExpr(cc.Argument, assigned); } break;
                 case BoundGcCall gc: if (gc.Argument != null) { VisitExpr(gc.Argument, assigned); } break;
                 case BoundWeakRefNew wn: VisitExpr(wn.Target, assigned); break;
