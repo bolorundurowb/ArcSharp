@@ -21,6 +21,21 @@ public static class DiagnosticCatalog
 
     public const string Category = "ArcSharp";
 
+    // ARC3200 (info): a GC call that has no effect because ARC reclaims an
+    // object at its last strong release.
+    public const string GcCollectMessage =
+        "GC.Collect() does nothing under ArcSharp: an object is destroyed, and its finaliser runs, " +
+        "when its last strong reference is released.";
+
+    public const string GcWaitMessage =
+        "GC.WaitForPendingFinalizers() does nothing under ArcSharp: finalisers run synchronously " +
+        "at the last release, so none are ever pending.";
+
+    // ARC3001: resurrection is rejected, so there is nothing to re-register.
+    public const string GcReRegisterMessage =
+        "GC.ReRegisterForFinalize is not supported: a finaliser runs once, at the last strong release, " +
+        "and an object cannot be resurrected.";
+
     // A strongly connected component of two or more classes.
     public static string PossibleStrongCycleMessage(IReadOnlyList<string> names) =>
         $"possible strong cycle involving {string.Join(", ", names)}: " +

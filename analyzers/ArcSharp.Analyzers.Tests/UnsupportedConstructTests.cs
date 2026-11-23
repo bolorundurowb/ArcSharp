@@ -50,7 +50,8 @@ public sealed class UnsupportedConstructTests
         { "tuple", "class C { static void Main() { (int a, int b) t = (1, 2); } }" },
         { "base access", "class B { public int X; } class C : B { public int Get() { return base.X; } }" },
         { "ref local", "class C { static void Main() { int n = 1; ref int a = ref n; } }" },
-        { "ref return", "class C { static ref int Get(ref int x) { return ref x; } }" }
+        { "ref return", "class C { static ref int Get(ref int x) { return ref x; } }" },
+        { "GC.ReRegisterForFinalize", "class C { static void Main() { System.GC.ReRegisterForFinalize(new C()); } }" }
     };
 
     public static TheoryData<string, string> SupportedSources => new()
@@ -118,6 +119,12 @@ public sealed class UnsupportedConstructTests
             "class Program { static void Main() { Outer o; o.inner.v = 1; o.tag = 2; System.Console.WriteLine(o.tag); } }"
         },
         {
+            "finalisers and GC.SuppressFinalize",
+            "class Base { ~Base() { } } " +
+            "class Resource : Base, System.IDisposable { ~Resource() { } public void Dispose() { System.GC.SuppressFinalize(this); } } " +
+            "class Program { static void Main() { } }"
+        },
+        {
             "byref primitives",
             "class Program { static void Inc(ref int x) { x = x + 1; } static void Set(out int x) { x = 4; } " +
             "static void Main() { int a = 1; Inc(ref a); int b; Set(out b); System.Console.WriteLine(a + b); } }"
@@ -148,5 +155,28 @@ public sealed class UnsupportedConstructTests
             .Select(d => d.GetMessage())
             .ToList();
         Assert.True(reported.Count == 0, $"{name} reported: {string.Join("; ", reported)}");
+    }
+
+    [Theory]
+    [InlineData("System.GC.Collect();", DiagnosticCatalog.GcCollectMessage)]
+    [InlineData("System.GC.WaitForPendingFinalizers();", DiagnosticCatalog.GcWaitMessage)]
+    public async Task Reports_arc3200_for_a_gc_call_that_does_nothing(string call, string message)
+    {
+        var diagnostics = await AnalyzerTestHost.AnalyzeAsync(
+            new UnsupportedConstructAnalyzer(), $"class C {{ static void Main() {{ {call} }} }}");
+
+        var reported = Assert.Single(diagnostics, d => d.Id == DiagnosticCatalog.ArcClrDisagreementId);
+        Assert.Equal(DiagnosticSeverity.Info, reported.Severity);
+        Assert.Equal(message, reported.GetMessage());
+    }
+
+    [Fact]
+    public async Task Does_not_report_arc3200_for_gc_calls_that_ArcSharp_honours()
+    {
+        var diagnostics = await AnalyzerTestHost.AnalyzeAsync(
+            new UnsupportedConstructAnalyzer(),
+            "class C { static void Main() { System.GC.SuppressFinalize(new C()); } }");
+
+        Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticCatalog.ArcClrDisagreementId);
     }
 }

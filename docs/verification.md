@@ -23,20 +23,21 @@ still retained at exit). **`live=0` means no leaks.**
 
 Peak memory and collector pauses are a separate measurement. The programs in
 `bench/` are compiled with ArcSharp and with the ordinary .NET runtime by
-`tools\compare-gc.ps1`. The original results and the M2 and M3 medians are in
+`tools\compare-gc.ps1`. The original results and the M2, M3 and M4 medians are in
 [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (36 samples, Windows x64, 22 November 2026)
+## Results (42 samples, Windows x64, 23 November 2026)
 
-`tools\verify.ps1` reported **74 passed, 0 failed** with the .NET 11.0.100 SDK:
-36 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 25 must-fail
-diagnostics, 3 command-line checks, 4 cycle checks, one run of the analyser
-unit tests (68 cases), and one reference-surface check. `live=0` means every
-object was reclaimed.
+`tools\verify.ps1` reported **86 passed, 0 failed** with the .NET 11.0.100 SDK:
+42 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 27 must-fail
+diagnostics, one run-time abort check, 3 command-line checks, 5 cycle checks,
+2 `ARC3200` checks, one run of the analyser unit tests (73 cases), and one
+reference-surface check. `live=0` means every object was reclaimed.
 `numerics` and `byref` allocate nothing because they use only value types.
-`cycle_strong` and `cycle_struct` are the leaks the harness asserts on purpose.
+`cycle_strong`, `cycle_struct` and `finaliser_cycle` are the leaks the harness
+asserts on purpose.
 
 | Sample | Exercises | ARC accounting | Output |
 |---|---|---|---|
@@ -76,6 +77,12 @@ object was reclaimed.
 | `m2_properties_narrowing` | get-only assignment, inherited auto-properties, narrow casts and arrays | alloc=5 dead=5 freed=5 **live=0** | `properties and narrowing PASS` |
 | `lifetime_reads_and_moves` | stable reads, last-use moves, early return and a by-reference alias | alloc=10 dead=10 freed=10 **live=0** | `lifetime reads and moves PASS` |
 | `lifetime_confined` | confined class and array reads, a stored local and publication from a constructor | alloc=6 dead=6 freed=6 **live=0** | `confined lifetimes PASS` |
+| `finaliser_order` | a four-level chain finalises derived before base, and a parent before its children, checked against an exact log | alloc=40 dead=40 freed=40 **live=0** | `finaliser order PASS` |
+| `finaliser_release_point` | a finaliser runs at the statement that drops the last reference, not at the end of the method | alloc=17 dead=17 freed=17 **live=0** | `finaliser release points PASS` |
+| `finaliser_suppress` | `GC.SuppressFinalize` from `Dispose`, a finaliser that still runs for an object that was not disposed, and `GC.Collect` and `GC.WaitForPendingFinalizers` as no-ops | alloc=8 dead=8 freed=8 **live=0** | `suppress finalizer PASS finalised=1` |
+| `finaliser_graph` | weak references read as dead inside a finaliser, a child released by a finaliser, array elements in index order, and a generic class | alloc=55 dead=55 freed=55 **live=0** | `finaliser graph PASS` |
+| `finaliser_deep` | a list of 100,000 nodes, which overflowed the stack under the recursive release | alloc=100006 dead=100006 freed=100006 **live=0** | `deep graph finalised 100000` |
+| `finaliser_cycle` | a strong cycle never reaches zero, so its finalisers never run, and the leak is deliberate | alloc=5 dead=3 freed=3 **live=2** | `cycle finalised 0` |
 
 The two new generic samples were also built and run with the normal .NET 8
 compiler, producing the same stdout. The generic identity example in the
@@ -171,6 +178,22 @@ still observed destruction at the same statements.
 | `m2_dispatch_logic` | 7 | 4 | 13 | 10 |
 | `m2_properties_narrowing` | 12 | 10 | 17 | 15 |
 
+## M4 retain and release counts
+
+These counts were taken on 23 November 2026 with `ARC_CHECK=1` and
+`ARC_STATS=1`, for the samples added by the finalisers milestone. The existing
+samples kept the accounting in the results table above. The harness does not
+assert these counts.
+
+| Sample | Retains | Releases |
+|---|---:|---:|
+| `finaliser_order` | 36 | 76 |
+| `finaliser_release_point` | 13 | 30 |
+| `finaliser_suppress` | 13 | 21 |
+| `finaliser_graph` | 62 | 117 |
+| `finaliser_deep` | 499,998 | 600,004 |
+| `finaliser_cycle` | 6 | 9 |
+
 ## Diagnostics
 
 Diagnostics print with a stable code and a severity, for example
@@ -179,27 +202,36 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 25 programs that must fail (`samples/negative/`) and
+The harness also compiles 27 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, including ref
-locals, ref returns and shift operators, `CS1009` for an invalid Unicode escape,
-`ARC2011` for an invalid `using` resource, `ARC2012` for `new` on an abstract
-class, `ARC2013` for expanding specialisations, and `ARC2015` for a write
-through an `in` parameter. Missing generic definitions, wrong arity, and
+locals, ref returns, shift operators and `GC.ReRegisterForFinalize`, `CS1009`
+for an invalid Unicode escape, `ARC2011` for an invalid `using` resource,
+`ARC2012` for `new` on an abstract class, `ARC2013` for expanding
+specialisations, `ARC2015` for a write through an `in` parameter, and
+`ARC2016` for four forms of a finaliser that stores `this`. Missing generic definitions, wrong arity, and
 unsatisfied constraints report Roslyn `CS` codes. The harness also
 checks that `-o` with no value, and a missing `clang` or `llc`, are reported
 as errors and exit with code 2. It checks
-`ARC3100` in both directions: `cycle_strong` and `cycle_struct` warn, while
-`cycle_weak` and `cycle_weakref` stay clean.
+`ARC3100` in both directions: `cycle_strong`, `cycle_struct` and
+`finaliser_cycle` warn, while `cycle_weak` and `cycle_weakref` stay clean.
+
+A finaliser that hides a resurrection behind a method call cannot be seen by
+the compiler. `finaliser_resurrect_call` compiles, and the harness checks that
+running it exits with code 70, prints `ResurrectionException` on stderr, and
+never reaches the line that follows the release. The harness also checks the
+info diagnostic `ARC3200`: `finaliser_suppress` calls `GC.Collect` and reports
+it, and `finaliser_order` makes no `GC.Collect` call and stays clean.
 
 ## Analyser unit tests
 
 `analyzers/ArcSharp.Analyzers.Tests` is an xUnit project that compiles snippets
-in memory with Microsoft.CodeAnalysis and runs the analyser. It has 68 cases:
-43 unsupported constructs that must report `ARC3001`, 16 supported programs
-that must stay clean, and 9 cycle checks for `ARC3100` (mutual and self
+in memory with Microsoft.CodeAnalysis and runs the analyser. It has 73 cases:
+44 unsupported constructs that must report `ARC3001`, 17 supported programs
+that must stay clean, 9 cycle checks for `ARC3100` (mutual and self
 references, arrays, statics, struct bridges, and weak references that break the
-cycle). `tools/verify.ps1` runs `dotnet test` and counts the whole run as one
-check.
+cycle), and 3 checks for `ARC3200` (two calls that must report it, and a
+program whose `GC` calls the runtime honours that must not). `tools/verify.ps1`
+runs `dotnet test` and counts the whole run as one check.
 
 ## The headline result: ARC + cycle breaking
 

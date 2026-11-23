@@ -23,6 +23,7 @@ public sealed class TypeSymbol
     // class/struct
     public TypeSymbol? BaseType;
     public MethodSymbol? StaticFieldInitialiser;
+    public MethodSymbol? Finaliser; // the '~T()' declared by this class, not an inherited one
     public List<TypeSymbol> Interfaces = [];
     public List<FieldSymbol> InstanceFields = []; // includes inherited, in layout order
     public List<FieldSymbol> StaticFields = [];
@@ -179,6 +180,7 @@ public sealed class MethodSymbol
     public bool IsOverride;
     public bool IsAbstract;
     public bool IsConstructor;
+    public bool IsFinaliser;
     public int VtableSlot = -1;
     public int DeclarationLine;
 
@@ -208,7 +210,7 @@ public sealed class MethodSymbol
     {
         get
         {
-            var kind = IsConstructor ? "ctor" : Name;
+            var kind = IsConstructor ? "ctor" : IsFinaliser ? "$finaliser" : Name;
             return LlvmNames.Ident($"{Owner.Name}__{kind}__{SignatureId}");
         }
     }

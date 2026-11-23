@@ -73,6 +73,37 @@ use would break the rules for that slot.
 |---|---|
 | `'in' parameter 'p' is read-only` | Do not assign `p`, pass it as `ref` or `out`, or call an instance method on it when `p` is an `in` struct. Copy it into a local first. A reference loaded from the struct can still be written. |
 
+### ARC2016
+
+**Error. A finaliser stores `this`.** The message is
+`a finaliser must not store 'this' in a field, property, or array element: an
+object cannot be resurrected`. Inside `~T()`, an assignment to a field, a
+property or an array element is rejected when the value is `this`, a
+conversion of `this`, or a local variable that holds one of those.
+
+```csharp
+class Registry
+{
+    public static Item last;
+}
+
+class Item
+{
+    ~Item()
+    {
+        Registry.last = this;   // ARC2016
+    }
+}
+```
+
+Remove the store. The object is being destroyed and cannot be kept. The check
+only sees stores that are written in the finaliser itself. If the store is
+hidden inside another method, the program compiles and the runtime aborts it
+when the finaliser returns: the output is
+`ResurrectionException: a finaliser of <Type> kept a reference to the object it
+was finalising`, followed by the `[arc]` line, and the exit code is 70. See
+[Deterministic finalisers](features/finalisers.md#resurrection).
+
 ### ARC2050
 
 **Error. No entry point.** No class declares `static void Main()` or
@@ -107,7 +138,8 @@ interpolated strings, `default`, `checked`/`unchecked`, top-level statements,
 attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,
 `params`, optional and named arguments, `base.` access, and the struct
 restrictions listed in the [Language reference](language-reference.md#structs).
-Bitwise and shift operators are `ARC3001`. A bad Unicode escape is Roslyn's
+Bitwise and shift operators are `ARC3001`. So are `GC.ReRegisterForFinalize`
+and a value-type argument to `GC.SuppressFinalize`, which would need boxing. A bad Unicode escape is Roslyn's
 `CS1009`. A missing type such as `List<T>`, a wrong generic arity, and a
 failed constraint are Roslyn `CS` codes.
 
@@ -132,15 +164,19 @@ false positive. Suppress it with `#pragma warning disable ARC3100` or
 
 `cycle_strong` and `cycle_struct` warn; `cycle_weak` and `cycle_weakref` do not.
 
-### ARC3200 (reserved)
+### ARC3200
 
-**Info, planned.** Code whose behaviour differs between this runtime and the
-.NET garbage collector. `GC.Collect` and `GC.WaitForPendingFinalizers` are
-no-ops. `GC.KeepAlive`, and `TryGetTarget` used as if it waited for a
-collection, are the other cases. The id is reserved in the shared catalogue
-but is not reported yet. Resurrection and `GC.ReRegisterForFinalize` are
-rejected rather than reported here. The finalisation contract is in the
-[memory model](memory-model.md#finalisation).
+**Info. This call behaves differently from the .NET garbage collector.**
+`GC.Collect()` and `GC.WaitForPendingFinalizers()` compile and do nothing,
+because an object is finalised and destroyed when its last strong reference is
+released, so there is never anything to collect or wait for. The compiler and
+the analyser both report it. An info message does not fail the build, not even
+with `-Werror`.
+
+`GC.KeepAlive` is not in the supported library, so it is an ordinary Roslyn
+error. `GC.ReRegisterForFinalize` and resurrection are rejected rather than
+reported here: the first is `ARC3001`, and the second is `ARC2016`. The
+finalisation contract is in the [memory model](memory-model.md#finalisation).
 
 ### ARC3300 (reserved)
 

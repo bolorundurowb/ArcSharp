@@ -42,6 +42,7 @@ before you rely on it for anything beyond experiments.
 - [M2 verification baseline](features/verification-baseline.md)
 - [Lifetime classification, borrows and moves](features/lifetime-reads-and-moves.md)
 - [Confined allocation lifetimes](features/confined-allocation-lifetimes.md)
+- [Deterministic finalisers](features/finalisers.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo

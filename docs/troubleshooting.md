@@ -82,6 +82,28 @@ An object was stored into an array whose element type it does not match. This
 happens through array covariance: a `Dog[]` used as an `Animal[]` cannot hold a
 `Cat`.
 
+### `ResurrectionException: a finaliser of T kept a reference...`, exit code 70
+
+A finaliser stored `this`, or a reference derived from it, somewhere that
+outlives the finaliser, such as a static field or a list. The compiler rejects
+the stores it can see (`ARC2016`), so this one was hidden behind a method call.
+The runtime stops the program with exit code `70`, because keeping the object
+would leave a reference to memory that is about to be freed. Remove the store.
+If another object needs the data, copy the data in the finaliser instead of
+keeping the object itself.
+
+### A finaliser never runs
+
+A finaliser runs when the last strong reference is released. These are the
+usual reasons that never happens:
+
+- The object is part of a strong cycle. `ARC3100` warns about a visible one.
+  Make the back-reference a `WeakReference<T>`.
+- A static field, or a collection that is never emptied, still holds the object.
+  Objects held by static fields are never released, not even when `Main`
+  returns.
+- `GC.SuppressFinalize` was called on the object.
+
 ### The program exits with `-1073741819` and prints no `[arc]` line
 
 That code is `0xC0000005`, an access violation. The usual cause is reading a

@@ -29,6 +29,15 @@ internal static class Descriptors
         description: "ARC leaks reference cycles formed by strong fields. Break a back-edge with WeakReference<T>.",
         customTags: new[] { WellKnownDiagnosticTags.CompilationEnd });
 
+    public static readonly DiagnosticDescriptor ArcClrDisagreement = new(
+        id: DiagnosticCatalog.ArcClrDisagreementId,
+        title: DiagnosticCatalog.ArcClrDisagreementTitle,
+        messageFormat: "{0}",
+        category: DiagnosticCatalog.Category,
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true,
+        description: "The call is accepted, but it behaves differently under ArcSharp than under the CLR.");
+
     public static readonly ImmutableArray<DiagnosticDescriptor> All =
-        ImmutableArray.Create(UnsupportedConstruct, PossibleStrongCycle);
+        ImmutableArray.Create(UnsupportedConstruct, PossibleStrongCycle, ArcClrDisagreement);
 }

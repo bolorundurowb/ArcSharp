@@ -134,8 +134,8 @@ lowering in `src/Frontend` builds the bound tree. `using` directives are
 honoured, and a namespace is part of a type's identity. A global
 `using System` is added so `Console` resolves without one.
 
-The verification baseline and lifetime pass have landed. The next milestone
-is deterministic finalisation in the [Roadmap](docs/roadmap.md). A defect in
+The verification baseline, the lifetime pass, and deterministic finalisers
+have landed. The next milestone is exceptions in the [Roadmap](docs/roadmap.md). A defect in
 the emitter or the runtime may still be fixed. A defect in binding is fixed in
 the Roslyn lowering.
 
@@ -203,13 +203,19 @@ These rules are what keep every sample at `live=0`. They are described in
   already +1. `arc_store_strong` retains and then stores a value that is
   borrowed. `arc_store_weak` and `arc_load_weak` handle weak slots;
   `arc_load_weak` returns +1 or null.
-- **Destructors.** The emitter generates `<Type>__deinit` for every class. It
-  releases each strong reference field and clears each weak field.
-  `arc_release` calls it when the strong count reaches zero. This is generated
-  teardown, not a C# finaliser. `~T()` stays rejected until the finalisation
-  milestone (M4 in `docs/roadmap.md`). When that lands, the user finaliser runs
-  before those field releases, on the releasing thread, and a worklist replaces
-  the recursive release. Do not implement `~T()` on the current parser.
+- **Destructors and finalisers.** The emitter generates `<Type>__deinit` for
+  every class. It releases each strong reference field and clears each weak
+  field. This is generated teardown, not a C# finaliser. `arc_release` calls
+  `arc_destroy` when the strong count reaches zero. For each dying object,
+  `arc_destroy` runs the user finaliser chain (`TypeInfo.finalizer`, derived
+  before base) and then `__deinit`, on the releasing thread. A release that
+  reaches zero during `__deinit` is queued on a worklist, not recursed, so do
+  not add a recursive release path. A release made by user code drains the
+  worklist at once, so a finaliser's own releases finalise at that statement.
+  While the chain runs the runtime holds `strong` at one, and a count above
+  zero afterwards aborts the process (`ResurrectionException`, exit code 70).
+  `~T()` is accepted on classes only. `GC.SuppressFinalize` sets a flag bit in
+  the weak word, and `GC.ReRegisterForFinalize` stays rejected.
 - **Counts are non-atomic and the model is single-threaded.** Do not introduce
   threads or shared state. Threads are outside the compatibility target, and
   the roadmap lists them as not scheduled.
@@ -226,15 +232,16 @@ the symbols, and the runtime.
 
 | Object | Layout (byte offsets) |
 |---|---|
-| Header (all heap objects) | `strong` at 0, `weak` at 8, `TypeInfo*` at 16 |
+| Header (all heap objects) | `strong` at 0, `weak` at 8, `TypeInfo*` at 16. The weak word holds the weak count in its low 32 bits, the "finalisation suppressed" flag at bit 32, and the "finaliser running" flag at bit 33. Only the runtime touches those bits |
 | Class instance | Field `i` at `24 + 8 * i` (`FieldSymbol.ByteOffset`) |
 | Struct value | Field `i` at `8 * i`; size is `HeapSize` bytes (whole 8-byte slots) |
 | Array | Length at 24, element `TypeInfo*` at 32, elements at 40 in 8-byte slots |
 | String | Length at 24, UTF-8 bytes at 32, NUL-terminated |
 | `WeakReference<T>` | One weak slot at 24 |
 
-`TypeInfo` has ten fields: name, instance size, deinit, vtable, vtable
-length, itable, itable length, base, strong-slot metadata, and slot count.
+`TypeInfo` has eleven fields: name, instance size, deinit, vtable, vtable
+length, itable, itable length, base, strong-slot metadata, slot count, and
+finaliser chain (a function pointer, or null).
 The slot record (`ArcSlot`) is a strong reference or an inline struct. It is
 declared in two places that must match: the `%TypeInfo` and `%ArcSlot` types
 emitted at the top of every module in `Emitter.Emit`, and `struct TypeInfo`
@@ -244,8 +251,9 @@ update the documentation.
 
 Symbol names in the IR are useful when you read `.ll` files: methods are
 `<Type>__<Name>__<paramCount>`, constructors are `<Type>__ctor__<paramCount>`,
-static fields are `@<Type>__sf__<Name>`, type descriptors are `@<Type>__ti`, and
-destructors are `@<Type>__deinit`.
+static fields are `@<Type>__sf__<Name>`, type descriptors are `@<Type>__ti`,
+destructors are `@<Type>__deinit`, and a `~T()` body is `<Type>__$finaliser__0`
+with its chain function `@<Type>__finalisers`.
 
 ### Runtime boundary
 
@@ -253,9 +261,10 @@ destructors are `@<Type>__deinit`.
   `EmitRuntimeDecls`, with a signature that matches the C definition: `i8*` for
   object pointers, `i64` for `intptr_t`, `i32` for C `int`. A mismatch compiles
   and links but corrupts arguments at run time.
-- Runtime failures such as an index out of range or an array type mismatch
-  print an exception-style message, call `arc_report()`, and exit with code 70.
-  There is no exception handling yet.
+- Runtime failures such as an index out of range, an array type mismatch, or a
+  finaliser that resurrected its object print an exception-style message,
+  call `arc_report()`, and exit with code 70. There is no exception handling
+  yet.
 - `arc_report()` prints `[arc] alloc=A dead=D freed=F live=L` to stderr at the
   end of `Main`. The harness depends on that exact format. Do not change it
   without updating `tools/verify.ps1`. `ARC_STATS=1` prints
@@ -283,8 +292,8 @@ warnings fail it only with `-Werror`.
 | Range | Stage | Codes in use |
 |---|---|---|
 | `CS` | Roslyn | C# syntax, binding and type checking |
-| `ARC2xxx` | ArcSharp compiler | `ARC2001` binding or lowering failure, `ARC2002` unresolved lowered member or parameter, `ARC2011` invalid `using` resource, `ARC2012` abstract class instantiation, `ARC2013` generic specialisation, `ARC2015` managed-reference lifetime, `ARC2050` no entry point, `ARC2100` definite assignment (warning) |
-| `ARC3xxx` | Shared catalogue | `ARC3001` unsupported construct (error), `ARC3100` possible strong cycle (warning). `ARC3200` and `ARC3300` are reserved in the catalogue for planned rules; do not allocate `ARC3xxx` for other errors. |
+| `ARC2xxx` | ArcSharp compiler | `ARC2001` binding or lowering failure, `ARC2002` unresolved lowered member or parameter, `ARC2011` invalid `using` resource, `ARC2012` abstract class instantiation, `ARC2013` generic specialisation, `ARC2015` managed-reference lifetime, `ARC2016` finaliser stores `this`, `ARC2050` no entry point, `ARC2100` definite assignment (warning) |
+| `ARC3xxx` | Shared catalogue | `ARC3001` unsupported construct (error), `ARC3100` possible strong cycle (warning), `ARC3200` a `GC` call that does nothing (info). `ARC3300` is reserved in the catalogue for a planned rule; do not allocate `ARC3xxx` for other errors. |
 
 Never renumber or reuse an existing code. The former lexer and parser ranges
 are retired and stay reserved. A new ArcSharp diagnostic gets a new code in
@@ -435,7 +444,8 @@ The [compatibility target](docs/roadmap.md#compatibility-target) is the language
 - Bitwise and shift operators, including single `&` and `|` (`ARC3001`).
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
-- Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, and `WeakReference<T>`
+- Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, `WeakReference<T>`,
+  and the `GC` calls `SuppressFinalize`, `Collect` and `WaitForPendingFinalizers`
 - Threads, which the non-atomic refcounts do not support
 
 The Roslyn analyser in `analyzers/ArcSharp.Analyzers` flags the unsupported

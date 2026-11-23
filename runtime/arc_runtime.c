@@ -6,7 +6,8 @@
  *
  * Object memory layout (all slots are 8 bytes; "uniform slot" model):
  *   offset  0 : intptr_t strong        reference count
- *   offset  8 : intptr_t weak          weak count (+1 while object is live)
+ *   offset  8 : intptr_t weak          weak count (+1 while object is live) in the
+ *                                      low 32 bits, then the finalisation flags
  *   offset 16 : TypeInfo* type         type descriptor
  *   offset 24 : first field / array length / string length / WeakReference slot
  *   offset 32 : string bytes, or the element TypeInfo* of an array
@@ -27,6 +28,14 @@ typedef struct ObjHeader {
     intptr_t  weak;
     TypeInfo* type;
 } ObjHeader;
+
+/* The weak word holds the weak count in its low 32 bits. The two flags sit
+   above it so the header keeps its three 8-byte slots, and every field offset
+   in the emitter stays where it is. Only this file reads them. */
+#define ARC_WEAK_COUNT_MASK   ((intptr_t)0xFFFFFFFF)
+#define ARC_FLAG_NO_FINALISE  ((intptr_t)1 << 32) /* GC.SuppressFinalize was called  */
+#define ARC_FLAG_FINALISING   ((intptr_t)1 << 33) /* the finaliser chain is running  */
+#define WEAK_COUNT(h)         ((h)->weak & ARC_WEAK_COUNT_MASK)
 
 /* Strong-edge metadata emitted next to each class and struct TypeInfo.
    kind 1 is a strong reference slot. kind 2 is an inline struct, and nested
@@ -51,6 +60,10 @@ struct TypeInfo {
     TypeInfo*   base;
     ArcSlot*    slots;
     intptr_t    slotCount;
+    /* Runs the user finalisers of this class and its bases, derived first.
+       Null when the class and its bases declare none. It is the last field so
+       the runtime's own descriptors, which list seven, leave it null. */
+    void      (*finalizer)(void*);
 };
 
 int arc_is_instance(void* obj, TypeInfo* target);
@@ -117,7 +130,7 @@ static void check_header(const char* operation, const ObjHeader* h, int needs_li
             if (needs_live && h->strong == 0) {
                 check_fail(operation, "dead object");
             }
-            if (h->weak <= 0) {
+            if (WEAK_COUNT(h) == 0) {
                 check_fail(operation, "non-positive weak count");
             }
             return;
@@ -231,7 +244,8 @@ void arc_weak_release(void* p) {
     if (!p) return;
     ObjHeader* h = (ObjHeader*)p;
     check_header("weak release", h, 0);
-    if (--h->weak == 0) {
+    h->weak--;
+    if (WEAK_COUNT(h) == 0) {
         if (checks_on() && h->strong > 0) {
             check_fail("weak release", "lost implicit weak reference");
         }
@@ -240,16 +254,95 @@ void arc_weak_release(void* p) {
     }
 }
 
+/* ---- destruction ------------------------------------------------------ */
+/* An object whose strong count reached zero goes through three steps: its user
+   finalisers, the generated teardown that releases its fields, and the drop of
+   its implicit weak count. A child that reaches zero during the teardown is
+   queued instead of destroyed on the spot, so a long chain of objects is
+   destroyed by a loop and not by one stack frame per link. The queue is
+   ordered so the children are destroyed in the order a recursive release
+   would have used: the first field's whole subtree, then the second field's. */
+static ObjHeader** g_pending = 0;
+static size_t g_pending_len = 0;
+static size_t g_pending_cap = 0;
+static int g_in_teardown = 0;
+
+static void pending_push(ObjHeader* h) {
+    if (g_pending_len == g_pending_cap) {
+        size_t cap = g_pending_cap ? g_pending_cap * 2 : 64;
+        ObjHeader** grown = (ObjHeader**)realloc(g_pending, cap * sizeof(ObjHeader*));
+        if (!grown) {
+            fprintf(stderr, "OutOfMemoryException: cannot queue an object for destruction\n");
+            exit(70);
+        }
+        g_pending = grown;
+        g_pending_cap = cap;
+    }
+    g_pending[g_pending_len++] = h;
+}
+
+void arc_report(void);
+
+/* The count is held at one while the finalisers run. Their own retains and
+   releases of the object, such as a call on 'this', then balance without
+   reaching zero a second time. A count above one afterwards means a finaliser
+   stored the object somewhere, which would hand out a reference to memory that
+   is about to be freed. */
+static void run_finalisers(ObjHeader* h) {
+    TypeInfo* t = h->type;
+    if (!t || !t->finalizer || (h->weak & ARC_FLAG_NO_FINALISE)) return;
+    h->weak |= ARC_FLAG_FINALISING;
+    h->strong = 1;
+    t->finalizer(h);
+    if (--h->strong != 0) {
+        fprintf(stderr, "ResurrectionException: a finaliser of %s kept a reference to the object it was finalising\n",
+                t->name ? t->name : "?");
+        arc_report();
+        exit(70);
+    }
+    h->weak &= ~ARC_FLAG_FINALISING;
+}
+
+static void arc_destroy(ObjHeader* h) {
+    size_t base, mark, i, j;
+    if (g_in_teardown) {
+        pending_push(h);
+        return;
+    }
+    base = g_pending_len;
+    pending_push(h);
+    while (g_pending_len > base) {
+        ObjHeader* o = g_pending[--g_pending_len];
+        run_finalisers(o);
+        mark = g_pending_len;
+        g_in_teardown = 1;
+        if (o->type && o->type->deinit) o->type->deinit(o);
+        g_in_teardown = 0;
+        for (i = mark, j = g_pending_len; i + 1 < j; i++, j--) {
+            ObjHeader* swap = g_pending[i];
+            g_pending[i] = g_pending[j - 1];
+            g_pending[j - 1] = swap;
+        }
+        g_dead++;
+        arc_weak_release(o);   /* drop the implicit live weak count */
+    }
+}
+
 void arc_release(void* p) {
     if (!p) return;
     ObjHeader* h = (ObjHeader*)p;
     check_header("release", h, 1);
     g_release++;
-    if (--h->strong == 0) {
-        if (h->type && h->type->deinit) h->type->deinit(h);
-        g_dead++;
-        arc_weak_release(h);   /* drop the implicit live weak count */
-    }
+    if (--h->strong == 0) arc_destroy(h);
+}
+
+/* GC.SuppressFinalize: skips the user finalisers at the last release. The
+   field release and the reclamation still happen. */
+void arc_suppress_finalize(void* p) {
+    if (!p) return;
+    ObjHeader* h = (ObjHeader*)p;
+    check_header("suppress finalize", h, 1);
+    h->weak |= ARC_FLAG_NO_FINALISE;
 }
 
 /* ---- slot assignment ------------------------------------------------- */
@@ -281,7 +374,9 @@ void* arc_load_weak(void** slot) {
     ObjHeader* h = (ObjHeader*)*slot;
     if (!h) return 0;
     check_header("weak load", h, 0);
-    if (h->strong <= 0) return 0;   /* object logically destroyed */
+    /* The object is logically destroyed at zero, and also while its
+       finalisers run, when the count is held at one only to balance them. */
+    if (h->strong <= 0 || (h->weak & ARC_FLAG_FINALISING)) return 0;
     h->strong++;
     g_retain++;
     return h;
@@ -666,7 +761,7 @@ static void arc_report_leaks(void) {
         ObjHeader* h = objs[i].obj;
         fprintf(stderr,
                 "[arc] survivor addr=%p type=%s strong=%lld weak=%lld site=%s root=%s\n",
-                (void*)h, leak_type_name(h), (long long)h->strong, (long long)h->weak,
+                (void*)h, leak_type_name(h), (long long)h->strong, (long long)WEAK_COUNT(h),
                 objs[i].site, objs[i].from_root ? "static" : "unreachable");
     }
     for (i = 0; i < n; i++) {

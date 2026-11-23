@@ -7,3 +7,4 @@ Rule ID | Category | Severity | Notes
 --------|----------|----------|-------
 ARC3001 | ArcSharp | Error | Unsupported construct
 ARC3100 | ArcSharp | Warning | Possible strong cycle
+ARC3200 | ArcSharp | Info | ARC and CLR behaviour disagree

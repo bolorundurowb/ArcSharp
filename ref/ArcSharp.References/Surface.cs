@@ -26,6 +26,15 @@ namespace System
         {
             return null;
         }
+
+        // The C# compiler binds a '~T()' declaration as an override of this
+        // method. It is not callable from user code, and ArcSharp never
+        // dispatches through it: the generated teardown runs the finalisers.
+#pragma warning disable CS0465
+        protected virtual void Finalize()
+        {
+        }
+#pragma warning restore CS0465
     }
 
     public abstract class ValueType
@@ -230,6 +239,29 @@ namespace System
     public interface IDisposable
     {
         void Dispose();
+    }
+
+    // The finalisation surface. ArcSharp finalises at the last strong release,
+    // so Collect and WaitForPendingFinalizers have nothing to do and
+    // ReRegisterForFinalize is rejected by the lowering. There is no
+    // GC.KeepAlive, and no way to read a generation or a memory total.
+    public static class GC
+    {
+        public static void SuppressFinalize(object obj)
+        {
+        }
+
+        public static void ReRegisterForFinalize(object obj)
+        {
+        }
+
+        public static void Collect()
+        {
+        }
+
+        public static void WaitForPendingFinalizers()
+        {
+        }
     }
 
     public static class Console

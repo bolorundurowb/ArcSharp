@@ -279,6 +279,7 @@ public sealed class LifetimeAnalysis
         BoundAs cast => [cast.Operand],
         BoundLength length => [length.Receiver],
         BoundConsoleCall call => [call.Argument],
+        BoundGcCall call => [call.Argument],
         BoundLiteral or BoundLocal or BoundParam or BoundThis => [],
         _ => throw new InvalidOperationException($"Missing lifetime traversal for {node.GetType().Name}")
     };

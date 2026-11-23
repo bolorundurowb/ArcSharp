@@ -211,14 +211,77 @@ Supported:
   `abstract` on a class, and `new` on a member.
 - Instance and static auto-properties with both accessors:
   `public string Name { get; set; }` and `public static int Count { get; set; }`.
+- A finaliser, `~T()`, with no parameters and no modifiers. See
+  [Finalisers](#finalisers).
 
 Not supported yet: `sealed`, `readonly`, `const`, `partial`, static constructors,
-nested types, finalisers (`~T()`), expression-bodied members (`=> expr`),
+nested types, expression-bodied members (`=> expr`),
 properties with accessor bodies, get-only auto-properties, indexers, operator
 overloading, extension methods, `params`, and optional or named arguments.
 
 Access modifiers are accepted but **not enforced**. Code in one class can read
 another class's `private` field.
+
+### Finalisers
+
+A class can declare `~T()`. It runs when the last strong reference to the
+object is released, on the thread that released it, before the object's fields
+are released. A derived class's finaliser runs first, then its base class's.
+
+```csharp
+using System;
+
+class Base
+{
+    ~Base() { Console.WriteLine("Base finaliser"); }
+}
+
+class Derived : Base
+{
+    Base child;
+
+    public Derived() { child = new Base(); }
+
+    ~Derived() { Console.WriteLine("Derived finaliser"); }
+}
+
+class Program
+{
+    static void Main()
+    {
+        Derived d = new Derived();
+        d = null;
+        Console.WriteLine("after release");
+    }
+}
+```
+
+```text
+Derived finaliser
+Base finaliser
+Base finaliser
+after release
+[arc] alloc=6 dead=6 freed=6 live=0
+```
+
+The first two lines are the `Derived` object: its own finaliser, then the one
+it inherits. The third line is the `Base` object that `Derived` held, which is
+finalised after its owner. The `Derived` finaliser could still have used
+`child`.
+
+- `GC.SuppressFinalize(obj)` skips the finaliser of one object.
+- A finaliser must not store `this` where it outlives the finaliser. The
+  compiler rejects the stores it can see (`ARC2016`), and the runtime aborts
+  the program with exit code 70 for the rest.
+- `GC.Collect()` and `GC.WaitForPendingFinalizers()` compile and do nothing.
+  They report info `ARC3200`.
+- `GC.ReRegisterForFinalize` is rejected (`ARC3001`).
+- Objects in a strong cycle, and objects held by a static field, are never
+  released, so their finalisers do not run.
+- A finaliser cannot throw, because `throw` is not supported yet.
+
+The contract and the design are in the [memory model](memory-model.md#finalisation)
+and [Deterministic finalisers](features/finalisers.md).
 
 ### Interfaces
 
@@ -286,8 +349,8 @@ Not supported: `do`/`while`, `foreach`, `switch`, `break`, `continue`, `goto`,
 `using` maps a resource to an explicit `Dispose()` call. When the statement's
 block is left, the compiler calls `Dispose()` and then releases the resource.
 `Dispose()` is not a finaliser. If that release was the last strong reference,
-teardown follows at that moment. A finaliser, once accepted, still runs only
-at the last strong release, and it does not call `Dispose()`. Both forms are supported, one resource per
+teardown follows at that moment. A finaliser still runs only at the last
+strong release, and it does not call `Dispose()`. Both forms are supported, one resource per
 statement:
 
 ```csharp
@@ -423,15 +486,15 @@ bug; see [Diagnostics](diagnostics.md).
 
 These behaviours differ from the same source built with .NET. Most of them are
 deliberate consequences of ARC. A row that the compiler does not implement yet
-says so. The finalisation contract is the runtime's compatibility profile, not
-a claim that `~T()` already runs.
+says so. The finalisation contract is the runtime's compatibility profile.
 
 | Behaviour | .NET | ArcSharp |
 |---|---|---|
 | When an object is reclaimed | Some time after it becomes unreachable, when the garbage collector runs | Immediately, when its last strong reference is released. Leaving a lexical scope finalises the object only when that is also the last strong release |
-| C# finaliser (`~T()`) | Runs later, on the finaliser thread, and may resurrect the object | Specified to run synchronously on the releasing thread, derived class before base, before children are released. Resurrection is prohibited. The current compiler still rejects `~T()` (`ARC3001`). The contract is in the [memory model](memory-model.md#finalisation) |
-| `GC.Collect`, `GC.WaitForPendingFinalizers` | Collect, or wait for the finaliser queue | Will be accepted no-ops, with info `ARC3200`. They are not in the supported library yet |
-| `GC.SuppressFinalize` | Skips the finaliser. The object is still collected later | Will skip the finaliser and still tear the object down at the last strong release. Not implemented yet |
+| C# finaliser (`~T()`) | Runs later, on the finaliser thread, and may resurrect the object | Runs synchronously on the releasing thread, derived class before base, before children are released. Resurrection is prohibited: a visible store of `this` is `ARC2016`, and a hidden one aborts the program with exit code 70. The contract is in the [memory model](memory-model.md#finalisation) |
+| `GC.Collect`, `GC.WaitForPendingFinalizers` | Collect, or wait for the finaliser queue | Accepted no-ops, with info `ARC3200` |
+| `GC.SuppressFinalize` | Skips the finaliser. The object is still collected later | Skips the finaliser and still tears the object down at the last strong release |
+| `GC.ReRegisterForFinalize`, `GC.KeepAlive` | Turn finalisation back on, or keep an object alive to a point | `ReRegisterForFinalize` is `ARC3001`. `KeepAlive` is not in the library |
 | `Dispose` and finalisation | Often paired by convention. The finaliser is a backstop | Separate. A finaliser does not call `Dispose`. `using` is an explicit call |
 | Reference cycles | Collected. Finalisers of cyclic objects may still run | Permitted. `ARC3100` warns when the type graph can form one. An ignored warning, including in a library, leaks, and a finaliser in the cycle does not run. `WeakReference<T>` breaks the cycle |
 | `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false`. The weak reference does not keep the object alive |

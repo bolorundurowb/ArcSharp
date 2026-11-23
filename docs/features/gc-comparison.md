@@ -165,6 +165,39 @@ The churn sampler observed both .NET pauses in three of the five runs. The
 median total for those three complete traces was 20.490 ms. The ArcSharp
 churn workload recorded 9,200,856 retains and 10,601,216 releases per run.
 
+## M4 medians (23 November 2026)
+
+The five-run comparison completed on Windows x64 with .NET SDK 11.0.100
+and clang 22.1.8, after the deterministic finalisers landed. All checksums
+matched and every ArcSharp run reported `live=0`.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---:|---:|---:|
+| baseline | ArcSharp | 18.3 ms | 3.9 MiB | 0.6 MiB |
+| baseline | .NET | 59.0 ms | 23.2 MiB | 6.3 MiB |
+| retained | ArcSharp | 63.9 ms | 25.1 MiB | 23.4 MiB |
+| retained | .NET | 75.0 ms | 35.4 MiB | 18.6 MiB |
+| churn | ArcSharp | 147.4 ms | 35.8 MiB | 34.8 MiB |
+| churn | .NET | 105.1 ms | 61.0 MiB | 44.1 MiB |
+
+The ARC traffic did not change. The churn workload recorded 9,200,856 retains
+and 10,601,216 releases per run, as in M3, and the retained workload recorded
+3,200,351 retains and 3,600,456 releases. None of the three workloads declares a
+finaliser.
+
+The churn sampler saw both .NET pauses in one of the five runs, where they
+were 5.525 ms and 17.306 ms. The other four runs saw only the second pause,
+between 15.771 ms and 17.767 ms. The median of the longest pause in each run
+was 16.896 ms. ArcSharp has no collector, so it has no pause to report.
+
+Compared with M3, the ArcSharp wall time was 0.5 ms higher on the baseline,
+6.2 ms higher on the retained set, and 0.6 ms lower on the churn program. The
+retained set is the workload that destroys 400,000 objects in one go at exit,
+which now goes through the worklist and a flag check on every object. That is
+a plausible cause of the retained difference, but it was not isolated, and the
+machine shows run-to-run differences of a few milliseconds. Memory use is within
+0.1 MiB of M3 on every row.
+
 ## What the original numbers support
 
 **The empty process is smaller.** The ArcSharp baseline commits 0.6 MiB and
@@ -208,8 +241,10 @@ These follow from the memory model. This run does not add evidence for them.
 
 - **Destruction is tied to the last release.** For an acyclic object that is
   already true: the batch dies when the local is overwritten, on that thread,
-  and the accounting line reaches `live=0`. A user finaliser (`~T()`) is still
-  rejected. Deterministic finalisers are [M4](../roadmap.md#m4--deterministic-finalisers).
+  and the accounting line reaches `live=0`. A user finaliser (`~T()`) now runs
+  at that point, as [M4](../roadmap.md#m4--deterministic-finalisers) specifies.
+  The workloads here declare none, so the M4 table above measures only the
+  cost of the new destruction path.
 - **A cycle leaks.** The workloads are acyclic on purpose. `ARC3100` warns, the
   program stays legal, and an ignored warning leaks. The .NET collector would
   reclaim the same cycle. There is no backup collector.
