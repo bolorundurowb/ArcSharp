@@ -320,6 +320,44 @@ static SurfaceCase[] Cases() =>
             }
         }
         """, "CS1729"),
+    new("finaliser", """
+        using System;
+        class Base
+        {
+            ~Base()
+            {
+            }
+        }
+        class Derived : Base, IDisposable
+        {
+            ~Derived()
+            {
+                Console.WriteLine("derived");
+            }
+            public void Dispose()
+            {
+                GC.SuppressFinalize(this);
+            }
+        }
+        class P
+        {
+            static void M()
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.ReRegisterForFinalize(new Derived());
+            }
+        }
+        """),
+    new("gc-keep-alive", """
+        class P
+        {
+            static void M()
+            {
+                System.GC.KeepAlive(new P());
+            }
+        }
+        """, "CS0117"),
     new("structural-dispose", """
         class R
         {

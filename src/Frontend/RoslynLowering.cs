@@ -421,7 +421,7 @@ sealed partial class RoslynLowering
                     CreateMethod(type, method, declaredMethods);
                     break;
                 case IMethodSymbol method when method.MethodKind is MethodKind.Destructor:
-                    ReportOnce(method, "finalisers are not supported yet");
+                    CreateFinaliser(type, method, declaredMethods);
                     break;
                 case IMethodSymbol { MethodKind: MethodKind.StaticConstructor, IsImplicitlyDeclared: true } method:
                     var initialiser = new MethodSymbol
@@ -734,6 +734,24 @@ sealed partial class RoslynLowering
         {
             Queue(created, method);
         }
+    }
+
+    // The generated teardown runs the body, so nothing dispatches through it:
+    // it is neither virtual nor part of the vtable.
+    private void CreateFinaliser(TypeSymbol owner, IMethodSymbol method, List<MethodSymbol> methods)
+    {
+        var created = new MethodSymbol
+        {
+            Name = "<finaliser>",
+            Owner = owner,
+            ReturnType = _void,
+            IsFinaliser = true,
+            DeclarationLine = Line(method)
+        };
+        owner.Finaliser = created;
+        methods.Add(created);
+        _methods[new MemberKey(method.OriginalDefinition, owner)] = created;
+        Queue(created, method);
     }
 
     private void Queue(MethodSymbol method, IMethodSymbol roslyn)

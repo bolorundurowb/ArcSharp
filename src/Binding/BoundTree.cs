@@ -166,6 +166,21 @@ public sealed class BoundConsoleCall : BoundExpr
     public BoundExpr? Argument; // null => WriteLine() blank line
 }
 
+public enum GcKind
+{
+    SuppressFinalize,
+    Collect,
+    WaitForPendingFinalizers
+}
+
+// Collect and WaitForPendingFinalizers are no-ops that survive lowering so the
+// emitter handles every node explicitly; only SuppressFinalize has an Argument.
+public sealed class BoundGcCall : BoundExpr
+{
+    public GcKind Which;
+    public BoundExpr? Argument;
+}
+
 // ---- Bound statements ------------------------------------------------------
 public abstract class BoundStmt
 {

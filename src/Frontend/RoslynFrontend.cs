@@ -48,6 +48,7 @@ public static class RoslynFrontend
         lowering.CopyRoslynDiagnostics();
         lowering.ReportUnsupportedSyntax();
         lowering.ReportLifetimeRules();
+        lowering.ReportFinaliserRules();
         lowering.Lower(program);
         return program;
     }

@@ -225,6 +225,7 @@ public static class DefiniteAssignment
                 case BoundConversion cv: VisitExpr(cv.Operand, assigned); break;
                 case BoundLength len: VisitExpr(len.Receiver, assigned); break;
                 case BoundConsoleCall cc: if (cc.Argument != null) { VisitExpr(cc.Argument, assigned); } break;
+                case BoundGcCall gc: if (gc.Argument != null) { VisitExpr(gc.Argument, assigned); } break;
                 case BoundWeakRefNew wn: VisitExpr(wn.Target, assigned); break;
                 case BoundWeakRefSet ws: VisitExpr(ws.WeakRef, assigned); VisitExpr(ws.Target, assigned); break;
                     // BoundLiteral, BoundParam, BoundThis read no locals.

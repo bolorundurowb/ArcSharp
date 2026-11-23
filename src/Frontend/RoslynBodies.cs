@@ -5,6 +5,7 @@ using ArcSharp.Lexing;
 using ArcSharp.Syntax;
 using BinaryOperatorKind = Microsoft.CodeAnalysis.Operations.BinaryOperatorKind;
 using BoundKind = ArcSharp.Binding.TypeKind;
+using DiagnosticSeverity = ArcSharp.Lexing.DiagnosticSeverity;
 using RefKind = ArcSharp.Syntax.RefKind;
 using RoslynKind = Microsoft.CodeAnalysis.TypeKind;
 using UnaryOperatorKind = Microsoft.CodeAnalysis.Operations.UnaryOperatorKind;
@@ -537,6 +538,11 @@ sealed partial class RoslynLowering
             return LowerWeakCall(call);
         }
 
+        if (IsGc(target))
+        {
+            return LowerGc(call);
+        }
+
         if (target.ContainingType.SpecialType == SpecialType.System_Object
             || IsStringMember(target) && target.Name != "Length")
         {
@@ -691,6 +697,36 @@ sealed partial class RoslynLowering
         }
 
         Report(call.Syntax, $"WeakReference<T> has no method '{call.TargetMethod.Name}'", "ARC2001");
+        return ErrorExpr();
+    }
+
+    private BoundExpr LowerGc(IInvocationOperation call)
+    {
+        switch (call.TargetMethod.Name)
+        {
+            case "SuppressFinalize" when call.Arguments.Length == 1:
+            {
+                var target = LowerExpr(call.Arguments[0].Value);
+                if (!target.Type.IsReferenceType && target.Type != _error)
+                {
+                    Report(call.Syntax, "GC.SuppressFinalize takes a reference: a value type would have to be boxed", DiagnosticCatalog.UnsupportedConstructId);
+                    return ErrorExpr();
+                }
+
+                return new BoundGcCall { Which = GcKind.SuppressFinalize, Argument = target, Type = _void };
+            }
+            case "Collect" when call.Arguments.Length == 0:
+                Report(call.Syntax, DiagnosticCatalog.GcCollectMessage, DiagnosticCatalog.ArcClrDisagreementId, DiagnosticSeverity.Info);
+                return new BoundGcCall { Which = GcKind.Collect, Type = _void };
+            case "WaitForPendingFinalizers" when call.Arguments.Length == 0:
+                Report(call.Syntax, DiagnosticCatalog.GcWaitMessage, DiagnosticCatalog.ArcClrDisagreementId, DiagnosticSeverity.Info);
+                return new BoundGcCall { Which = GcKind.WaitForPendingFinalizers, Type = _void };
+            case "ReRegisterForFinalize":
+                Report(call.Syntax, DiagnosticCatalog.GcReRegisterMessage, DiagnosticCatalog.UnsupportedConstructId);
+                return ErrorExpr();
+        }
+
+        Report(call.Syntax, $"GC.{call.TargetMethod.Name} is not supported", DiagnosticCatalog.UnsupportedConstructId);
         return ErrorExpr();
     }
 
@@ -1143,6 +1179,9 @@ sealed partial class RoslynLowering
 
     private static bool IsConsole(IMethodSymbol method) =>
         method.ContainingType.Name == "Console" && method.ContainingType.ContainingNamespace?.ToDisplayString() == "System";
+
+    private static bool IsGc(IMethodSymbol method) =>
+        method.ContainingType.Name == "GC" && method.ContainingType.ContainingNamespace?.ToDisplayString() == "System";
 
     private static bool IsConcat(IMethodSymbol method) =>
         method.Name == "Concat" && method.ContainingType.SpecialType == SpecialType.System_String;

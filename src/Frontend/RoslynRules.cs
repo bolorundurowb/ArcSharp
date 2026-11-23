@@ -4,6 +4,7 @@ using RoslynKind = Microsoft.CodeAnalysis.TypeKind;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace ArcSharp.Frontend;
 
@@ -41,6 +42,80 @@ sealed partial class RoslynLowering
             var model = _compilation.GetSemanticModel(tree);
             new LifetimeRules(this, model).Visit(tree.GetRoot());
         }
+    }
+
+    // A finaliser runs while the object's strong count is zero, so a store of
+    // 'this' that outlives the finaliser would resurrect it. Only a store the
+    // compiler can see is rejected here; a store hidden behind a call is
+    // caught by the runtime check that aborts when the count is above zero.
+    public void ReportFinaliserRules()
+    {
+        foreach (var tree in _compilation.SyntaxTrees)
+        {
+            var model = _compilation.GetSemanticModel(tree);
+            foreach (var destructor in tree.GetRoot().DescendantNodes().OfType<DestructorDeclarationSyntax>())
+            {
+                if (model.GetOperation(destructor) is { } body)
+                {
+                    ReportResurrection(body);
+                }
+            }
+        }
+    }
+
+    private void ReportResurrection(IOperation body)
+    {
+        var aliases = new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default);
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (var operation in body.DescendantsAndSelf())
+            {
+                switch (operation)
+                {
+                    case IVariableDeclaratorOperation { Initializer: { } initialiser } declarator
+                        when IsThisDerived(initialiser.Value, aliases):
+                        changed |= aliases.Add(declarator.Symbol);
+                        break;
+                    case ISimpleAssignmentOperation { Target: ILocalReferenceOperation local } assignment
+                        when IsThisDerived(assignment.Value, aliases):
+                        changed |= aliases.Add(local.Local);
+                        break;
+                }
+            }
+        }
+        while (changed);
+
+        foreach (var operation in body.DescendantsAndSelf())
+        {
+            if (operation is ISimpleAssignmentOperation
+                {
+                    Target: IFieldReferenceOperation or IPropertyReferenceOperation or IArrayElementReferenceOperation
+                } assignment
+                && IsThisDerived(assignment.Value, aliases))
+            {
+                Report(assignment.Syntax,
+                    "a finaliser must not store 'this' in a field, property, or array element: an object cannot be resurrected",
+                    "ARC2016");
+            }
+        }
+    }
+
+    // 'this', a conversion of it, or a local that was assigned one of those.
+    private static bool IsThisDerived(IOperation value, HashSet<ILocalSymbol> aliases)
+    {
+        while (value is IConversionOperation conversion)
+        {
+            value = conversion.Operand;
+        }
+
+        return value switch
+        {
+            IInstanceReferenceOperation => true,
+            ILocalReferenceOperation local => aliases.Contains(local.Local),
+            _ => false
+        };
     }
 
     private sealed class SyntaxRules : CSharpSyntaxWalker
@@ -150,9 +225,6 @@ sealed partial class RoslynLowering
                     break;
                 case SyntaxKind.IndexerDeclaration:
                     Reject(node, "indexers are not supported");
-                    break;
-                case SyntaxKind.DestructorDeclaration:
-                    Reject(node, "finalisers are not supported yet");
                     break;
                 case SyntaxKind.NameColon:
                     Reject(node, "named arguments are not supported");

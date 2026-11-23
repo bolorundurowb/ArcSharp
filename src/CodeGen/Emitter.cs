@@ -75,7 +75,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         _mod.AppendLine($"target triple = \"{_triple}\"");
         _mod.AppendLine();
         _mod.AppendLine("%ArcSlot = type { i64, i32, i32, i8* }");
-        _mod.AppendLine("%TypeInfo = type { i8*, i64, void (i8*)*, i8**, i64, i8**, i64, i8*, %ArcSlot*, i64 }");
+        _mod.AppendLine("%TypeInfo = type { i8*, i64, void (i8*)*, i8**, i64, i8**, i64, i8*, %ArcSlot*, i64, void (i8*)* }");
         _mod.AppendLine();
         EmitRuntimeDecls();
         _mod.AppendLine();
@@ -156,6 +156,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                      "declare void @arc_console_write_double(double, i32)",
             "declare void @arc_console_newline()",
             "declare i32 @arc_is_instance(i8*, %TypeInfo*)",
+            "declare void @arc_suppress_finalize(i8*)",
             "declare void @arc_set_roots(i8***, i64)",
             "declare void @arc_report()",
                  })
@@ -236,7 +237,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var slots = EmitSlots(t, out var count);
         _mod.AppendLine(
             $"@{t.Name}__ti = constant %TypeInfo {{ " +
-            $"i8* {name}, i64 {t.HeapSize}, void (i8*)* null, i8** null, i64 0, i8** null, i64 0, i8* null, {slots}, i64 {count} }}");
+            $"i8* {name}, i64 {t.HeapSize}, void (i8*)* null, i8** null, i64 0, i8** null, i64 0, i8* null, {slots}, i64 {count}, void (i8*)* null }}");
     }
 
     private void EmitStaticRoots()
@@ -329,16 +330,57 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             : "i8* null";
         var slots = EmitSlots(t, out var slotCount);
 
+        var chainOwner = NearestFinaliser(t);
+        var finaliserExpr = chainOwner != null
+            ? $"void (i8*)* @{chainOwner.Name}__finalisers"
+            : "void (i8*)* null";
+
         _mod.AppendLine(
             $"@{t.Name}__ti = constant %TypeInfo {{ " +
             $"i8* {name}, " +
-            $"i64 {size}, void (i8*)* @{t.Name}__deinit, {vtExpr}, i64 {k}, {itExpr}, i64 {s}, {baseExpr}, {slots}, i64 {slotCount} }}");
+            $"i64 {size}, void (i8*)* @{t.Name}__deinit, {vtExpr}, i64 {k}, {itExpr}, i64 {s}, {baseExpr}, {slots}, i64 {slotCount}, {finaliserExpr} }}");
+
+        if (t.Finaliser != null)
+        {
+            EmitFinaliserChain(t, fns);
+        }
 
         fns.AppendLine($"define void @{t.Name}__deinit(i8* %self) {{");
         fns.AppendLine("entry:");
         foreach (var f in t.InstanceFields)
         {
             EmitFieldTeardown(fns, $"%self", f);
+        }
+
+        fns.AppendLine("  ret void");
+        fns.AppendLine("}");
+        fns.AppendLine();
+    }
+
+    private static TypeSymbol? NearestFinaliser(TypeSymbol? type)
+    {
+        while (type != null && type.Finaliser == null)
+        {
+            type = type.BaseType;
+        }
+
+        return type;
+    }
+
+    // The runtime calls one function per object, so each class that declares a
+    // finaliser gets a function that runs its own body and then the nearest
+    // inherited one. That is the derived-before-base order the contract gives.
+    // The runtime runs it before __deinit releases any field, so a finaliser
+    // can still use its children.
+    private void EmitFinaliserChain(TypeSymbol t, StringBuilder fns)
+    {
+        fns.AppendLine($"define void @{t.Name}__finalisers(i8* %self) {{");
+        fns.AppendLine("entry:");
+        fns.AppendLine($"  call void @{t.Finaliser!.MangledName}(i8* %self)");
+        var inherited = NearestFinaliser(t.BaseType);
+        if (inherited != null)
+        {
+            fns.AppendLine($"  call void @{inherited.Name}__finalisers(i8* %self)");
         }
 
         fns.AppendLine("  ret void");
@@ -1073,6 +1115,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundWeakRefTryGet wt: return EmitWeakRefTryGet(wt);
             case BoundWeakRefSet ws: return EmitWeakRefSet(ws);
             case BoundConsoleCall cc: return EmitConsole(cc);
+            case BoundGcCall gc: return EmitGc(gc);
             default: return "0";
         }
     }
@@ -1968,6 +2011,20 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var got = Inst($"call i8* @arc_weakref_try_get(i8* {wr})");
         StoreRefLValue(n.OutTarget, got);
         return Inst($"icmp ne i8* {got}, null");
+    }
+
+    private string EmitGc(BoundGcCall c)
+    {
+        // Collect and WaitForPendingFinalizers have nothing to do under ARC.
+        if (c.Which != GcKind.SuppressFinalize)
+        {
+            return "";
+        }
+
+        var target = EmitR(c.Argument!);
+        _stmtTemps.Add(target);
+        Do($"call void @arc_suppress_finalize(i8* {target})");
+        return "";
     }
 
     private string EmitWeakRefSet(BoundWeakRefSet n)
