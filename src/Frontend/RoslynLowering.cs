@@ -430,7 +430,7 @@ sealed partial class RoslynLowering
                 case IMethodSymbol method when method.MethodKind is MethodKind.Destructor:
                     CreateFinaliser(type, method, declaredMethods);
                     break;
-                case IMethodSymbol { MethodKind: MethodKind.StaticConstructor, IsImplicitlyDeclared: true } method:
+                case IMethodSymbol { MethodKind: MethodKind.StaticConstructor } method:
                     var initialiser = new MethodSymbol
                     {
                         Name = "<field_init>",
@@ -439,10 +439,8 @@ sealed partial class RoslynLowering
                         ReturnType = _void
                     };
                     type.StaticFieldInitialiser = initialiser;
+                    type.HasExplicitStaticConstructor = !method.IsImplicitlyDeclared;
                     Queue(initialiser, method);
-                    break;
-                case IMethodSymbol method when method.MethodKind is MethodKind.StaticConstructor:
-                    ReportOnce(method, "static constructors are not supported yet");
                     break;
                 case IEventSymbol:
                     Report(member.Locations.FirstOrDefault(), "events are not supported yet", DiagnosticCatalog.UnsupportedConstructId);

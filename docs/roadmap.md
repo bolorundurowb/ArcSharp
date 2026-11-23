@@ -405,11 +405,12 @@ uses. Each step below ships on its own.
    [checked arithmetic](features/checked.md), and [direct operator overloads](features/operators-members.md)
    are implemented. Overloaded compound assignment, increment and decrement,
    short-circuiting operators and struct operator signatures still need support.
-3. Member forms: static constructors remain.
-   [Constants, readonly fields, non-generic containing types, and expression-bodied
-   methods and constructors](features/operators-members.md) and
-   [named, optional and parameter-array arguments](features/arguments.md) are implemented.
-   [Accessor bodies and auto-property initialisers](features/accessors.md) are implemented.
+3. Member forms: [static constructors](features/static-constructors.md),
+   [constants, readonly fields, nested types and expression-bodied methods and
+   constructors](features/operators-members.md),
+   [named, optional and parameter-array arguments](features/arguments.md), and
+   [accessor bodies and auto-property initialisers](features/accessors.md) are
+   implemented within the documented subset.
 4. Enums remain. [Indexer get and set](features/accessors.md) are implemented.
 5. The remaining struct forms: arrays of structs, struct returns, static struct
    fields, by-value struct parameters, struct-typed properties,

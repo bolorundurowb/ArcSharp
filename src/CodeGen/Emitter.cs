@@ -693,8 +693,15 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
-        if (m == m.Owner.StaticFieldInitialiser)
+        var staticInitialiser = m == m.Owner.StaticFieldInitialiser;
+        var explicitInitialiser = staticInitialiser && m.Owner.HasExplicitStaticConstructor;
+        if (staticInitialiser)
         {
+            if (explicitInitialiser)
+            {
+                EmitCachedTypeFailure(m);
+            }
+
             var guard = $"@{m.MangledName}.started";
             _mod.AppendLine($"{guard} = private global i1 false");
             var started = Inst($"load i1, i1* {guard}");
@@ -702,6 +709,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             Lbl("field.init");
             // Recursive access sees fields that have already been initialised.
             Do($"store i1 true, i1* {guard}");
+        }
+        else if (m.Owner.HasExplicitStaticConstructor
+            && (m.IsStatic || m.IsConstructor || m.Owner.Kind == TypeKind.Struct))
+        {
+            EmitTypeInitialiserCall(m.Owner);
         }
 
         EmitStmt(b.Body);
@@ -723,6 +735,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             // return statement stores %retval only after its cleanups have
             // run, so nothing is left in it here.
             Lbl("func.unwind");
+            if (explicitInitialiser)
+            {
+                EmitTypeFailure(m);
+            }
+
             Term("br label %func.exit");
         }
 
@@ -1772,13 +1789,50 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private string StaticFieldAddress(FieldSymbol field)
     {
-        if (field.Owner.StaticFieldInitialiser is { } initialiser && _curMethod != initialiser)
+        EmitTypeInitialiserCall(field.Owner);
+        return field.MangledStatic;
+    }
+
+    private void EmitTypeInitialiserCall(TypeSymbol owner)
+    {
+        if (owner.StaticFieldInitialiser is { } initialiser && _curMethod != initialiser)
         {
             Do($"call void @{initialiser.MangledName}()");
             EmitPendingCheck();
         }
+    }
 
-        return field.MangledStatic;
+    private static string TypeFailureSlot(MethodSymbol initialiser) => $"@{initialiser.MangledName}.failure";
+
+    private void EmitCachedTypeFailure(MethodSymbol initialiser)
+    {
+        var slot = TypeFailureSlot(initialiser);
+        _mod.AppendLine($"{slot} = private global i8* null");
+        var cached = Inst($"load i8*, i8** {slot}");
+        var hasFailure = Inst($"icmp ne i8* {cached}, null");
+        Term($"br i1 {hasFailure}, label %type.failed, label %type.check");
+        Lbl("type.failed");
+        Do($"call void @arc_retain(i8* {cached})");
+        Do($"store i8* {cached}, i8** @arc_exception");
+        Term("br label %func.exit");
+        Lbl("type.check");
+    }
+
+    private void EmitTypeFailure(MethodSymbol initialiser)
+    {
+        var type = _program.Types.Single(candidate => candidate.Name == "System.TypeInitializationException");
+        var constructor = type.Methods.Single(candidate => candidate.IsConstructor && candidate.Parameters.Count == 2);
+        var cause = Inst("load i8*, i8** @arc_exception");
+        Do("store i8* null, i8** @arc_exception");
+        var site = SiteOperand(initialiser.Owner.Name);
+        var wrapper = Inst($"call i8* @arc_alloc(%TypeInfo* @{type.Name}__ti, i8* {site})");
+        var length = Encoding.UTF8.GetByteCount(initialiser.Owner.Name);
+        var name = Inst($"call i8* @arc_str_lit(i8* {site}, i64 {length}, i8* {site})");
+        Do($"call void @{constructor.MangledName}(i8* {wrapper}, i8* {name}, i8* {cause})");
+        Do($"call void @arc_release(i8* {name})");
+        Do($"call void @arc_release(i8* {cause})");
+        Do($"call void @arc_store_strong(i8** {TypeFailureSlot(initialiser)}, i8* {wrapper})");
+        Do($"store i8* {wrapper}, i8** @arc_exception");
     }
 
     private string EmitFieldRead(BoundFieldAccess fa)
@@ -2009,22 +2063,27 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             return EmitNewObjectValue(n);
         }
 
+        var pins = BeginPins();
+        var argVals = n.Ctor == null ? [] : EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
+        if (n.Type.HasExplicitStaticConstructor)
+        {
+            EmitTypeInitialiserCall(n.Type);
+        }
+
         var obj = Inst($"call i8* @arc_alloc(%TypeInfo* @{n.Type.Name}__ti, i8* {SiteOperand(n.Site)})");
         if (n.Ctor != null)
         {
-            // The object is a temporary until the constructor returns, so an
-            // exception from an argument or from the constructor releases it.
+            // While its constructor runs, the new object belongs to the
+            // statement and is released if the constructor throws.
             var objIndex = _stmtTemps.Count;
             _stmtTemps.Add(obj);
-            var pins = BeginPins();
-            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"i8* {obj}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
             EmitPendingCheck();
-            EndPins(pins);
             _stmtTemps.RemoveAt(objIndex);
         }
 
+        EndPins(pins);
         return obj;
     }
 
@@ -2966,6 +3025,14 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         else
         {
             fns.AppendLine($"  %r = call {entry.ReturnType.LlvmType} @{entry.MangledName}()");
+        }
+
+        foreach (var type in _program.Types)
+        {
+            if (type.HasExplicitStaticConstructor && type.StaticFieldInitialiser is { } initialiser)
+            {
+                fns.AppendLine($"  call void @arc_assign_take(i8** {TypeFailureSlot(initialiser)}, i8* null)");
+            }
         }
 
         // An exception that no handler caught ends the program here.

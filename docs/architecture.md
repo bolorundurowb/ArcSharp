@@ -485,6 +485,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
 | `ref` / `out` / `in` parameters                        | Implemented                           |
 | Interior-reference owner pins                          | Implemented for calls; longer lifetimes rejected |
+| Static constructors                                    | Once per type, with cached initialisation failure |
 | Properties and indexers                                | Auto-properties and accessor bodies, with class and interface dispatch |
 | `is` / `as`                                            | Implemented                           |
 | Array covariance (runtime store check)                 | Implemented                           |

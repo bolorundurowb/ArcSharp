@@ -134,8 +134,8 @@ field slot. If the field order changes, `ARC_EXC_MESSAGE_OFFSET` in
 raises through `arc_set_exception_types`, which `main` calls before it enters
 `Main`.
 
-There is no `InnerException`. A field of type `Exception` inside `Exception`
-would be a strong cycle and would trigger `ARC3100`.
+The base `Exception` stores its message. `TypeInitializationException`
+also stores the original cause. See [Static constructors](static-constructors.md).
 
 ### Runtime checks become exceptions
 
@@ -186,10 +186,9 @@ normal path does is possible, and is not part of this change.
 
 ## What is not covered
 
-- Exception filters, throw expressions, `InnerException`, `StackTrace`,
+- Exception filters, throw expressions, and `StackTrace`,
   `ToString()`, `AggregateException`, and the rest of the .NET exception types.
 - Exceptions across threads. The runtime is single-threaded.
-- `checked` and `unchecked` arithmetic. That arrives with the operators in M6.
 
 ## How it is verified
 

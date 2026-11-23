@@ -51,6 +51,7 @@ before you rely on it for anything beyond experiments.
 - [Operator overloads and member declarations](features/operators-members.md)
 - [Named, optional and parameter-array arguments](features/arguments.md)
 - [Properties and indexers](features/accessors.md)
+- [Static constructors](features/static-constructors.md)
 - [Constant-label switch statements](features/switch-statement.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 

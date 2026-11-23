@@ -219,7 +219,11 @@ Classes and structs can declare `const` and `readonly` fields. Non-generic
 types can contain nested types. Methods, constructors and supported operators
 can use an expression body (`=> expr`).
 
-Not supported yet: `sealed`, `partial`, static constructors, types nested in
+An explicit static constructor runs once, after static initialisers, on the
+first relevant use of the type. A failure surfaces as
+`TypeInitializationException` on the triggering use and on later uses.
+
+Not supported yet: `sealed`, `partial`, types nested in
 generic types,
 default interface accessor bodies, ref-returning properties and indexers,
 overloaded updates, and extension methods. Method and constructor calls accept
@@ -393,7 +397,7 @@ compiler adds it to every program, so no reference is needed:
 | `SystemException` | `Exception` |
 | `ArithmeticException` | `SystemException` |
 | `DivideByZeroException`, `OverflowException` | `ArithmeticException` |
-| `IndexOutOfRangeException`, `InvalidCastException`, `NullReferenceException`, `ArrayTypeMismatchException`, `InvalidOperationException`, `NotSupportedException`, `NotImplementedException`, `ArgumentException` | `SystemException` |
+| `IndexOutOfRangeException`, `InvalidCastException`, `NullReferenceException`, `ArrayTypeMismatchException`, `InvalidOperationException`, `NotSupportedException`, `NotImplementedException`, `ArgumentException`, `TypeInitializationException` | `SystemException` |
 | `ArgumentNullException` | `ArgumentException` |
 
 Each type has a parameterless constructor, which sets a default message, and a
@@ -422,8 +426,8 @@ process exits with code 70. The counts on that line are balanced, because the
 unwind released everything.
 
 Not supported: exception filters (`catch ... when`) and throw expressions are
-rejected with `ARC3001`. There is no `InnerException`, `StackTrace`, or
-`ToString()`.
+rejected with `ARC3001`. The base exception exposes `Message`.
+`TypeInitializationException` additionally exposes `TypeName` and `InnerException`.
 
 ### `using` and `IDisposable`
 
@@ -591,7 +595,7 @@ says so. The finalisation contract is the runtime's compatibility profile.
 | Formatting a `double` or `float` | Shortest round-trippable form, such as `0.3333333333333333` | Six significant digits, such as `0.333333` |
 | Null dereference, index out of range, invalid class cast, integer division by zero, array type mismatch | `NullReferenceException`, `IndexOutOfRangeException`, `InvalidCastException`, `DivideByZeroException`, `ArrayTypeMismatchException`, all catchable | The same exceptions, all catchable. See [Exceptions](#exceptions) |
 | Unhandled exception | Prints the type, message, and stack trace, and exits with a non-zero code | Prints `Unhandled exception. Type: message`, then the `[arc]` line, and exits with code 70. There is no stack trace |
-| Exception members | `Message`, `InnerException`, `StackTrace`, `ToString()`, and more | `Message` only. There is no `InnerException`, because a field of its own type would trigger `ARC3100` |
+| Exception members | `Message`, `InnerException`, `StackTrace`, `ToString()`, and more | The base exposes `Message`. `TypeInitializationException` exposes `TypeName` and `InnerException`. |
 | Exception filters and throw expressions | Supported | `ARC3001` |
 | Exception while another is in flight | A `finally` block that throws replaces the exception in flight | The same. The replaced exception is released |
 | `catch` of a type that is not an exception | Compile error | Compile error from Roslyn |

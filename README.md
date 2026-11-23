@@ -70,7 +70,7 @@ reclaimed.
 - Constructors, instance and static methods and fields, and instance
   properties, indexers, constants, readonly fields, and expression-bodied methods
   and constructors. Calls support named arguments, optional defaults, and
-  parameter arrays.
+  parameter arrays. Static constructors run lazily on first use.
 - Structs with value semantics, including reference fields, nested structs,
   and structs inside classes.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
