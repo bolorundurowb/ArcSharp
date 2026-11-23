@@ -480,7 +480,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | `WeakReference<T>` fields, locals, and generic arguments | Implemented |
 | Arrays (value & reference element types)               | Implemented                           |
 | Strings + `Console`                                    | Implemented                           |
-| Control flow (`if`/`while`/`for`/`return`)             | Implemented                           |
+| Control flow (`if`/`while`/`do`/`for`/`return`)             | Implemented                           |
 | `float` / `double`                                     | Implemented                           |
 | `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
 | `ref` / `out` / `in` parameters                        | Implemented                           |

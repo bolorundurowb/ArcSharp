@@ -398,7 +398,8 @@ uses. Each step below ships on its own.
 **Steps.**
 
 1. Statements: `foreach` over arrays, `switch`, `break`, `continue`,
-   `do`/`while`, `++`, `--`, and compound assignment.
+   `++`, `--`, and compound assignment. [Post-test loops](features/do-while.md)
+   are implemented.
 2. Operators: bitwise operators and shifts, operator overloading, and
    `checked` / `unchecked`, which uses the exceptions from M5.
 3. Member forms: `const`, `readonly`, static constructors, nested types,

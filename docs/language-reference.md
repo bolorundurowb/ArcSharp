@@ -337,13 +337,14 @@ error.
 | Expression statement | Assignment, a method call, or `new`. |
 | `if` and `else`, including `else if` | The condition must be `bool`. |
 | `while` | |
+| `do`/`while` | Evaluates the condition after each iteration. |
 | `for` | Each of the three clauses is optional. |
 | `using` | `using (var x = expr) { ... }` or `using (expr) { ... }`. See below. |
 | `return` | With or without a value. |
 | `try`, `catch`, `finally` | See [Exceptions](#exceptions). |
 | `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
-Not supported: `do`/`while`, `foreach`, `switch`, `break`, `continue`, `goto`,
+Not supported: `foreach`, `switch`, `break`, `continue`, `goto`,
 `lock`, `yield`, `checked`,
 `unchecked`, `unsafe`, `fixed`, and local functions. Because `break` and
 `continue` are missing, end a loop by making its condition false.

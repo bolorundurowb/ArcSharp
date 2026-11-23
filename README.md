@@ -75,7 +75,7 @@ reclaimed.
   `string`, plus single-dimensional arrays.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept
   alive for the call. Also `is` and `as`.
-- `if`, `while`, `for`, and `return`.
+- `if`, `while`, `do`/`while`, `for`, and `return`.
 - `using` statements with deterministic `Dispose()` at scope exit, including
   when an exception unwinds
   (`IDisposable` is structural: any type with a `Dispose()` method qualifies).

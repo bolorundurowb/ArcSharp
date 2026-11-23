@@ -947,7 +947,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private void EmitWhile(BoundWhile s)
     {
         string condL = L("while.cond"), bodyL = L("while.body"), endL = L("while.end");
-        Term($"br label %{condL}");
+        Term($"br label %{(s.ConditionIsTop ? condL : bodyL)}");
         Lbl(condL);
         var mark = _stmtTemps.Count;
         var smark = _stmtStructTemps.Count;

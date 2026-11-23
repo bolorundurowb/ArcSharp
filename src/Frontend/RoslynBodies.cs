@@ -201,7 +201,8 @@ sealed partial class RoslynLowering
             Condition = loop.Condition == null
                 ? new BoundLiteral { Type = _bool, LitKind = LiteralKind.Bool, BoolValue = true }
                 : LowerExpr(loop.Condition),
-            Body = LowerStmt(loop.Body)
+            Body = LowerStmt(loop.Body),
+            ConditionIsTop = loop.ConditionIsTop
         },
         IForLoopOperation loop => LowerFor(loop),
         IUsingOperation usingOperation => LowerUsing(usingOperation),

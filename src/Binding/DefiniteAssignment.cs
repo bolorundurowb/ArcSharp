@@ -84,8 +84,20 @@ public static class DefiniteAssignment
 
                 case BoundWhile w:
                     {
-                        VisitExpr(w.Condition, assigned);
-                        VisitStmt(w.Body, new HashSet<int>(assigned));   // body may run zero times
+                        if (w.ConditionIsTop)
+                        {
+                            VisitExpr(w.Condition, assigned);
+                            VisitStmt(w.Body, new HashSet<int>(assigned));
+                        }
+                        else
+                        {
+                            if (!VisitStmt(w.Body, assigned))
+                            {
+                                return false;
+                            }
+
+                            VisitExpr(w.Condition, assigned);
+                        }
                         return true;
                     }
 

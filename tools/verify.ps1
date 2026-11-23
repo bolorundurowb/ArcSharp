@@ -300,6 +300,7 @@ try {
     Invoke-Sample exceptions_basic "alloc=16 dead=16 freed=16 live=0" "outer caught inner" @("exceptions_basic")          # try, catch, finally, throw
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
     Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
+    Invoke-Sample do_while "alloc=1 dead=1 freed=1 live=0" "do while PASS" @("do_while")
     Invoke-Sample exceptions_using "alloc=74 dead=74 freed=74 live=0" "exceptions using PASS" @("exceptions_using")       # Dispose runs while unwinding
     Invoke-Sample exceptions_finaliser "alloc=32 dead=32 freed=32 live=0" "exceptions finaliser PASS" @("exceptions_finaliser") # a throwing finaliser is reported and teardown continues
 
@@ -328,6 +329,7 @@ try {
     Invoke-LeakCheck cycle_weak 0 "done (weak cycle)" @("cycle_weak") @() @("\[arc\] survivor")
 
     Write-Host "--- unsupported constructs must be rejected (ARC3001 / CS / ARC2011 / ARC2012 / ARC2013 / ARC2015 / ARC2016) ---"
+    Invoke-MustFail do_while_condition "CS0029" @("do_while_condition")
     Invoke-MustFail break           "ARC3001" @("break")
     Invoke-MustFail exception_filter "ARC3001" @("exception_filter")
     Invoke-MustFail throw_expression "throw expressions are not supported" @("throw_expression")

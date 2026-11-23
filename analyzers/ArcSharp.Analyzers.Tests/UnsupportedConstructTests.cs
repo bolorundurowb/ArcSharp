@@ -10,7 +10,6 @@ public sealed class UnsupportedConstructTests
     {
         { "break", "class C { static void Main() { while (true) { break; } } }" },
         { "continue", "class C { static void Main() { while (true) { continue; } } }" },
-        { "do", "class C { static void Main() { int i = 0; do { i = i + 1; } while (i < 3); } }" },
         { "foreach", "class C { static void Main() { int[] xs = new int[1]; foreach (int x in xs) { } } }" },
         { "switch", "class C { static void Main() { int x = 1; switch (x) { case 1: break; } } }" },
         { "exception filter", "class C { static void Main() { try { } catch (System.Exception e) when (e != null) { } } }" },

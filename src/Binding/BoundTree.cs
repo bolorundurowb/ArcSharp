@@ -216,6 +216,7 @@ public sealed class BoundIf : BoundStmt
 
 public sealed class BoundWhile : BoundStmt
 {
+    public required bool ConditionIsTop;
     public required BoundExpr Condition;
     public required BoundStmt Body;
 }

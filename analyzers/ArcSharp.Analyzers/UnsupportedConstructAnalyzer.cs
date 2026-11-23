@@ -46,7 +46,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.BreakStatement,
         SyntaxKind.ContinueStatement,
         SyntaxKind.GotoStatement,
-        SyntaxKind.DoStatement,
         SyntaxKind.ForEachStatement,
         SyntaxKind.ForEachVariableStatement,
         SyntaxKind.SwitchStatement,
@@ -156,7 +155,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.ContinueStatement =>
             "'continue' is not supported: restructure the loop with an 'if'",
         SyntaxKind.GotoStatement => "'goto' is not supported",
-        SyntaxKind.DoStatement => "'do'/'while' loops are not supported: use 'while'",
         SyntaxKind.ForEachStatement or SyntaxKind.ForEachVariableStatement =>
             "'foreach' is not supported: use a 'for' loop with an index",
         SyntaxKind.SwitchStatement => "'switch' is not supported: use 'if'/'else'",
