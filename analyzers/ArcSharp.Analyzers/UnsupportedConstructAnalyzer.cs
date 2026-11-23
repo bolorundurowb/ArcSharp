@@ -50,9 +50,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.ForEachStatement,
         SyntaxKind.ForEachVariableStatement,
         SyntaxKind.SwitchStatement,
-        SyntaxKind.TryStatement,
-        SyntaxKind.ThrowStatement,
         SyntaxKind.ThrowExpression,
+        SyntaxKind.CatchFilterClause,
         SyntaxKind.LockStatement,
         SyntaxKind.YieldReturnStatement,
         SyntaxKind.YieldBreakStatement,
@@ -161,9 +160,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.ForEachStatement or SyntaxKind.ForEachVariableStatement =>
             "'foreach' is not supported: use a 'for' loop with an index",
         SyntaxKind.SwitchStatement => "'switch' is not supported: use 'if'/'else'",
-        SyntaxKind.TryStatement => "exceptions are not supported: 'try'/'catch'/'finally'",
-        SyntaxKind.ThrowStatement or SyntaxKind.ThrowExpression =>
-            "'throw' is not supported: exceptions are not implemented",
+        SyntaxKind.ThrowExpression => "throw expressions are not supported: use a 'throw' statement",
+        SyntaxKind.CatchFilterClause => "exception filters are not supported",
         SyntaxKind.LockStatement => "'lock' is not supported: there are no threads",
         SyntaxKind.YieldReturnStatement or SyntaxKind.YieldBreakStatement =>
             "'yield' is not supported: iterators are not implemented",
