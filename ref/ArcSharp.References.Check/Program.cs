@@ -312,19 +312,20 @@ static SurfaceCase[] Cases() =>
             }
         }
         """, "CS1729"),
-    new("print-class", """
+    new("print-struct", """
         using System;
-        class Box
+        struct Point
         {
+            public int X;
         }
         class P
         {
             static void M()
             {
-                Console.WriteLine(new Box());
+                Console.WriteLine(new Point());
             }
         }
-        """, "CS1503"),
+        """),
     new("weak-value", """
         using System;
         class P

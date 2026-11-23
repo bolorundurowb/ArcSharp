@@ -1625,6 +1625,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundStringCompound compound: return EmitStringCompound(compound);
             case BoundConversion cv: return EmitConversion(cv);
             case BoundIs i: return EmitIs(i);
+            case BoundUnbox unbox: return EmitUnbox(unbox);
             case BoundAs a: return EmitAs(a);
             case BoundByRefArg br: return EmitR(br.Lvalue);
             case BoundWeakRefNew wn: return EmitWeakRefNew(wn);
@@ -2895,6 +2896,20 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
     }
 
+    private string EmitUnbox(BoundUnbox unbox)
+    {
+        var value = EmitR(unbox.Operand);
+        TrackReferenceTemp(unbox.Operand, value);
+        EmitNullCheck(unbox.Operand, value);
+        var field = unbox.BoxedValue;
+        Do($"call void @arc_cast_check(i8* {value}, %TypeInfo* @{field.Owner.Name}__ti)");
+        EmitPendingCheck();
+        var source = FieldAddr(value, field.Owner, field);
+        var copy = NewStructTemp(unbox.Type);
+        CopyStruct(unbox.Type, copy, source);
+        return copy;
+    }
+
     private string EmitIs(BoundIs i)
     {
         var v = EmitR(i.Operand);
@@ -3036,9 +3051,19 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         var t = c.Argument.Type;
-        if (t.Kind == TypeKind.String)
+        if (t.Kind is TypeKind.String or TypeKind.Struct)
         {
             var v = EmitR(c.Argument);
+            if (t.Kind == TypeKind.Struct)
+            {
+                v = EmitLiteral(new BoundLiteral
+                {
+                    Type = t,
+                    LitKind = Syntax.LiteralKind.String,
+                    StringValue = t.Name
+                });
+            }
+
             _stmtTemps.Add(v);
             Do($"call void @arc_console_write(i8* {v}, i32 {nl})");
             return "";

@@ -118,11 +118,12 @@ Supported:
   classes and other structs, and struct assignment.
 - Copying a struct retains its reference fields; dropping a struct value
   releases them.
+- Struct interface implementations and boxing to supported reference types.
+- A `ToString()` override can format the struct for `Console.Write` or
+  `Console.WriteLine`.
 
 Not supported yet, each reported as `ARC3001`:
 
-- Printing a struct value with `Console.Write` or `Console.WriteLine`.
-- `virtual` or `override` members on a struct, and interfaces on a struct.
 - A struct that contains itself, directly or through another struct.
 - `using` a struct resource.
 

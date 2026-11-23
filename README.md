@@ -74,7 +74,8 @@ reclaimed.
   parameter arrays. Static constructors run lazily on first use.
 - Structs with value semantics, including reference fields, nested structs,
   structs inside classes, struct arrays, static fields, properties, parameters,
-  and return values.
+  and return values. Structs can implement interfaces and override their
+  printed representation.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
   `string`, enums, and single-dimensional arrays.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept

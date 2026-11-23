@@ -413,10 +413,9 @@ uses. Each step below ships on its own.
    implemented within the documented subset.
 4. [Enums](features/enums.md) and [indexer get and set](features/accessors.md)
    are implemented within the documented subset.
-5. [Struct parameters and return values](features/struct-calls.md) and
-   [struct arrays, static fields and properties](features/struct-storage.md)
-   are implemented. `virtual`/`override` and interfaces on structs, and printing
-   a struct remain.
+5. [Struct parameters and return values](features/struct-calls.md),
+   [struct arrays, static fields and properties](features/struct-storage.md), and [struct interface dispatch, overrides and printing](features/struct-interfaces.md)
+   are implemented within the documented subset.
 6. Records with the members C# synthesises and pattern matching.
    [Base interface lists and explicit implementations](features/base-interfaces.md)
    are implemented.

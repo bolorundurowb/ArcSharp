@@ -31,7 +31,6 @@ public sealed class UnsupportedConstructTests
         { "virtual generic method", "class C { public virtual T M<T>(T value) { return value; } }" },
         { "interface generic method", "interface I { T M<T>(T value); }" },
         { "using var", "class C { static void Main() { using var d = new System.IO.MemoryStream(); } }" },
-        { "struct interface", "struct S : System.IDisposable { public void Dispose() { } } class C { }" },
         { "multi-dimensional array", "class C { static void Main() { int[,] xs = new int[1, 1]; } }" },
         { "sealed class", "sealed class C { }" },
         { "partial class", "partial class C { }" },

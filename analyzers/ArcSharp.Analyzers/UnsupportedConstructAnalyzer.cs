@@ -36,7 +36,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterOperationAction(AnalyzeEnumConversion, OperationKind.Conversion);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
         context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration, SyntaxKind.IndexerDeclaration);
-        context.RegisterSyntaxNodeAction(AnalyzeStruct, SyntaxKind.StructDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeArrayType, SyntaxKind.ArrayType);
         context.RegisterSyntaxNodeAction(AnalyzeObjectCreation, SyntaxKind.ObjectCreationExpression);
         context.RegisterSyntaxNodeAction(AnalyzeInvocation, SyntaxKind.InvocationExpression);
@@ -352,17 +351,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
                 property.GetLocation(), "default interface accessors are not supported"));
-        }
-    }
-
-    private static void AnalyzeStruct(SyntaxNodeAnalysisContext context)
-    {
-        var s = (StructDeclarationSyntax)context.Node;
-        if (s.BaseList != null)
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, s.BaseList.GetLocation(),
-                "interfaces are not supported on structs"));
         }
     }
 

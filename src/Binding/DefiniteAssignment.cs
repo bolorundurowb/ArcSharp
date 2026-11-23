@@ -440,6 +440,7 @@ public static class DefiniteAssignment
                 case BoundBinary b: VisitExpr(b.Left, assigned); VisitExpr(b.Right, assigned); break;
                 case BoundUnary u: VisitExpr(u.Operand, assigned); break;
                 case BoundConversion cv: VisitExpr(cv.Operand, assigned); break;
+                case BoundUnbox unbox: VisitExpr(unbox.Operand, assigned); break;
                 case BoundLength len: VisitExpr(len.Receiver, assigned); break;
                 case BoundConsoleCall cc: if (cc.Argument != null) { VisitExpr(cc.Argument, assigned); } break;
                 case BoundGcCall gc: if (gc.Argument != null) { VisitExpr(gc.Argument, assigned); } break;

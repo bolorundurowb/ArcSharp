@@ -25,6 +25,7 @@ public sealed class TypeSymbol
     public TypeSymbol? BaseType;
     public MethodSymbol? StaticFieldInitialiser;
     public bool HasExplicitStaticConstructor;
+    public MethodSymbol? ToStringOverride;
     public MethodSymbol? Finaliser; // the '~T()' declared by this class, not an inherited one
     public List<TypeSymbol> Interfaces = [];
     public List<FieldSymbol> InstanceFields = []; // includes inherited, in layout order

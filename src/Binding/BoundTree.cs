@@ -176,6 +176,12 @@ public sealed class BoundConversion : BoundExpr
     public bool IsChecked;
 }
 
+public sealed class BoundUnbox : BoundExpr
+{
+    public required BoundExpr Operand;
+    public required FieldSymbol BoxedValue;
+}
+
 public sealed class BoundIs : BoundExpr
 {
     public required BoundExpr Operand;

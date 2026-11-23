@@ -595,12 +595,7 @@ sealed partial class RoslynLowering
         IUnaryOperation unary => LowerUnary(unary),
         IConversionOperation conversion => LowerConversion(conversion),
         IIsTypeOperation { TypeOperand.TypeKind: RoslynKind.Enum } test => UnsupportedExpr(test),
-        IIsTypeOperation test => new BoundIs
-        {
-            Operand = LowerExpr(test.ValueOperand),
-            TestType = MapType(test.TypeOperand, test.Syntax.GetLocation()),
-            Type = _bool
-        },
+        IIsTypeOperation test => LowerTypeTest(test),
         ISimpleAssignmentOperation assignment => LowerAssignment(assignment),
         ICompoundAssignmentOperation assignment => LowerCompound(assignment),
         IIncrementOrDecrementOperation increment => LowerIncrement(increment),
@@ -610,6 +605,35 @@ sealed partial class RoslynLowering
         IDeclarationExpressionOperation declaration => LowerExpr(declaration.Expression),
         _ => UnsupportedExpr(operation)
     };
+
+    private BoundExpr LowerTypeTest(IIsTypeOperation test)
+    {
+        var operand = LowerExpr(test.ValueOperand);
+        var type = MapType(test.TypeOperand, test.Syntax.GetLocation());
+        if (operand.Type.Kind == BoundKind.Struct)
+        {
+            operand = BoxValue(operand, test.Syntax);
+        }
+
+        if (type.Kind == BoundKind.Struct)
+        {
+            type = StructBox(type).Owner;
+        }
+
+        return new BoundIs { Operand = operand, TestType = type, Type = _bool };
+    }
+
+    private BoundExpr BoxValue(BoundExpr value, SyntaxNode syntax)
+    {
+        var box = StructBox(value.Type).Owner;
+        return new BoundNewObject
+        {
+            Type = box,
+            Ctor = box.Methods[0],
+            Arguments = [value],
+            Site = Site(syntax)
+        };
+    }
 
     private BoundExpr LowerLiteral(ILiteralOperation literal) =>
         LowerConstant(literal.ConstantValue.HasValue ? literal.ConstantValue.Value : null, literal.Type, literal.Syntax);
@@ -808,7 +832,7 @@ sealed partial class RoslynLowering
         if (method.Owner.Kind == BoundKind.Interface)
         {
             if (receiver != null
-                && receiver.Type.Kind == BoundKind.Class
+                && receiver.Type.Kind is BoundKind.Class or BoundKind.Struct
                 && _selectors.TryGetValue(method, out selector)
                 && receiver.Type.InterfaceImpl.TryGetValue(selector, out var implementation))
             {
@@ -855,10 +879,20 @@ sealed partial class RoslynLowering
         }
 
         var argument = call.Arguments.Length > 0 ? LowerExpr(UnwrapBoxing(call.Arguments[0].Value)) : null;
-        if (argument != null && argument.Type.Kind == BoundKind.Struct)
+        if (argument?.Type.ToStringOverride is { } toString)
         {
-            Report(call.Syntax, "struct values cannot be printed: print their fields", DiagnosticCatalog.UnsupportedConstructId);
-            return ErrorExpr();
+            argument = new BoundCall { Receiver = argument, Method = toString, Type = _string };
+        }
+
+        if (argument?.Type is { } type && (type.Kind == BoundKind.Enum
+            || type.IsReferenceType && type != _string && argument is not BoundLiteral { LitKind: LiteralKind.Null }))
+        {
+            return UnsupportedExpr(call);
+        }
+
+        if (argument is BoundLiteral { LitKind: LiteralKind.Null } literal)
+        {
+            literal.Type = _string;
         }
 
         return new BoundConsoleCall { Which = which, Argument = argument, Type = _void };
@@ -1221,7 +1255,7 @@ sealed partial class RoslynLowering
             return UnsupportedExpr(conversion);
         }
 
-        if (IsBoxing(conversion) || conversion.Conversion.IsIdentity)
+        if (conversion.Conversion.IsIdentity)
         {
             return LowerExpr(conversion.Operand);
         }
@@ -1231,6 +1265,21 @@ sealed partial class RoslynLowering
         if (value.Type == type || type == _error || value.Type == _error)
         {
             return value;
+        }
+
+        if (value.Type.Kind == BoundKind.Struct && type.IsReferenceType)
+        {
+            return new BoundConversion { Operand = BoxValue(value, conversion.Syntax), Type = type };
+        }
+
+        if (type.Kind == BoundKind.Struct && value.Type.IsReferenceType)
+        {
+            return new BoundUnbox { Operand = value, BoxedValue = StructBox(type), Type = type };
+        }
+
+        if (IsBoxing(conversion))
+        {
+            return UnsupportedExpr(conversion);
         }
 
         // An explicit reference conversion can fail at run time. A cast to an

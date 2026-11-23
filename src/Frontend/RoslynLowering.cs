@@ -31,6 +31,7 @@ sealed partial class RoslynLowering
     private readonly Dictionary<MethodSymbol, int> _selectors = [];
     private readonly Dictionary<string, TypeSymbol> _arrays = [];
     private readonly Dictionary<string, TypeSymbol> _weakRefs = [];
+    private readonly Dictionary<TypeSymbol, FieldSymbol> _structBoxes = [];
     private readonly HashSet<TypeSymbol> _filled = [];
     private readonly HashSet<MethodSymbol> _queued = [];
     private readonly Queue<PendingBody> _bodies = [];
@@ -129,6 +130,7 @@ sealed partial class RoslynLowering
 
         program.Types.AddRange(_named.Values.Where(t => t.Kind is BoundKind.Class or BoundKind.Struct or BoundKind.Interface));
         program.Types.AddRange(_generic.Values);
+        program.Types.AddRange(_structBoxes.Values.Select(field => field.Owner));
         program.InterfaceSelectorCount = _selectors.Count;
         program.MethodBodies.AddRange(_readyBodies);
 
@@ -714,11 +716,6 @@ sealed partial class RoslynLowering
             return;
         }
 
-        if (owner.Kind == BoundKind.Struct && (method.IsVirtual || method.IsOverride))
-        {
-            ReportOnce(method, "virtual members are not supported on structs");
-        }
-
         var returnType = method.MethodKind == MethodKind.Constructor
             ? _void
             : MapType(method.ReturnType, method.Locations.FirstOrDefault());
@@ -734,8 +731,8 @@ sealed partial class RoslynLowering
             ReturnType = returnType,
             IsPublic = method.DeclaredAccessibility == Accessibility.Public,
             IsStatic = method.IsStatic,
-            IsVirtual = method.IsVirtual || method.IsAbstract,
-            IsOverride = method.IsOverride,
+            IsVirtual = owner.Kind != BoundKind.Struct && (method.IsVirtual || method.IsAbstract),
+            IsOverride = owner.Kind != BoundKind.Struct && method.IsOverride,
             IsAbstract = method.IsAbstract,
             IsConstructor = method.MethodKind == MethodKind.Constructor,
             DeclarationLine = Line(method)
@@ -755,6 +752,12 @@ sealed partial class RoslynLowering
         }
 
         methods.Add(created);
+        if (owner.Kind == BoundKind.Struct && method.IsOverride && method.Name == "ToString"
+            && created.ReturnType == _string && created.Parameters.Count == 0)
+        {
+            owner.ToStringOverride = created;
+        }
+
         _methods[new MemberKey(method.OriginalDefinition, owner)] = created;
         RecordExplicitTargets(created, method);
         if (owner.Kind == BoundKind.Interface)
@@ -767,6 +770,91 @@ sealed partial class RoslynLowering
         {
             Queue(created, method);
         }
+    }
+
+    private FieldSymbol StructBox(TypeSymbol valueType)
+    {
+        if (_structBoxes.TryGetValue(valueType, out var existing))
+        {
+            return existing;
+        }
+
+        var box = new TypeSymbol
+        {
+            Name = valueType.Name + ".$box",
+            Kind = BoundKind.Class,
+            HeapSize = 24 + valueType.HeapSize,
+            LayoutDone = true,
+            DeclarationLine = valueType.DeclarationLine,
+            SourceFile = valueType.SourceFile
+        };
+        var field = new FieldSymbol { Name = "value", Owner = box, Type = valueType, ByteOffset = 24 };
+        box.InstanceFields.Add(field);
+        _structBoxes.Add(valueType, field);
+
+        BoundFieldAccess Receiver() => new() { Receiver = new BoundThis { Type = box }, Field = field, Type = valueType };
+        var parameter = new ParamSymbol { Name = "value", Type = valueType };
+        var constructor = new MethodSymbol
+        {
+            Name = "<ctor>", Owner = box, IsConstructor = true, Parameters = [parameter], ReturnType = _void
+        };
+        box.Methods.Add(constructor);
+        _readyBodies.Add(new BoundMethodBody
+        {
+            Method = constructor,
+            Body = new BoundBlock
+            {
+                Statements = [new BoundExprStmt
+                {
+                    Expression = new BoundAssign
+                    {
+                        Target = Receiver(), Type = valueType,
+                        Value = new BoundParam { Symbol = parameter, Type = valueType }
+                    }
+                }]
+            }
+        });
+
+        foreach (var (selector, implementation) in valueType.InterfaceImpl)
+        {
+            var bridge = new MethodSymbol
+            {
+                Name = "$interface_" + selector,
+                Owner = box,
+                ReturnType = implementation.ReturnType,
+                Parameters = implementation.Parameters
+            };
+            var arguments = new List<BoundExpr>();
+            foreach (var argument in bridge.Parameters)
+            {
+                var parameterValue = new BoundParam
+                {
+                    Symbol = argument, Type = argument.Type, ByRef = argument.RefKind != RefKind.None
+                };
+                arguments.Add(parameterValue.ByRef
+                    ? new BoundByRefArg { Lvalue = parameterValue, Kind = argument.RefKind, Type = argument.Type }
+                    : parameterValue);
+            }
+
+            var call = new BoundCall
+            {
+                Method = implementation, Type = implementation.ReturnType, Receiver = Receiver(), Arguments = arguments
+            };
+            box.Methods.Add(bridge);
+            box.InterfaceImpl[selector] = bridge;
+            _readyBodies.Add(new BoundMethodBody
+            {
+                Method = bridge,
+                Body = new BoundBlock
+                {
+                    Statements = [bridge.ReturnType == _void
+                        ? new BoundExprStmt { Expression = call }
+                        : new BoundReturn { Value = call }]
+                }
+            });
+        }
+
+        return field;
     }
 
     private void RecordExplicitTargets(MethodSymbol method, IMethodSymbol declaration)
@@ -794,6 +882,12 @@ sealed partial class RoslynLowering
         };
         owner.Finaliser = created;
         methods.Add(created);
+        if (owner.Kind == BoundKind.Struct && method.IsOverride && method.Name == "ToString"
+            && created.ReturnType == _string && created.Parameters.Count == 0)
+        {
+            owner.ToStringOverride = created;
+        }
+
         _methods[new MemberKey(method.OriginalDefinition, owner)] = created;
         Queue(created, method);
     }

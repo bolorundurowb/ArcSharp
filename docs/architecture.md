@@ -456,7 +456,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 - **Remaining generic features.** Virtual generic methods, interface generic methods, variance, full overload inference, and further constraint forms. Closed types stay specialised.
 - **Reflection, `dynamic`, and `unsafe`.** Limited, as that table says. Reflection is emitted metadata. `dynamic` binds only to members this compiler can lower. A pointer must not outlive the proved lifetime of the object it addresses.
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
-- **Struct forms still rejected.** Printing a struct, `virtual`/`override` members on structs, interfaces on structs, `using` a struct resource, and self-containing structs are `ARC3001`. They belong to the full struct row.
+- **Struct forms still rejected.** Using a struct resource and self-containing structs are `ARC3001`. They belong to the full struct row.
 - **Remaining ordinary C# features.** Pattern matching, records, overloaded updates and short-circuiting operators, partial classes, extension methods, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c).
 - **Name handling.** A trailing `?` is accepted and ignored. A namespace is part of the type's identity.
 

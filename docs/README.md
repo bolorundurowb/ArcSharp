@@ -56,6 +56,7 @@ before you rely on it for anything beyond experiments.
 - [Base interfaces](features/base-interfaces.md)
 - [Struct parameters and return values](features/struct-calls.md)
 - [Struct storage](features/struct-storage.md)
+- [Struct interfaces, boxing and printing](features/struct-interfaces.md)
 - [Constant-label switch statements](features/switch-statement.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 

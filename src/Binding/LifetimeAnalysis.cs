@@ -293,6 +293,7 @@ public sealed class LifetimeAnalysis
         BoundStringCompound compound => [compound.Target, compound.Right],
         BoundConversion conversion => [conversion.Operand],
         BoundIs test => [test.Operand],
+        BoundUnbox unbox => [unbox.Operand],
         BoundAs cast => [cast.Operand],
         BoundLength length => [length.Receiver],
         BoundConsoleCall call => [call.Argument],
