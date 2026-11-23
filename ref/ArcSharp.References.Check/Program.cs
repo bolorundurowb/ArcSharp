@@ -267,9 +267,10 @@ static SurfaceCase[] Cases() =>
             static void M()
             {
                 int? n = null;
+                int fallback = n.GetValueOrDefault(9);
             }
         }
-        """, "CS0518"),
+        """),
     new("math", """
         class P
         {

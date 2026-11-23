@@ -63,15 +63,15 @@ arithmetic overflow and out-of-range numeric conversions raise `OverflowExceptio
 An `unchecked` context restores the default arithmetic behaviour.
 
 Value types never live on the heap on their own and never take part in
-reference counting. Struct values are stored inline in the local, field, or
-parameter that holds them. `decimal`, `enum`, and nullable value types
-(`int?`) are not supported.
+reference counting until boxed. Struct and nullable values are stored inline
+in the local, field, array element, or parameter that holds them. Enums use
+their underlying integer representation. See [Nullable values](features/nullable-values.md).
 
 ### Reference types
 
 - **Classes** you declare.
 - **`string`**, an immutable sequence of UTF-8 bytes.
-- **Single-dimensional arrays** `T[]` of supported non-struct element types.
+- **Single-dimensional arrays** `T[]` of supported value and reference types.
   Multi-dimensional and jagged array syntax
   (`int[,]`, `int[][]`) is not supported.
 - **`System.WeakReference<T>`**, where `T` is a reference type. It can be used
@@ -496,7 +496,8 @@ array elements and non-virtual auto-properties. These storage forms also accept 
 assignments `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 and `>>>=`. String storage accepts `+=` for supported concatenation operands.
 
-Not supported: `??` and `?.`, `typeof`, `sizeof`,
+The `??` operator can select a fallback for a nullable value or a reference.
+Not supported: `??=`, `?.`, `typeof`, `sizeof`,
 `nameof`, `default`, lambdas, anonymous types, tuples, pattern matching beyond
 scalar, declaration and type patterns, object and collection initialisers, and
 interpolated strings (`$"..."`).

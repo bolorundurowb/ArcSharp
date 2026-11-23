@@ -422,7 +422,9 @@ uses. Each step below ships on its own.
    and [scalar and type patterns](features/patterns.md) are implemented.
 7. The rest of generics: virtual and interface generic methods, variance, full
    inference, and the remaining constraint forms.
-8. Nullable value types and `decimal`.
+8. [Nullable storage, conversions and lifted built-in operations](features/nullable-values.md)
+   are implemented. Nullable boxing, lifted updates and user-defined operators,
+   and `decimal` remain.
 
 **Done when.** Each step has samples and must-fail samples, its `ARC3001`
 entries are gone from the compiler and the analyser, and the language reference

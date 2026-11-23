@@ -18,7 +18,7 @@ public sealed class UnsupportedConstructTests
         { "recursive pattern", "class C { public int X; static bool Test(C value) => value is { X: 1 }; }" },
         { "recursive switch expression", "class C { public int X; static int Test(C value) => value switch { { X: 1 } => 2, _ => 3 }; }" },
         { "conditional access", "class C { static void Main() { string s = null; int n = s?.Length ?? 0; } }" },
-        { "coalesce", "class C { static void Main() { string s = null; string t = s ?? \"x\"; } }" },
+        { "coalescing assignment", "class C { static void Main() { string s = null; s ??= \"x\"; } }" },
         { "interpolated string", "class C { static void Main() { System.Console.WriteLine($\"x\"); } }" },
         { "default", "class C { static void Main() { int x = default(int); } }" },
         { "target-typed new", "class C { static void Main() { C c = new(); } }" },

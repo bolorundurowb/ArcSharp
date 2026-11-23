@@ -120,7 +120,7 @@ sealed partial class RoslynLowering
         _ => UnsupportedExpr(pattern)
     };
 
-    private BoundExpr LowerPatternComparison(IOperation pattern, BoundPatternInput input, IOperation value, TokenKind op)
+    private BoundExpr LowerPatternComparison(IOperation pattern, BoundExpr input, IOperation value, TokenKind op)
     {
         var type = input.Type;
         if (!value.ConstantValue.HasValue)
@@ -129,6 +129,14 @@ sealed partial class RoslynLowering
         }
 
         var constantValue = value.ConstantValue.Value;
+        if (type.NullableElementType != null)
+        {
+            var hasValue = HasNullableValue(input);
+            return constantValue == null
+                ? Not(hasValue)
+                : BoolAnd(hasValue, LowerPatternComparison(pattern, ReadNullableValue(input), value, op));
+        }
+
         if (constantValue == null)
         {
             return type.IsReferenceType ? PatternNullCheck(input, op) : PatternResult(false);
@@ -184,7 +192,11 @@ sealed partial class RoslynLowering
         BoundExpr source = input;
         if (type != input.Type)
         {
-            if (type.Kind == BoundKind.Struct && input.Type.IsReferenceType)
+            if (input.Type.NullableElementType == type)
+            {
+                source = ReadNullableValue(input);
+            }
+            else if (type.Kind == BoundKind.Struct && input.Type.IsReferenceType)
             {
                 source = new BoundUnbox { Operand = input, BoxedValue = StructBox(type), Type = type };
             }
@@ -203,6 +215,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerPatternTypeCheck(IPatternOperation pattern, BoundPatternInput input, TypeSymbol type)
     {
+        if (input.Type.NullableElementType is { } nullableElement)
+        {
+            return type == nullableElement ? HasNullableValue(input) : UnsupportedExpr(pattern);
+        }
+
         if (type == input.Type || type == _object)
         {
             return input.Type.IsReferenceType ? PatternNullCheck(input, TokenKind.BangEquals) : PatternResult(true);
@@ -223,7 +240,7 @@ sealed partial class RoslynLowering
         return UnsupportedExpr(pattern);
     }
 
-    private BoundExpr PatternNullCheck(BoundPatternInput input, TokenKind op) => new BoundBinary
+    private BoundExpr PatternNullCheck(BoundExpr input, TokenKind op) => new BoundBinary
     {
         Type = _bool,
         Kind = BinKind.RefEq,

@@ -41,6 +41,21 @@ namespace System
     {
     }
 
+    public struct Nullable<T> where T : struct
+    {
+        public Nullable(T value)
+        {
+        }
+
+        public bool HasValue => false;
+
+        public T Value => default;
+
+        public T GetValueOrDefault() => default;
+
+        public T GetValueOrDefault(T defaultValue) => defaultValue;
+    }
+
     // The C# compiler cannot emit this assembly without Attribute and
     // AttributeUsageAttribute. AttributeTargets is an enum, so System.Enum
     // has to exist as well. Enum declarations are not a supported language

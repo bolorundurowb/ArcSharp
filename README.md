@@ -77,7 +77,7 @@ reclaimed.
   and return values. Structs can implement interfaces and override their
   printed representation.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
-  `string`, enums, and single-dimensional arrays.
+  `string`, enums, nullable values, and single-dimensional arrays.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept
   alive for the call. Also `is` and `as`.
 - `if`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, constant-label

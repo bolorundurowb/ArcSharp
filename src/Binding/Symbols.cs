@@ -45,6 +45,7 @@ public sealed class TypeSymbol
     // array
     public TypeSymbol? ElementType;
     public TypeSymbol? EnumUnderlyingType;
+    public TypeSymbol? NullableElementType;
 
     public bool IsReferenceType =>
         Kind is TypeKind.Class or TypeKind.String or TypeKind.Array or TypeKind.Interface or TypeKind.WeakRef;

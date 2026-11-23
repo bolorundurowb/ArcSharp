@@ -32,6 +32,7 @@ sealed partial class RoslynLowering
     private readonly Dictionary<string, TypeSymbol> _arrays = [];
     private readonly Dictionary<string, TypeSymbol> _weakRefs = [];
     private readonly Dictionary<TypeSymbol, FieldSymbol> _structBoxes = [];
+    private readonly Dictionary<TypeSymbol, TypeSymbol> _nullableTypes = [];
     private readonly HashSet<TypeSymbol> _filled = [];
     private readonly HashSet<MethodSymbol> _queued = [];
     private readonly Queue<PendingBody> _bodies = [];
@@ -131,6 +132,7 @@ sealed partial class RoslynLowering
         program.Types.AddRange(_named.Values.Where(t => t.Kind is BoundKind.Class or BoundKind.Struct or BoundKind.Interface));
         program.Types.AddRange(_generic.Values);
         program.Types.AddRange(_structBoxes.Values.Select(field => field.Owner));
+        program.Types.AddRange(_nullableTypes.Values);
         program.InterfaceSelectorCount = _selectors.Count;
         program.MethodBodies.AddRange(_readyBodies);
 
@@ -220,6 +222,12 @@ sealed partial class RoslynLowering
         if (named.TypeKind == RoslynKind.Error)
         {
             return _error;
+        }
+
+        if (named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
+        {
+            var element = MapType(named.TypeArguments[0], location);
+            return element == _error ? _error : GetNullableType(element);
         }
 
         if (IsWeakReference(named))
@@ -1143,6 +1151,13 @@ sealed partial class RoslynLowering
 
     private MethodSymbol? MapMethod(IMethodSymbol method, Location? location = null)
     {
+        if (method.ContainingType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
+        {
+            var type = MapType(method.ContainingType, location);
+            var name = method.MethodKind == MethodKind.Constructor ? "<ctor>" : method.Name;
+            return type.Methods.Find(candidate => candidate.Name == name && candidate.Parameters.Count == method.Parameters.Length);
+        }
+
         if (method.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet)
         {
             var owner = MapType(method.ContainingType, location);

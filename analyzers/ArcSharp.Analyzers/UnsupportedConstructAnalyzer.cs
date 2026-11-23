@@ -34,7 +34,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             SyntaxKind.CasePatternSwitchLabel, SyntaxKind.SwitchExpressionArm);
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterOperationAction(AnalyzeOverloadedBinary, OperationKind.Binary);
-        context.RegisterOperationAction(AnalyzeEnumConversion, OperationKind.Conversion);
+        context.RegisterOperationAction(AnalyzeBoxingConversion, OperationKind.Conversion);
+        context.RegisterOperationAction(AnalyzeLiftedCompound, OperationKind.CompoundAssignment);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
         context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration, SyntaxKind.IndexerDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeArrayType, SyntaxKind.ArrayType);
@@ -65,7 +66,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.WithExpression,
         SyntaxKind.AwaitExpression,
         SyntaxKind.ConditionalAccessExpression,
-        SyntaxKind.CoalesceExpression,
         SyntaxKind.CoalesceAssignmentExpression,
         SyntaxKind.RangeExpression,
         SyntaxKind.ImplicitObjectCreationExpression,
@@ -148,14 +148,28 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static void AnalyzeEnumConversion(OperationAnalysisContext context)
+    private static void AnalyzeBoxingConversion(OperationAnalysisContext context)
     {
         var operation = (Microsoft.CodeAnalysis.Operations.IConversionOperation)context.Operation;
-        if ((operation.Operand.Type?.TypeKind == TypeKind.Enum && operation.Type?.IsReferenceType == true)
-            || (operation.Type?.TypeKind == TypeKind.Enum && operation.Operand.Type?.IsReferenceType == true))
+        static bool UnsupportedValue(ITypeSymbol? type) =>
+            type?.TypeKind == TypeKind.Enum
+            || type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T };
+
+        if ((UnsupportedValue(operation.Operand.Type) && operation.Type?.IsReferenceType == true)
+            || (UnsupportedValue(operation.Type) && operation.Operand.Type?.IsReferenceType == true))
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
-                operation.Syntax.GetLocation(), "boxing and unboxing enum values are not supported"));
+                operation.Syntax.GetLocation(), "boxing and unboxing enum or nullable values are not supported"));
+        }
+    }
+
+    private static void AnalyzeLiftedCompound(OperationAnalysisContext context)
+    {
+        var operation = (Microsoft.CodeAnalysis.Operations.ICompoundAssignmentOperation)context.Operation;
+        if (operation.IsLifted)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                operation.Syntax.GetLocation(), "lifted compound assignment is not supported"));
         }
     }
 
@@ -208,7 +222,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.WithExpression => "'with' expressions are not supported",
         SyntaxKind.AwaitExpression => "'await' is not supported: there is no async support",
         SyntaxKind.ConditionalAccessExpression => "the null-conditional operator ('?.') is not supported",
-        SyntaxKind.CoalesceExpression or SyntaxKind.CoalesceAssignmentExpression =>
+        SyntaxKind.CoalesceAssignmentExpression =>
             "the null-coalescing operator ('??') is not supported",
         SyntaxKind.RangeExpression => "ranges ('..') are not supported",
         SyntaxKind.ImplicitObjectCreationExpression => "target-typed 'new()' is not supported: name the type",

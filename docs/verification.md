@@ -28,10 +28,10 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (67 samples, Windows x64, 23 November 2026)
+## Results (68 samples, Windows x64, 23 November 2026)
 
-`tools\verify.ps1` reported **128 passed, 0 failed** with the .NET 11.0.100 SDK:
-67 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 43 must-fail
+`tools\verify.ps1` reported **130 passed, 0 failed** with the .NET 11.0.100 SDK:
+68 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 44 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 5 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests, and one
 reference-surface check. `live=0` means every object was reclaimed.
@@ -86,6 +86,7 @@ asserts on purpose.
 | `exceptions_basic` | `try`, `catch`, `finally`, a `throw` caught in the same method and one caught across a call, a runtime division by zero, and a catch clause that does not match | alloc=16 dead=16 freed=16 **live=0** | `outer caught inner` |
 | `exceptions_unwind` | cleanup on every unwind path: argument temporaries, locals across frames, a throwing constructor, a store that throws, a concatenation that throws, `return` through `finally`, nested `finally`, rethrow, a `finally` that replaces an exception, and a thrown stored exception | alloc=97 dead=97 freed=97 **live=0** | `exceptions unwind PASS` |
 | `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, `throw null`, and a base-class catch | alloc=53 dead=53 freed=53 **live=0** | `exceptions runtime PASS` |
+| `nullable_values` | Lifted operations, nullable conversions and coalescing, presence tests, and a nullable struct's owned reference | alloc=4 dead=4 freed=4 **live=0** | `nullable values PASS` |
 | `operator_updates` | Operator results for struct and reference updates, single index evaluation and failed covariant stores | alloc=9 dead=9 freed=9 **live=0** | `operator updates PASS` |
 | `conditional_values` | Struct and reference results, overloaded short circuiting, switch expressions and exception cleanup | alloc=10 dead=10 freed=10 **live=0** | `conditional values PASS` |
 | `patterns` | Single evaluation, numeric and string patterns, bindings, short circuiting, and switch case guards | alloc=4 dead=4 freed=4 **live=0** | `patterns PASS` |

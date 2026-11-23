@@ -596,6 +596,7 @@ sealed partial class RoslynLowering
         IIsTypeOperation { TypeOperand.TypeKind: RoslynKind.Enum } test => UnsupportedExpr(test),
         IIsTypeOperation test => LowerTypeTest(test),
         IIsPatternOperation pattern => LowerPatternTest(pattern),
+        ICoalesceOperation coalesce => LowerCoalesce(coalesce),
         ISwitchExpressionOperation expression => LowerSwitchExpression(expression),
         IConditionalOperation { IsRef: false, WhenFalse: { } otherwise } choice => new BoundChoice
         {
@@ -618,6 +619,14 @@ sealed partial class RoslynLowering
     {
         var operand = LowerExpr(test.ValueOperand);
         var type = MapType(test.TypeOperand, test.Syntax.GetLocation());
+        if (operand.Type.NullableElementType is { } element)
+        {
+            var input = new BoundPatternInput { Type = operand.Type };
+            return Capture(operand, input, type == element || type == _object
+                ? HasNullableValue(input)
+                : PatternResult(false));
+        }
+
         if (operand.Type.Kind == BoundKind.Struct)
         {
             operand = BoxValue(operand, test.Syntax);
@@ -1122,6 +1131,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerBinary(IBinaryOperation binary)
     {
+        if (binary.IsLifted || IsNullableSymbol(binary.LeftOperand.Type) || IsNullableSymbol(binary.RightOperand.Type))
+        {
+            return LowerLiftedBinary(binary);
+        }
+
         if (binary.OperatorMethod is { } method)
         {
             if (binary.IsLifted)
@@ -1219,6 +1233,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerUnary(IUnaryOperation unary)
     {
+        if (unary.IsLifted)
+        {
+            return LowerLiftedUnary(unary);
+        }
+
         if (unary.OperatorMethod is { } method)
         {
             return unary.IsLifted ? UnsupportedExpr(unary) : LowerOperator(unary, method, unary.Operand);
@@ -1278,6 +1297,11 @@ sealed partial class RoslynLowering
         if (value.Type == type || type == _error || value.Type == _error)
         {
             return value;
+        }
+
+        if (value.Type.NullableElementType != null || type.NullableElementType != null)
+        {
+            return LowerNullableConversion(conversion, value, type);
         }
 
         if (value.Type.Kind == BoundKind.Struct && type.IsReferenceType)
