@@ -28,10 +28,10 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (64 samples, Windows x64, 23 November 2026)
+## Results (65 samples, Windows x64, 23 November 2026)
 
-`tools\verify.ps1` reported **124 passed, 0 failed** with the .NET 11.0.100 SDK:
-64 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 42 must-fail
+`tools\verify.ps1` reported **126 passed, 0 failed** with the .NET 11.0.100 SDK:
+65 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 43 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 5 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests, and one
 reference-surface check. `live=0` means every object was reclaimed.
@@ -86,6 +86,7 @@ asserts on purpose.
 | `exceptions_basic` | `try`, `catch`, `finally`, a `throw` caught in the same method and one caught across a call, a runtime division by zero, and a catch clause that does not match | alloc=16 dead=16 freed=16 **live=0** | `outer caught inner` |
 | `exceptions_unwind` | cleanup on every unwind path: argument temporaries, locals across frames, a throwing constructor, a store that throws, a concatenation that throws, `return` through `finally`, nested `finally`, rethrow, a `finally` that replaces an exception, and a thrown stored exception | alloc=97 dead=97 freed=97 **live=0** | `exceptions unwind PASS` |
 | `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, `throw null`, and a base-class catch | alloc=53 dead=53 freed=53 **live=0** | `exceptions runtime PASS` |
+| `patterns` | Single evaluation, numeric and string patterns, bindings, short circuiting, and switch case guards | alloc=4 dead=4 freed=4 **live=0** | `patterns PASS` |
 | `struct_interfaces` | Boxing with owned reference fields, constrained dispatch, checked unboxing and struct printing | alloc=9 dead=9 freed=9 **live=0** | `struct interfaces PASS` |
 | `struct_storage` | Inline arrays, interior references, static struct fields, and property assignment copies | alloc=5 dead=5 freed=5 **live=0** | `struct storage PASS` |
 | `struct_calls` | Argument snapshots, interface calls, result copies before finally, and ARC cleanup when a later argument throws | alloc=6 dead=6 freed=6 **live=0** | `struct calls PASS` |

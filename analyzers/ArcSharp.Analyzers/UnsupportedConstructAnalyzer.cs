@@ -30,7 +30,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeMember, MemberKinds);
         context.RegisterSyntaxNodeAction(AnalyzeUsing, SyntaxKind.UsingStatement);
         context.RegisterSyntaxNodeAction(AnalyzeForEach, SyntaxKind.ForEachStatement);
-        context.RegisterSyntaxNodeAction(AnalyzeSwitch, SyntaxKind.SwitchStatement);
+        context.RegisterSyntaxNodeAction(AnalyzePattern, SyntaxKind.IsPatternExpression, SyntaxKind.CasePatternSwitchLabel);
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterOperationAction(AnalyzeOverloadedBinary, OperationKind.Binary);
         context.RegisterOperationAction(AnalyzeEnumConversion, OperationKind.Conversion);
@@ -61,7 +61,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.AnonymousMethodExpression,
         SyntaxKind.BaseExpression,
         SyntaxKind.QueryExpression,
-        SyntaxKind.IsPatternExpression,
         SyntaxKind.SwitchExpression,
         SyntaxKind.WithExpression,
         SyntaxKind.AwaitExpression,
@@ -121,20 +120,17 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static void AnalyzeSwitch(SyntaxNodeAnalysisContext context)
+    private static void AnalyzePattern(SyntaxNodeAnalysisContext context)
     {
-        var selection = (SwitchStatementSyntax)context.Node;
-        var type = context.SemanticModel.GetTypeInfo(selection.Expression, context.CancellationToken).Type;
-        if ((type?.TypeKind != TypeKind.Enum
-            && type?.SpecialType is not (SpecialType.System_String or SpecialType.System_Boolean
-                or SpecialType.System_Char or SpecialType.System_SByte or SpecialType.System_Byte
-                or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Int32
-                or SpecialType.System_UInt32 or SpecialType.System_Int64 or SpecialType.System_UInt64
-                or SpecialType.System_Single or SpecialType.System_Double))
-            || selection.Sections.SelectMany(section => section.Labels).Any(label => label is CasePatternSwitchLabelSyntax))
+        var pattern = context.Node is IsPatternExpressionSyntax expression
+            ? expression.Pattern
+            : ((CasePatternSwitchLabelSyntax)context.Node).Pattern;
+        var unsupported = pattern.DescendantNodesAndSelf()
+            .FirstOrDefault(node => node is RecursivePatternSyntax or ListPatternSyntax or SlicePatternSyntax);
+        if (unsupported != null)
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
-                selection.GetLocation(), "'switch' requires a supported value and constant case labels"));
+                unsupported.GetLocation(), "recursive and list patterns are not supported"));
         }
     }
 
@@ -207,7 +203,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.BaseExpression =>
             "'base' member access is not supported: inherited members are called by name",
         SyntaxKind.QueryExpression => "LINQ is not supported",
-        SyntaxKind.IsPatternExpression => "pattern matching is not supported: use 'is Type' and 'as'",
         SyntaxKind.SwitchExpression => "switch expressions are not supported: use 'if'/'else'",
         SyntaxKind.WithExpression => "'with' expressions are not supported",
         SyntaxKind.AwaitExpression => "'await' is not supported: there is no async support",

@@ -1,11 +1,16 @@
+class Tag
+{
+    public int Count;
+}
+
 static class Program
 {
     static void Main()
     {
-        int value = 2;
+        Tag value = new Tag();
         switch (value)
         {
-            case > 1:
+            case { Count: 4 }:
                 break;
         }
     }

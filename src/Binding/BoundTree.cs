@@ -176,6 +176,24 @@ public sealed class BoundConversion : BoundExpr
     public bool IsChecked;
 }
 
+public sealed class BoundPatternInput : BoundExpr
+{
+}
+
+public sealed class BoundPatternTest : BoundExpr
+{
+    public required BoundExpr Value;
+    public required BoundPatternInput Input;
+    public required BoundExpr Test;
+}
+
+public sealed class BoundPatternBinding : BoundExpr
+{
+    public required BoundExpr Test;
+    public required BoundExpr Value;
+    public required LocalSymbol Local;
+}
+
 public sealed class BoundUnbox : BoundExpr
 {
     public required BoundExpr Operand;
@@ -274,13 +292,14 @@ public sealed class BoundFor : BoundStmt
 public sealed class BoundSwitch : BoundStmt
 {
     public required BoundExpr Value;
+    public required BoundPatternInput Input;
     public List<BoundSwitchSection> Sections = [];
 }
 
 public sealed class BoundSwitchSection
 {
     public bool IsDefault;
-    public List<BoundExpr> Labels = [];
+    public List<BoundExpr> Tests = [];
     public required BoundBlock Body;
 }
 

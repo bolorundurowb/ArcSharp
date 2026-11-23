@@ -190,7 +190,7 @@ public static class DefiniteAssignment
             foreach (var section in selection.Sections)
             {
                 var sectionSet = new HashSet<int>(assigned);
-                foreach (var label in section.Labels)
+                foreach (var label in section.Tests)
                 {
                     VisitExpr(label, sectionSet);
                 }
@@ -441,6 +441,17 @@ public static class DefiniteAssignment
                 case BoundUnary u: VisitExpr(u.Operand, assigned); break;
                 case BoundConversion cv: VisitExpr(cv.Operand, assigned); break;
                 case BoundUnbox unbox: VisitExpr(unbox.Operand, assigned); break;
+                case BoundPatternTest pattern:
+                    VisitExpr(pattern.Value, assigned);
+                    VisitExpr(pattern.Test, assigned);
+                    break;
+
+                case BoundPatternBinding binding:
+                    // Roslyn already validates the success-path scope of pattern locals.
+                    VisitExpr(binding.Test, assigned);
+                    VisitExpr(binding.Value, assigned);
+                    assigned.Add(binding.Local.Id);
+                    break;
                 case BoundLength len: VisitExpr(len.Receiver, assigned); break;
                 case BoundConsoleCall cc: if (cc.Argument != null) { VisitExpr(cc.Argument, assigned); } break;
                 case BoundGcCall gc: if (gc.Argument != null) { VisitExpr(gc.Argument, assigned); } break;

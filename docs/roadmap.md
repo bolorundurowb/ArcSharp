@@ -416,9 +416,10 @@ uses. Each step below ships on its own.
 5. [Struct parameters and return values](features/struct-calls.md),
    [struct arrays, static fields and properties](features/struct-storage.md), and [struct interface dispatch, overrides and printing](features/struct-interfaces.md)
    are implemented within the documented subset.
-6. Records with the members C# synthesises and pattern matching.
+6. Records with the members C# synthesises, recursive and list patterns, and
+   switch expressions remain.
    [Base interface lists and explicit implementations](features/base-interfaces.md)
-   are implemented.
+   and [scalar and type patterns](features/patterns.md) are implemented.
 7. The rest of generics: virtual and interface generic methods, variance, full
    inference, and the remaining constraint forms.
 8. Nullable value types and `decimal`.

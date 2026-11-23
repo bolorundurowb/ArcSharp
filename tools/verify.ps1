@@ -301,6 +301,7 @@ try {
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
     Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
+    Invoke-Sample patterns "alloc=4 dead=4 freed=4 live=0" "patterns PASS" @("patterns")
     Invoke-Sample struct_interfaces "alloc=9 dead=9 freed=9 live=0" "struct interfaces PASS" @("struct_interfaces")
     Invoke-Sample struct_storage "alloc=5 dead=5 freed=5 live=0" "struct storage PASS" @("struct_storage")
     Invoke-Sample struct_calls "alloc=6 dead=6 freed=6 live=0" "struct calls PASS" @("struct_calls")
@@ -350,6 +351,7 @@ try {
     Invoke-MustFail exception_filter "ARC3001" @("exception_filter")
     Invoke-MustFail throw_expression "throw expressions are not supported" @("throw_expression")
     Invoke-MustFail throw_non_exception "CS0029" @("throw_non_exception")
+    Invoke-MustFail recursive_pattern "ARC3001" @("recursive_pattern")
     Invoke-MustFail switch_pattern "ARC3001" @("switch_pattern")
     Invoke-MustFail increment_property "ARC3001" @("increment_property")
     Invoke-MustFail foreach         "ARC3001" @("foreach")

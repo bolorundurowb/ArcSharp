@@ -9,13 +9,13 @@ public sealed class UnsupportedConstructTests
     public static TheoryData<string, string> UnsupportedSources => new()
     {
         { "foreach", "class C { static void Main() { string xs = \"x\"; foreach (char x in xs) { } } }" },
-        { "switch", "class C { static void Main() { int x = 1; switch (x) { case > 0: break; } } }" },
+        { "switch recursive pattern", "class C { public int X; static void Test(C value) { switch (value) { case { X: 1 }: break; } } }" },
         { "exception filter", "class C { static void Main() { try { } catch (System.Exception e) when (e != null) { } } }" },
         { "throw expression", "class C { static int Main() { int x = 1; return x > 0 ? x : throw new System.Exception(); } }" },
         { "lock", "class C { static void Main() { object o = new object(); lock (o) { } } }" },
         { "lambda", "class C { static void Main() { System.Func<int, int> f = x => x + 1; } }" },
         { "query", "class C { static void Main() { int[] xs = new int[1]; var q = from x in xs select x; } }" },
-        { "pattern", "class C { static void Main() { object o = \"s\"; if (o is string s) { } } }" },
+        { "recursive pattern", "class C { public int X; static bool Test(C value) => value is { X: 1 }; }" },
         { "switch expression", "class C { static void Main() { int x = 1; int y = x switch { 1 => 2, _ => 3 }; } }" },
         { "conditional access", "class C { static void Main() { string s = null; int n = s?.Length ?? 0; } }" },
         { "coalesce", "class C { static void Main() { string s = null; string t = s ?? \"x\"; } }" },

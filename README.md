@@ -81,7 +81,7 @@ reclaimed.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept
   alive for the call. Also `is` and `as`.
 - `if`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, constant-label
-  `switch`, and array `foreach`.
+  and pattern `switch`, and array `foreach`.
 - Bitwise operators, shifts, prefix and postfix updates, compound assignments,
   and checked numeric arithmetic.
 - `using` statements with deterministic `Dispose()` at scope exit, including

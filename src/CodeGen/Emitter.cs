@@ -21,6 +21,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private readonly List<string> _stmtTemps = [];
     // Struct temporaries live in allocas and need __drop, not arc_release.
     private readonly List<(TypeSymbol Type, string Addr)> _stmtStructTemps = [];
+    private readonly Dictionary<BoundPatternInput, string> _patternInputs = [];
     private int _tmp, _lbl, _strId;
 
     // Exceptions. A thrown exception is the one reference stored in the global
@@ -1075,45 +1076,52 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         var labels = selection.Sections.Select(_ => L("switch.case")).ToArray();
         var end = L("switch.end");
+        var noMatch = L("switch.nomatch");
         var mark = _stmtTemps.Count;
         var structMark = _stmtStructTemps.Count;
-        var value = EmitR(selection.Value);
-        TrackReferenceTemp(selection.Value, value);
-        var fallback = selection.Sections.FindIndex(section => section.IsDefault);
-        var index = fallback.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var type = selection.Value.Type.LlvmType;
+        _patternInputs.Add(selection.Input, CapturePatternInput(selection.Value));
+        var inputMark = _stmtTemps.Count;
+        var inputStructMark = _stmtStructTemps.Count;
         for (var i = 0; i < selection.Sections.Count; i++)
         {
-            foreach (var label in selection.Sections[i].Labels)
+            foreach (var test in selection.Sections[i].Tests)
             {
-                var argument = EmitR(label);
-                TrackReferenceTemp(label, argument);
-                string equal;
-                if (selection.Value.Type.Kind == TypeKind.String)
-                {
-                    var result = Inst($"call i32 @arc_str_equal(i8* {value}, i8* {argument})");
-                    equal = Inst($"icmp ne i32 {result}, 0");
-                }
-                else
-                {
-                    equal = type is "float" or "double"
-                        ? Inst($"fcmp oeq {type} {value}, {argument}")
-                        : Inst($"icmp eq {type} {value}, {argument}");
-                }
-
-                index = Inst($"select i1 {equal}, i32 {i}, i32 {index}");
+                var matched = EmitR(test);
+                ReleaseTemps(inputMark);
+                ReleaseStructTemps(inputStructMark);
+                var next = L("switch.next");
+                Term($"br i1 {matched}, label %{labels[i]}, label %{next}");
+                Lbl(next);
             }
         }
 
-        ReleaseTemps(mark);
-        ReleaseStructTemps(structMark);
-        var cases = string.Join(" ", labels.Select((label, i) => $"i32 {i}, label %{label}"));
-        Term($"switch i32 {index}, label %{end} [ {cases} ]");
+        var fallback = selection.Sections.FindIndex(section => section.IsDefault);
+        Term($"br label %{(fallback >= 0 ? labels[fallback] : noMatch)}");
+        _patternInputs.Remove(selection.Input);
+
+        var references = _stmtTemps.GetRange(mark, inputMark - mark);
+        var values = _stmtStructTemps.GetRange(structMark, inputStructMark - structMark);
+        _stmtTemps.RemoveRange(mark, references.Count);
+        _stmtStructTemps.RemoveRange(structMark, values.Count);
+        void DropInput()
+        {
+            for (var i = references.Count - 1; i >= 0; i--)
+            {
+                Do($"call void @arc_release(i8* {references[i]})");
+            }
+
+            for (var i = values.Count - 1; i >= 0; i--)
+            {
+                var (type, address) = values[i];
+                Do($"call void @{type.Name}__drop({type.LlvmType}* {address})");
+            }
+        }
 
         _branchTargets.Push((end, null, _regions.Count));
         for (var i = 0; i < labels.Length; i++)
         {
             Lbl(labels[i]);
+            DropInput();
             EmitStmt(selection.Sections[i].Body);
             if (!_terminated)
             {
@@ -1122,6 +1130,13 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         _branchTargets.Pop();
+        if (fallback < 0)
+        {
+            Lbl(noMatch);
+            DropInput();
+            Term($"br label %{end}");
+        }
+
         Lbl(end);
     }
 
@@ -1626,6 +1641,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundConversion cv: return EmitConversion(cv);
             case BoundIs i: return EmitIs(i);
             case BoundUnbox unbox: return EmitUnbox(unbox);
+            case BoundPatternTest pattern: return EmitPatternTest(pattern);
+            case BoundPatternInput input: return EmitPatternInput(input);
+            case BoundPatternBinding binding: return EmitPatternBinding(binding);
             case BoundAs a: return EmitAs(a);
             case BoundByRefArg br: return EmitR(br.Lvalue);
             case BoundWeakRefNew wn: return EmitWeakRefNew(wn);
@@ -2894,6 +2912,52 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             var inRange = Inst($"and i1 {aboveMin}, {belowMax}");
             EmitOverflowCheck(Inst($"xor i1 {inRange}, true"));
         }
+    }
+
+    private string EmitPatternTest(BoundPatternTest pattern)
+    {
+        _patternInputs.Add(pattern.Input, CapturePatternInput(pattern.Value));
+        var matched = EmitR(pattern.Test);
+        _patternInputs.Remove(pattern.Input);
+        return matched;
+    }
+
+    private string CapturePatternInput(BoundExpr expression)
+    {
+        var value = EmitR(expression);
+        TrackReferenceTemp(expression, value);
+        if (expression.Type.Kind != TypeKind.Struct)
+        {
+            return value;
+        }
+
+        var copy = NewStructTemp(expression.Type);
+        CopyStruct(expression.Type, copy, value);
+        return copy;
+    }
+
+    private string EmitPatternInput(BoundPatternInput input)
+    {
+        var value = _patternInputs[input];
+        if (input.Type.IsReferenceType)
+        {
+            Do($"call void @arc_retain(i8* {value})");
+        }
+
+        return value;
+    }
+
+    private string EmitPatternBinding(BoundPatternBinding binding)
+    {
+        var matched = EmitR(binding.Test);
+        var assign = L("pattern.bind");
+        var end = L("pattern.end");
+        Term($"br i1 {matched}, label %{assign}, label %{end}");
+        Lbl(assign);
+        EmitLocalDecl(new BoundLocalDecl { Symbol = binding.Local, Initializer = binding.Value });
+        Term($"br label %{end}");
+        Lbl(end);
+        return matched;
     }
 
     private string EmitUnbox(BoundUnbox unbox)

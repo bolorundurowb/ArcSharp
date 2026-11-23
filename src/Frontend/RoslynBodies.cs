@@ -368,12 +368,8 @@ sealed partial class RoslynLowering
     private BoundStmt LowerSwitch(ISwitchOperation operation)
     {
         var value = LowerExpr(operation.Value);
-        if (value.Type.Kind is not (BoundKind.Primitive or BoundKind.Enum) && value.Type != _string)
-        {
-            return UnsupportedStmt(operation);
-        }
-
-        var result = new BoundSwitch { Value = value };
+        var input = new BoundPatternInput { Type = value.Type };
+        var result = new BoundSwitch { Value = value, Input = input };
         foreach (var arm in operation.Cases)
         {
             var section = new BoundSwitchSection { Body = new BoundBlock() };
@@ -385,7 +381,10 @@ sealed partial class RoslynLowering
                         section.IsDefault = true;
                         break;
                     case ISingleValueCaseClauseOperation label:
-                        section.Labels.Add(LowerExpr(label.Value));
+                        section.Tests.Add(LowerPatternComparison(label, input, label.Value, TokenKind.EqualsEquals));
+                        break;
+                    case IPatternCaseClauseOperation pattern:
+                        section.Tests.Add(LowerGuardedPattern(pattern.Pattern, pattern.Guard, input));
                         break;
                     default:
                         return UnsupportedStmt(clause);
@@ -596,6 +595,7 @@ sealed partial class RoslynLowering
         IConversionOperation conversion => LowerConversion(conversion),
         IIsTypeOperation { TypeOperand.TypeKind: RoslynKind.Enum } test => UnsupportedExpr(test),
         IIsTypeOperation test => LowerTypeTest(test),
+        IIsPatternOperation pattern => LowerPatternTest(pattern),
         ISimpleAssignmentOperation assignment => LowerAssignment(assignment),
         ICompoundAssignmentOperation assignment => LowerCompound(assignment),
         IIncrementOrDecrementOperation increment => LowerIncrement(increment),

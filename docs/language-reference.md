@@ -347,7 +347,7 @@ error.
 | `while` | |
 | `do`/`while` | Evaluates the condition after each iteration. |
 | `break`, `continue` | `break` exits the innermost switch or loop. `continue` advances the innermost loop. |
-| `switch` | Constant case labels and `default` for supported numeric, Boolean, character and string values. |
+| `switch` | Constant cases, supported pattern cases with optional `when` guards, and `default`. |
 | `foreach` | Iterates over single-dimensional arrays. |
 | `for` | Each of the three clauses is optional. |
 | `using` | `using (var x = expr) { ... }` or `using (expr) { ... }`. See below. |
@@ -356,7 +356,7 @@ error.
 | `try`, `catch`, `finally` | See [Exceptions](#exceptions). |
 | `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
-Not supported: switch expressions, pattern case labels, `goto`,
+Not supported: switch expressions, recursive and list patterns, `goto`,
 `lock`, `yield`, `unsafe`, `fixed`, and local functions.
 
 ### Exceptions
@@ -484,7 +484,7 @@ increments and decrements, and overloaded `&&` and `||` remain unsupported.
 | Integral bitwise and shifts | `&`, `\|`, `^`, `~`, `<<`, `>>`, `>>>` |
 | Assignment | `=`, `+=`, `-=`. Assignment can be used as an expression. |
 | String | `+` concatenates a string with a string, number, or `bool` |
-| Type tests | `x is T`, `x as T`, and casts `(T)x` |
+| Type tests and patterns | `x is T`, `x as T`, casts `(T)x`, and supported constant, relational, declaration and logical patterns |
 | Object creation | `new T(args)`, `new T[n]`, `new WeakReference<T>(x)` |
 | Access | Fields, properties, static members, `this`, `base` constructor calls, array indexing `a[i]` |
 | Grouping | Parentheses |
@@ -497,7 +497,7 @@ and `>>>=`. String storage accepts `+=` for supported concatenation operands.
 Not supported: the conditional operator
 `?:`, `??` and `?.`, `typeof`, `sizeof`,
 `nameof`, `default`, lambdas, anonymous types, tuples, pattern matching beyond
-a plain `is T`, `switch` expressions, object and collection initialisers, and
+scalar, declaration and type patterns, `switch` expressions, object and collection initialisers, and
 interpolated strings (`$"..."`).
 
 ### Conversions
