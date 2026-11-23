@@ -291,7 +291,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var slots = EmitSlots(t, out var count);
         _mod.AppendLine(
             $"@{t.Name}__ti = constant %TypeInfo {{ " +
-            $"i8* {name}, i64 {t.HeapSize}, void (i8*)* null, i8** null, i64 0, i8** null, i64 0, i8* null, {slots}, i64 {count}, void (i8*)* null }}");
+            $"i8* {name}, i64 {t.HeapSize}, void (i8*)* bitcast (void ({t.LlvmType}*)* @{t.Name}__drop to void (i8*)*), i8** null, i64 0, i8** null, i64 0, i8* null, {slots}, i64 {count}, void (i8*)* null }}");
     }
 
     private void EmitStaticRoots()
@@ -301,12 +301,20 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         {
             foreach (var f in t.StaticFields)
             {
-                if (f.IsWeak || !f.Type.IsReferenceType)
+                if (f.IsWeak)
                 {
                     continue;
                 }
 
-                roots.Add($"i8** {f.MangledStatic}");
+                if (f.Type.IsReferenceType)
+                {
+                    roots.Add($"i8** {f.MangledStatic}");
+                }
+                else if (f.Type.Kind == TypeKind.Struct)
+                {
+                    var address = $"bitcast ({f.Type.LlvmType}* {f.MangledStatic} to i8*)";
+                    AddStructRoots(roots, f.Type, address, 0);
+                }
             }
         }
 
@@ -318,6 +326,27 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         _mod.AppendLine(
             $"@arc_static_roots = private constant [{_staticRootCount} x i8**] [ {string.Join(", ", roots)} ]");
+    }
+
+    private static void AddStructRoots(List<string> roots, TypeSymbol type, string address, int offset)
+    {
+        foreach (var field in type.InstanceFields)
+        {
+            if (field.IsWeak)
+            {
+                continue;
+            }
+
+            var fieldOffset = offset + field.ByteOffset;
+            if (field.Type.IsReferenceType)
+            {
+                roots.Add($"i8** bitcast (i8* getelementptr (i8, i8* {address}, i64 {fieldOffset}) to i8**)");
+            }
+            else if (field.Type.Kind == TypeKind.Struct)
+            {
+                AddStructRoots(roots, field.Type, address, fieldOffset);
+            }
+        }
     }
 
     private string SiteOperand(string site)
@@ -1794,7 +1823,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private string EmitStructFieldAddress(BoundFieldAccess fa)
     {
-        // static struct fields are rejected by the binder
+        if (fa.Field.IsStatic)
+        {
+            return StaticFieldAddress(fa.Field);
+        }
+
         var receiver = fa.Receiver!;
         var recv = EmitR(receiver);
         if (receiver.Type.IsReferenceType)
@@ -1923,7 +1956,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
-        var (argVals, lastValue, copies) = EmitArguments(c.Arguments, c.Method.Parameters, pins);
+        var (argVals, lastValue, copies) = EmitArguments(c.Arguments, c.Method.Parameters, pins, c.ReturnsAssignedValue);
         if (c.Receiver != null && recv != null)
         {
             // A call on null fails after the arguments have been evaluated.
@@ -2005,7 +2038,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     }
 
     private (string[] Values, string LastValue, List<(TypeSymbol Type, string Addr)> Copies)
-        EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins)
+        EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins, bool returnsAssignedValue = false)
     {
         var lastValue = "";
         var copies = new List<(TypeSymbol Type, string Addr)>();
@@ -2033,6 +2066,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 CopyStruct(p.Type, copy, source);
                 copies.Add((p.Type, copy));
                 argVals[ordinal] = $"{p.Type.LlvmType}* {copy}";
+                if (returnsAssignedValue && ordinal == args.Count - 1)
+                {
+                    lastValue = NewStructTemp(p.Type);
+                    CopyStruct(p.Type, lastValue, copy);
+                }
             }
             else
             {
@@ -2176,11 +2214,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         var size = EmitR(a.Size);
         var s64 = Inst($"sext i32 {size} to i64");
-        var isRef = a.ElementType.IsReferenceType ? 1 : 0;
-        var elemTi = a.ElementType.Kind == TypeKind.Class
+        var elementKind = a.ElementType.IsReferenceType ? 1 : a.ElementType.Kind == TypeKind.Struct ? 2 : 0;
+        var elemTi = a.ElementType.Kind is TypeKind.Class or TypeKind.Struct
             ? $"%TypeInfo* @{a.ElementType.Name}__ti"
             : "%TypeInfo* null";
-        var array = Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef}, {elemTi}, i8* {SiteOperand(a.Site)})");
+        var array = Inst($"call i8* @arc_array_new(i64 {s64}, i32 {elementKind}, {elemTi}, i8* {SiteOperand(a.Site)})");
         if (a.Initializers.Count == 0)
         {
             return array;
@@ -2196,6 +2234,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             if (a.ElementType.IsReferenceType)
             {
                 Do($"call void @arc_assign_take(i8** {address}, i8* {element})");
+            }
+            else if (a.ElementType.Kind == TypeKind.Struct)
+            {
+                CopyStruct(a.ElementType, address, element);
             }
             else
             {
@@ -2217,7 +2259,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             EmitPendingCheck();
         }
 
-        var mul = Inst($"mul i64 {i64}, 8");
+        var mul = Inst($"mul i64 {i64}, {Math.Max(8, elem.SlotSize)}");
         var off = Inst($"add i64 {mul}, 40");
         var p = Inst($"getelementptr i8, i8* {arr}, i64 {off}");
         return Inst($"bitcast i8* {p} to {elem.LlvmType}*");
@@ -2229,6 +2271,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         TrackReferenceTemp(ix.Receiver, arr);
         var idx = EmitR(ix.Index);
         var addr = ElemAddr(arr, idx, ix.Type);
+        if (ix.Type.Kind == TypeKind.Struct)
+        {
+            return addr;
+        }
+
         var v = Inst($"load {ix.Type.LlvmType}, {ix.Type.LlvmType}* {addr}");
         if (ix.Type.IsReferenceType)
         {
@@ -2669,6 +2716,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 ? Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}")
                 : $"%a{p.Symbol.Index}",
             BoundFieldAccess fa => EmitStructFieldAddress(fa),
+            BoundIndex index => EmitIndexRead(index),
             _ => "null"
         };
         Do($"call void @{a.Type.Name}__copy({ty}* {dst}, {ty}* {src})");

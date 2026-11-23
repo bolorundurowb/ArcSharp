@@ -11,7 +11,7 @@
  *   offset 16 : TypeInfo* type         type descriptor
  *   offset 24 : first field / array length / string length / WeakReference slot
  *   offset 32 : string bytes, or the element TypeInfo* of an array
- *   offset 40 : array elements (8-byte slots)
+ *   offset 40 : array elements (one or more 8-byte slots per element)
  */
 /* getenv is the portable way to read runtime options. The MSVC headers mark it
    deprecated in favour of _dupenv_s, which is not portable. */
@@ -536,14 +536,35 @@ static void arc_array_ref_deinit(void* p) {
 }
 static void arc_array_val_deinit(void* p) { (void)p; }
 
+static TypeInfo* arc_array_elem_type(void* p);
+
+static intptr_t arc_struct_stride(TypeInfo* elem) {
+    return elem->instanceSize > 8 ? elem->instanceSize : 8;
+}
+
+static void arc_array_struct_deinit(void* p) {
+    TypeInfo* elem = arc_array_elem_type(p);
+    intptr_t stride = arc_struct_stride(elem);
+    intptr_t length = *(intptr_t*)((char*)p + 24);
+    char* elements = (char*)p + 40;
+    for (intptr_t i = 0; i < length; i++) {
+        elem->deinit(elements + i * stride);
+    }
+}
+
 static TypeInfo arc_array_ref_ti = { "<ref[]>", 0, arc_array_ref_deinit, 0, 0, 0, 0 };
 static TypeInfo arc_array_val_ti = { "<val[]>", 0, arc_array_val_deinit, 0, 0, 0, 0 };
+static TypeInfo arc_array_struct_ti = { "<struct[]>", 0, arc_array_struct_deinit, 0, 0, 0, 0 };
 
-void* arc_array_new(intptr_t length, int isRef, TypeInfo* elemType, const char* site) {
-    intptr_t size = 40 + 8 * (length < 0 ? 0 : length);
+enum { ARC_ARRAY_VALUE, ARC_ARRAY_REFERENCE, ARC_ARRAY_STRUCT };
+
+void* arc_array_new(intptr_t length, int elementKind, TypeInfo* elemType, const char* site) {
+    intptr_t stride = elementKind == ARC_ARRAY_STRUCT ? arc_struct_stride(elemType) : 8;
+    intptr_t size = 40 + stride * (length < 0 ? 0 : length);
     ObjHeader* h = (ObjHeader*)calloc(1, (size_t)size);
     h->strong = 1; h->weak = 1;
-    h->type = isRef ? &arc_array_ref_ti : &arc_array_val_ti;
+    h->type = elementKind == ARC_ARRAY_STRUCT ? &arc_array_struct_ti
+        : elementKind == ARC_ARRAY_REFERENCE ? &arc_array_ref_ti : &arc_array_val_ti;
     *(intptr_t*)((char*)h + 24) = length;
     *(TypeInfo**)((char*)h + 32) = elemType;
     g_alloc++;
@@ -761,6 +782,16 @@ static void leak_each(ObjHeader* h, void (*fn)(void*, void*), void* ctx) {
         intptr_t i;
         for (i = 0; i < len; i++) {
             if (elems[i]) fn(elems[i], ctx);
+        }
+        return;
+    }
+    if (t == &arc_array_struct_ti) {
+        TypeInfo* elem = arc_array_elem_type(h);
+        intptr_t stride = arc_struct_stride(elem);
+        intptr_t length = arc_array_length(h);
+        char* elements = (char*)h + 40;
+        for (intptr_t i = 0; i < length; i++) {
+            leak_slots(elements + i * stride, elem->slots, elem->slotCount, fn, ctx);
         }
         return;
     }

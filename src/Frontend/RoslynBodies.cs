@@ -479,7 +479,9 @@ sealed partial class RoslynLowering
                 Op = TokenKind.Less, Kind = BinKind.IntCmp, Left = Read(index), Type = _bool,
                 Right = new BoundLength { Receiver = Read(array), Type = _int }
             },
-            Body = iteration.Type.IsReferenceType ? ReleaseAfter(iteration, body) : body,
+            Body = iteration.Type.IsReferenceType || iteration.Type.Kind == BoundKind.Struct
+                ? ReleaseAfter(iteration, body)
+                : body,
             Update = new BoundAssign
             {
                 Target = Read(index), Type = _int,
@@ -1533,6 +1535,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr DefaultValue(TypeSymbol type)
     {
+        if (type.Kind == BoundKind.Struct)
+        {
+            return new BoundNewObject { Type = type };
+        }
+
         if (type.IsReferenceType || type == _null)
         {
             return new BoundLiteral { Type = type == _null ? _null : type, LitKind = LiteralKind.Null };

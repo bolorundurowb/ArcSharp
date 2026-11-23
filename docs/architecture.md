@@ -260,7 +260,7 @@ Two cleanup scopes guarantee balance:
 
 Object teardown: the emitter generates `<Type>__deinit` for every class. It
 releases each strong reference field and clears each weak field; the runtime
-releases each element when an array of references dies. `arc_release` calls
+releases each element when an array of references dies and drops each inline struct when a struct array dies. `arc_release` calls
 `arc_destroy` when `strong` hits 0. `__deinit` is the generated teardown. It is
 not a C# finaliser.
 
@@ -334,7 +334,8 @@ This section records only how the subset is lowered.
 - **Value types** map to LLVM integers and floats: `bool` is `i1`, `byte` and
   `sbyte` are `i8`, `short` and `ushort` are `i16`, `int`, `uint`, and `char`
   are `i32`, `long` and `ulong` are `i64`, `float` is `float`, and `double` is
-  `double`. Every field and array element still occupies an 8-byte slot.
+  `double`. Scalar fields and array elements occupy one 8-byte slot. Inline
+  struct fields and elements occupy as many slots as their layout requires.
 - **Classes** get a `TypeInfo`, a vtable when they have virtual methods, an
   itable when the program declares interface methods, and a generated
   `__deinit`. Auto-properties lower to a backing field plus `get_` and `set_`
@@ -455,7 +456,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 - **Remaining generic features.** Virtual generic methods, interface generic methods, variance, full overload inference, and further constraint forms. Closed types stay specialised.
 - **Reflection, `dynamic`, and `unsafe`.** Limited, as that table says. Reflection is emitted metadata. `dynamic` binds only to members this compiler can lower. A pointer must not outlive the proved lifetime of the object it addresses.
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
-- **Struct forms still rejected.** Arrays of structs, static struct fields, properties of struct type, printing a struct, `virtual`/`override` members on structs, interfaces on structs, `using` a struct resource, and self-containing structs are `ARC3001`. They belong to the full struct row.
+- **Struct forms still rejected.** Printing a struct, `virtual`/`override` members on structs, interfaces on structs, `using` a struct resource, and self-containing structs are `ARC3001`. They belong to the full struct row.
 - **Remaining ordinary C# features.** Pattern matching, records, overloaded updates and short-circuiting operators, partial classes, extension methods, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c).
 - **Name handling.** A trailing `?` is accepted and ignored. A namespace is part of the type's identity.
 

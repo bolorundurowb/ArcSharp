@@ -301,6 +301,7 @@ try {
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
     Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
+    Invoke-Sample struct_storage "alloc=5 dead=5 freed=5 live=0" "struct storage PASS" @("struct_storage")
     Invoke-Sample struct_calls "alloc=6 dead=6 freed=6 live=0" "struct calls PASS" @("struct_calls")
     Invoke-Sample base_interfaces "alloc=2 dead=2 freed=2 live=0" "base interfaces PASS" @("base_interfaces")
     Invoke-Sample enums "alloc=2 dead=2 freed=2 live=0" "enums PASS" @("enums")

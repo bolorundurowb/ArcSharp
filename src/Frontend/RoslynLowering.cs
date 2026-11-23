@@ -182,13 +182,6 @@ sealed partial class RoslynLowering
             }
 
             var element = MapType(array.ElementType, location);
-            if (element.Kind == BoundKind.Struct)
-            {
-                Report(location,
-                    "arrays of struct element type are not supported",
-                    DiagnosticCatalog.UnsupportedConstructId);
-            }
-
             var key = element.Name + "[]";
             if (!_arrays.TryGetValue(key, out var arrayType))
             {
@@ -543,11 +536,6 @@ sealed partial class RoslynLowering
     private FieldSymbol CreateField(TypeSymbol owner, IFieldSymbol field)
     {
         var mapped = MapType(field.Type, field.Locations.FirstOrDefault());
-        if (field.IsStatic && mapped.Kind == BoundKind.Struct)
-        {
-            ReportOnce(field, "static struct fields are not supported");
-        }
-
         var created = new FieldSymbol
         {
             Name = field.Name,
@@ -592,12 +580,6 @@ sealed partial class RoslynLowering
         }
 
         var mapped = MapType(property.Type, location);
-        if (mapped.Kind == BoundKind.Struct)
-        {
-            Report(location, "properties of struct type are not supported yet: use a public field", DiagnosticCatalog.UnsupportedConstructId);
-            return;
-        }
-
         FieldSymbol? backing = null;
         if (!hasBody && !property.IsAbstract && !property.IsIndexer && owner.Kind != BoundKind.Interface)
         {

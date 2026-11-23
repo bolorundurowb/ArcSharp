@@ -114,16 +114,14 @@ Supported:
 - Instance fields of value, reference, struct, and `WeakReference<T>` type.
 - Constructors, instance methods, return values, and parameters passed by value
   or by `ref`/`out`/`in`.
-- Struct locals, struct fields inside classes and other structs, and struct
-  assignment.
+- Struct locals, arrays, static fields and properties, struct fields inside
+  classes and other structs, and struct assignment.
 - Copying a struct retains its reference fields; dropping a struct value
   releases them.
 
 Not supported yet, each reported as `ARC3001`:
 
-- Arrays of structs and static struct fields.
-- Properties whose type is a struct, and printing a struct value with
-  `Console.Write` or `Console.WriteLine`.
+- Printing a struct value with `Console.Write` or `Console.WriteLine`.
 - `virtual` or `override` members on a struct, and interfaces on a struct.
 - A struct that contains itself, directly or through another struct.
 - `using` a struct resource.
