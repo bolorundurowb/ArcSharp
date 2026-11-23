@@ -23,6 +23,10 @@ Errors fail compilation with exit code 1. Warnings fail compilation with
 
 The native runtime reports checking-mode violations with an `[arc-check]`
 message and exit code 70. See [ARC checking mode](features/arc-checking-mode.md).
+An exception that no handler catches ends the program with exit code 70 too.
+That is a run-time event, not a diagnostic: it prints
+`Unhandled exception. Type: message` and has no code. See
+[Exceptions](features/exceptions.md).
 
 ## ArcSharp compiler diagnostics
 
@@ -131,8 +135,8 @@ drift apart. The analyser is optional: the compiler reports every rule itself.
 **Error. Construct is not supported by ArcSharp.** ArcSharp recognised a
 C# construct it cannot lower. The message names the construct.
 
-The rule covers virtual/interface generic methods, `try`/`catch`/`finally`,
-`throw`, `lock`, `foreach`, `switch`, `break`, `continue`, `do`/`while`, `goto`,
+The rule covers virtual/interface generic methods, exception filters
+(`catch ... when`), throw expressions, `lock`, `foreach`, `switch`, `break`, `continue`, `do`/`while`, `goto`,
 lambdas, local functions, `async`/`await`, `yield`, LINQ, pattern matching,
 interpolated strings, `default`, `checked`/`unchecked`, top-level statements,
 attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,

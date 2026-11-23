@@ -102,6 +102,7 @@ how `tools/verify.ps1` captures both streams.
 | `src/CodeGen/Emitter.cs` | Bound tree to LLVM IR, with every ARC operation woven in |
 | `runtime/arc_runtime.c` | Object header, retain and release, weak references, arrays, strings, type tests, console, accounting |
 | `ref/ArcSharp.References/` | Reference assembly Roslyn binds against. Copied beside the compiler |
+| `corelib/Exceptions.cs` | The `System` exception classes, as C# source. The build embeds it in the compiler, and every compilation parses it with the user files. `Exception.Message` must stay the first field (the runtime writes it at offset 24) |
 | `ref/ArcSharp.References.Check/` | Checks what Roslyn accepts and rejects against that assembly |
 | `analyzers/ArcSharp.Diagnostics/` | Shared `ARC3xxx` ids and messages, with no Roslyn dependency |
 | `analyzers/ArcSharp.Analyzers/` | Roslyn analyser for `ARC3001` and `ARC3100` |
@@ -134,8 +135,8 @@ lowering in `src/Frontend` builds the bound tree. `using` directives are
 honoured, and a namespace is part of a type's identity. A global
 `using System` is added so `Console` resolves without one.
 
-The verification baseline, the lifetime pass, and deterministic finalisers
-have landed. The next milestone is exceptions in the [Roadmap](docs/roadmap.md). A defect in
+The verification baseline, the lifetime pass, deterministic finalisers, and
+exceptions have landed. The next milestone is M6 in the [Roadmap](docs/roadmap.md). A defect in
 the emitter or the runtime may still be fixed. A defect in binding is fixed in
 the Roslyn lowering.
 
@@ -196,6 +197,17 @@ These rules are what keep every sample at `live=0`. They are described in
   expressions, and calls `ReleaseTemps(mark)`. A new emit path that produces a
   reference temporary must add it to `_stmtTemps` unless ownership was
   transferred or the lifetime pass proved a borrow.
+- **Exceptions unwind through a pending flag.** `throw` stores the exception in
+  the global `arc_exception`. After every call and every runtime check that can
+  fail, the emitter calls `EmitPendingCheck`, which releases `_stmtTemps`, the
+  open pin lists and the struct temporaries, then branches to the nearest
+  handler or to `func.unwind`. An owned value that is in flight and not yet in
+  `_stmtTemps` (a new object while its constructor runs, the value of a store
+  while its target is evaluated, the left operand of a concatenation, the
+  operand of a failing cast) must be added to `_stmtTemps`, or passed as
+  `extra`, before anything that can throw. Wrap call pins in
+  `BeginPins`/`EndPins`, not in a bare list. `try` and `using` are regions: use
+  `EmitProtected` for a body whose cleanup must run on every path.
 - **Reference-typed locals start as null and are released at `func.exit`.**
   Every `return` stores its value in `%retval` and branches to `func.exit`; do
   not emit a `ret` anywhere else.
@@ -261,10 +273,15 @@ with its chain function `@<Type>__finalisers`.
   `EmitRuntimeDecls`, with a signature that matches the C definition: `i8*` for
   object pointers, `i64` for `intptr_t`, `i32` for C `int`. A mismatch compiles
   and links but corrupts arguments at run time.
-- Runtime failures such as an index out of range, an array type mismatch, or a
-  finaliser that resurrected its object print an exception-style message,
-  call `arc_report()`, and exit with code 70. There is no exception handling
-  yet.
+- A null dereference, an index out of range, an invalid class cast, a
+  division by zero, and an array type mismatch raise exceptions through
+  `arc_raise`. The classes come from `corelib/Exceptions.cs`, and the order in
+  `Emitter.RuntimeExceptionTypes` must match the `ARC_EXC_*` enum in the
+  runtime. An exception that nothing catches prints `Unhandled exception.`,
+  calls `arc_report()`, and exits with code 70. A finaliser that resurrected
+  its object, and an ARC checking mode violation, print a message, call
+  `arc_report()`, and exit with code 70 directly. A finaliser that throws is
+  reported and ignored.
 - `arc_report()` prints `[arc] alloc=A dead=D freed=F live=L` to stderr at the
   end of `Main`. The harness depends on that exact format. Do not change it
   without updating `tools/verify.ps1`. `ARC_STATS=1` prints
@@ -349,7 +366,8 @@ change. This applies to every `M*` section. The comparison is not part of
 |---|---|
 | `live` greater than expected | A missing release: a temporary not added to `_stmtTemps`, a local not released, or a missing destructor field |
 | A crash, or `dead` and `freed` counts that make no sense | A double release, or a +1 value consumed twice |
-| Exit code 70 and an exception-style message | A runtime check failed (index out of range or array type mismatch); the `[arc]` line is still printed |
+| Exit code 70 and `Unhandled exception.` | An exception reached the end of `Main`; the `[arc]` line is still printed, and `live` should be 0 |
+| Exit code 70 and another message | A finaliser resurrected its object, or checking mode found a violation |
 | No `[arc]` line | The program crashed before `Main` returned, or the build failed before anything ran |
 | The output is wrong but `live=0` | Often a node the binder or emitter dropped silently; inspect the `.ll` |
 
@@ -434,7 +452,8 @@ Write prose in UK English (for example "finalisation", "behaviour",
 The [compatibility target](docs/roadmap.md#compatibility-target) is the language surface the project is aiming at. Do not treat it as implemented, and do not start work outside it. Do not assume that these work today. Each is unimplemented or deliberately limited:
 
 - Generics beyond the specialised subset already in the compiler
-- Exceptions (`try`, `catch`, `finally`)
+- Exception filters, throw expressions, and any exception type outside
+  `corelib/Exceptions.cs`
 - Struct arrays, struct return values, static struct fields, by-value struct
   parameters, struct-typed properties, printing a struct, `virtual`/`override`
   members on structs, interfaces on structs, and self-containing structs (all
@@ -445,7 +464,8 @@ The [compatibility target](docs/roadmap.md#compatibility-target) is the language
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, `WeakReference<T>`,
-  and the `GC` calls `SuppressFinalize`, `Collect` and `WaitForPendingFinalizers`
+  the exception types in `corelib`, and the `GC` calls `SuppressFinalize`,
+  `Collect` and `WaitForPendingFinalizers`
 - Threads, which the non-atomic refcounts do not support
 
 The Roslyn analyser in `analyzers/ArcSharp.Analyzers` flags the unsupported

@@ -23,17 +23,17 @@ still retained at exit). **`live=0` means no leaks.**
 
 Peak memory and collector pauses are a separate measurement. The programs in
 `bench/` are compiled with ArcSharp and with the ordinary .NET runtime by
-`tools\compare-gc.ps1`. The original results and the M2, M3 and M4 medians are in
+`tools\compare-gc.ps1`. The original results and the M2, M3, M4 and M5 medians are in
 [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (42 samples, Windows x64, 23 November 2026)
+## Results (47 samples, Windows x64, 23 November 2026)
 
-`tools\verify.ps1` reported **86 passed, 0 failed** with the .NET 11.0.100 SDK:
-42 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 27 must-fail
-diagnostics, one run-time abort check, 3 command-line checks, 5 cycle checks,
-2 `ARC3200` checks, one run of the analyser unit tests (73 cases), and one
+`tools\verify.ps1` reported **94 passed, 0 failed** with the .NET 11.0.100 SDK:
+47 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 29 must-fail
+diagnostics, 2 run-time abort checks, 3 command-line checks, 5 cycle checks,
+2 `ARC3200` checks, one run of the analyser unit tests (74 cases), and one
 reference-surface check. `live=0` means every object was reclaimed.
 `numerics` and `byref` allocate nothing because they use only value types.
 `cycle_strong`, `cycle_struct` and `finaliser_cycle` are the leaks the harness
@@ -83,6 +83,11 @@ asserts on purpose.
 | `finaliser_graph` | weak references read as dead inside a finaliser, a child released by a finaliser, array elements in index order, and a generic class | alloc=55 dead=55 freed=55 **live=0** | `finaliser graph PASS` |
 | `finaliser_deep` | a list of 100,000 nodes, which overflowed the stack under the recursive release | alloc=100006 dead=100006 freed=100006 **live=0** | `deep graph finalised 100000` |
 | `finaliser_cycle` | a strong cycle never reaches zero, so its finalisers never run, and the leak is deliberate | alloc=5 dead=3 freed=3 **live=2** | `cycle finalised 0` |
+| `exceptions_basic` | `try`, `catch`, `finally`, a `throw` caught in the same method and one caught across a call, a runtime division by zero, and a catch clause that does not match | alloc=16 dead=16 freed=16 **live=0** | `outer caught inner` |
+| `exceptions_unwind` | cleanup on every unwind path: argument temporaries, locals across frames, a throwing constructor, a store that throws, a concatenation that throws, `return` through `finally`, nested `finally`, rethrow, a `finally` that replaces an exception, and a thrown stored exception | alloc=97 dead=97 freed=97 **live=0** | `exceptions unwind PASS` |
+| `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, `throw null`, and a base-class catch | alloc=53 dead=53 freed=53 **live=0** | `exceptions runtime PASS` |
+| `exceptions_using` | `Dispose()` while an exception unwinds, a `Dispose()` that throws after the body and during an unwind, `return` from `using`, and `using` inside `try` with `finally` | alloc=74 dead=74 freed=74 **live=0** | `exceptions using PASS` |
+| `exceptions_finaliser` | a finaliser that throws is reported and ignored, the object's children are still finalised, an exception already unwinding survives it, and a finaliser that catches its own exception | alloc=32 dead=32 freed=32 **live=0** | `exceptions finaliser PASS` |
 
 The two new generic samples were also built and run with the normal .NET 8
 compiler, producing the same stdout. The generic identity example in the
@@ -194,6 +199,20 @@ assert these counts.
 | `finaliser_deep` | 499,998 | 600,004 |
 | `finaliser_cycle` | 6 | 9 |
 
+## M5 retain and release counts
+
+These counts were taken on 23 November 2026 with `ARC_CHECK=1` and
+`ARC_STATS=1`, for the samples added by the exceptions milestone. For each
+sample, `release = retain + dead`. The harness does not assert these counts.
+
+| Sample | Retains | Releases |
+|---|---:|---:|
+| `exceptions_basic` | 30 | 46 |
+| `exceptions_unwind` | 169 | 266 |
+| `exceptions_runtime` | 22 | 75 |
+| `exceptions_using` | 123 | 197 |
+| `exceptions_finaliser` | 38 | 70 |
+
 ## Diagnostics
 
 Diagnostics print with a stable code and a severity, for example
@@ -202,9 +221,11 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 27 programs that must fail (`samples/negative/`) and
+The harness also compiles 29 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, including ref
-locals, ref returns, shift operators and `GC.ReRegisterForFinalize`, `CS1009`
+locals, ref returns, shift operators, exception filters, throw expressions and
+`GC.ReRegisterForFinalize`, `CS0029` for throwing a value that is not an
+exception, `CS1009`
 for an invalid Unicode escape, `ARC2011` for an invalid `using` resource,
 `ARC2012` for `new` on an abstract class, `ARC2013` for expanding
 specialisations, `ARC2015` for a write through an `in` parameter, and
@@ -222,11 +243,17 @@ never reaches the line that follows the release. The harness also checks the
 info diagnostic `ARC3200`: `finaliser_suppress` calls `GC.Collect` and reports
 it, and `finaliser_order` makes no `GC.Collect` call and stays clean.
 
+An exception that nothing catches ends the program. `negative/exception_unhandled`
+compiles, and the harness checks that running it exits with code 70, prints
+`Unhandled exception. System.InvalidOperationException: nobody catches this`
+on stderr, never reaches the line that follows the call, and prints the
+complete line `[arc] alloc=4 dead=4 freed=4 live=0`.
+
 ## Analyser unit tests
 
 `analyzers/ArcSharp.Analyzers.Tests` is an xUnit project that compiles snippets
-in memory with Microsoft.CodeAnalysis and runs the analyser. It has 73 cases:
-44 unsupported constructs that must report `ARC3001`, 17 supported programs
+in memory with Microsoft.CodeAnalysis and runs the analyser. It has 74 cases:
+44 unsupported constructs that must report `ARC3001`, 18 supported programs
 that must stay clean, 9 cycle checks for `ARC3100` (mutual and self
 references, arrays, statics, struct bridges, and weak references that break the
 cycle), and 3 checks for `ARC3200` (two calls that must report it, and a

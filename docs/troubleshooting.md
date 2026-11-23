@@ -69,18 +69,28 @@ the compiler wrote.
 
 ## Running a program
 
-### `IndexOutOfRangeException: index 5, length 2`, exit code 70
+### `Unhandled exception. System.IndexOutOfRangeException: ...`, exit code 70
 
-An array index was outside the array. The runtime stops the program with exit
-code `70`. There is no exception handling, so this cannot be caught. The `[arc]`
-line printed afterwards shows the objects that were still alive at that moment;
-those are not leaks in your program.
+An exception reached the end of `Main` without a `catch` clause that matched it.
+The runtime prints the exception type and message, then the `[arc]` line, and
+exits with code `70`. There is no stack trace. Find the `throw`, or the runtime
+check that raised it, from the message, and either fix the cause or catch it.
+The `[arc]` line shows `live=0` for a program with no leaks, because the unwind
+released everything.
 
-### `ArrayTypeMismatchException`, exit code 70
+The runtime raises these:
 
-An object was stored into an array whose element type it does not match. This
-happens through array covariance: a `Dog[]` used as an `Animal[]` cannot hold a
-`Cat`.
+| Message starts with | Cause |
+|---|---|
+| `Index was outside the bounds of the array.` | An array index was outside the array. |
+| `Object reference not set to an instance of an object.` | A member, call, `.Length`, or element access on `null`, or `throw null`. |
+| `Unable to cast object of type 'A' to type 'B'.` | A class cast to the wrong type. Use `as` or `is` to test first. |
+| `Attempted to divide by zero.` | `/` or `%` with a zero divisor. |
+| `Arithmetic operation resulted in an overflow.` | The minimum `int` or `long` divided by -1. |
+| `Attempted to access an element as a type incompatible with the array.` | A store into a covariant array: a `Dog[]` used as an `Animal[]` cannot hold a `Cat`. |
+
+With `--no-bounds` the index check is gone, so a bad index is no longer an
+exception. It reads or writes memory that the array does not own.
 
 ### `ResurrectionException: a finaliser of T kept a reference...`, exit code 70
 

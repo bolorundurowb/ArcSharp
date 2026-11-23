@@ -198,6 +198,39 @@ a plausible cause of the retained difference, but it was not isolated, and the
 machine shows run-to-run differences of a few milliseconds. Memory use is within
 0.1 MiB of M3 on every row.
 
+## M5 medians (23 November 2026)
+
+The five-run comparison completed on Windows x64 with .NET SDK 11.0.100
+and clang 22.1.8, after exceptions landed. All checksums matched and every
+ArcSharp run reported `live=0`.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---:|---:|---:|
+| baseline | ArcSharp | 19.1 ms | 3.9 MiB | 0.6 MiB |
+| baseline | .NET | 59.0 ms | 23.1 MiB | 6.3 MiB |
+| retained | ArcSharp | 62.9 ms | 25.1 MiB | 23.4 MiB |
+| retained | .NET | 74.3 ms | 35.4 MiB | 18.7 MiB |
+| churn | ArcSharp | 149.0 ms | 35.8 MiB | 34.8 MiB |
+| churn | .NET | 107.4 ms | 61.1 MiB | 44.2 MiB |
+
+The ARC traffic did not change. The churn workload recorded 9,200,856 retains
+and 10,601,216 releases per run, and the retained workload recorded 3,200,351
+retains and 3,600,456 releases, the same counts as M4. None of the three
+workloads throws, so none of them takes an unwind path.
+
+What did change is the compiled code. Every call, and every null, bounds and
+division check, is now followed by a load and a compare of the pending-exception
+flag. Compared with M4, the ArcSharp wall time was 0.8 ms higher on the
+baseline, 1.0 ms lower on the retained set, and 1.6 ms higher on the churn
+program. The machine shows run-to-run differences of a few milliseconds, so
+these differences are not evidence of a cost or of a gain. Memory use is within
+0.1 MiB of M4 on every row.
+
+The churn sampler saw both .NET pauses in three of the five runs, and the median
+total for those three was 21.517 ms. The other two runs saw only the second
+pause, at 15.448 ms and 15.491 ms. The median of the longest pause in each run
+was 16.153 ms. ArcSharp has no collector, so it has no pause to report.
+
 ## What the original numbers support
 
 **The empty process is smaller.** The ArcSharp baseline commits 0.6 MiB and
