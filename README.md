@@ -67,7 +67,8 @@ reclaimed.
 - Classes with single inheritance, transitive base interfaces, and
   `virtual`/`override` dispatch.
 - Generic classes, structs, interfaces, and methods through monomorphisation,
-  with basic type inference, generic constraints, and interface variance.
+  with Roslyn type inference, generic constraints, interface variance,
+  virtual and interface generic methods, and static abstract members.
 - Constructors, instance and static methods and fields, and instance
   properties, indexers, constants, readonly fields, and expression-bodied methods
   and constructors. Calls support named arguments, optional defaults, and
@@ -76,8 +77,11 @@ reclaimed.
   structs inside classes, struct arrays, static fields, properties, parameters,
   and return values. Structs can implement interfaces and override their
   printed representation.
-- `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
-  `string`, enums, nullable values, and single-dimensional arrays.
+- `int`, `long`, `uint`, `ulong`, `float`, `double`, `decimal`, `bool`, `char`, and
+  `string`, enums, nullable values (with updates, user-defined operators and
+  struct boxing), and single-dimensional arrays.
+- Record classes with value equality, `with` and deconstruction, and object
+  initialisers on classes.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept
   alive for the call. Also `is` and `as`.
 - `if`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, constant-label
@@ -132,8 +136,8 @@ workload recorded 9,200,856 retains and 10,601,216 releases per run.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 47 sample programs pass the test
-harness on Windows x64. The harness also runs four leak-report checks, 29
+executable, with ARC accounting) works, and 79 sample programs pass the test
+harness on Windows x64. The harness also runs four leak-report checks, 55
 must-fail diagnostics, two run-time abort checks, three command-line checks,
 cycle and `ARC3200` checks, and 74 analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See

@@ -350,8 +350,9 @@ This section records only how the subset is lowered.
   root reaches it. Unreachable survivors are searched for strong cycles. The
   report does not release or reclaim anything. Allocation stacks are not
   available until debug info exists.
-- **Structs** lower to an opaque `[HeapSize / 8 x i64]` value. Field `i` lives at
-  slot `i`, so nested structs keep their full size. Every struct gets
+- **Structs** lower to an opaque `[HeapSize / 8 x i64]` value. A field lives at
+  slot `ByteOffset / 8`, and a nested struct spans as many slots as its own layout, so the
+  fields after it move along. Every struct gets
   `<T>__copy` (value semantics: copy value fields, retain reference fields) and
   `<T>__drop` (release reference fields); a class `__deinit` calls `__drop` for
   each struct field. A struct local is zero-initialised and dropped at
@@ -394,6 +395,19 @@ This section records only how the subset is lowered.
   Constraints are checked before emission; expansion limits report `ARC2013`
   instead of exhausting the compiler stack. ARC operations follow the concrete
   substituted types, including inline struct size and reference-field cleanup.
+- **`decimal`** is a synthesised two-slot struct with no references. The built-in
+  operators, which Roslyn leaves without a method, map to small synthesised
+  methods whose bodies are `BoundDecimalOp` nodes. The emitter lowers each node to
+  an `arc_dec_*` runtime call and checks for a pending exception after the
+  operations that can overflow or divide by zero. See [Decimal](features/decimal.md).
+- **Nullable values** are synthesised structs with a `hasValue` flag and a value.
+  A lifted operator, update or conversion reads the operand once into a
+  temporary, tests the flag, and produces an absent value without calling the
+  operator. A nullable struct has a box type, so boxing yields `null` or the box of
+  the struct. See [Nullable values](features/nullable-values.md).
+- **Records** are classes whose compiler-written members, such as `Equals`,
+  `GetHashCode`, `ToString`, `Deconstruct` and the primary constructor, are given
+  bound-tree bodies by the lowering. See [Record classes](features/records.md).
 - **`System.WeakReference<T>`** remains a runtime intrinsic, including when
   used as a generic argument or local. It does not require template expansion.
 - **`using`** owns the resource value in a scoped local (`arc_assign_take`),
@@ -453,11 +467,12 @@ Two lists. The first is inherent in the memory model. The second is inside the
 ### In the compatibility target, not built yet
 The [compatibility target](roadmap.md#compatibility-target) is the bound. These items are inside it and absent from the compiler today.
 
-- **Remaining generic features.** Virtual generic methods, interface generic methods, full overload inference, and further constraint forms. Closed types stay specialised.
+- **Remaining generic gaps.** Types nested in generic types, generic interface methods on structs, and generic `static abstract` methods are `ARC3001`. Virtual, abstract and interface generic methods dispatch through one selector for each closed instantiation, and static abstract members resolve to the concrete type at compile time. Closed types stay specialised. See [generic dispatch](features/generic-dispatch.md).
 - **Reflection, `dynamic`, and `unsafe`.** Limited, as that table says. Reflection is emitted metadata. `dynamic` binds only to members this compiler can lower. A pointer must not outlive the proved lifetime of the object it addresses.
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
 - **Struct forms still rejected.** Using a struct resource and self-containing structs are `ARC3001`. They belong to the full struct row.
-- **Remaining ordinary C# features.** Recursive and list patterns, records, updates through user-written accessors, partial classes, extension methods, `decimal`, and nullable boxing and updates are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c).
+- **Record gaps.** Record structs, generic records, and records with a struct or array member are `ARC3001`. Record classes, `with`, deconstruction and object initialisers on classes are built. See [records](features/records.md).
+- **Nullable and `decimal` gaps.** Boxing a nullable primitive and `??=` are `ARC3001`. `decimal` has no parsing, rounding methods or format strings. See [nullable values](features/nullable-values.md) and [decimal](features/decimal.md).
 - **Name handling.** A trailing `?` is accepted and ignored. A namespace is part of the type's identity.
 
 ### Not part of the target
@@ -502,7 +517,10 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Implemented for instance and static fields |
 | Verification baseline                                 | Exact ARC accounting and destruction-point checks on Windows x64 |
-| Generics | Monomorphisation, basic inference, and constraints; remaining limits in Section 7 |
+| Generics | Monomorphisation, inference, virtual and interface generic methods, static abstract members, variance and constraints; remaining limits in Section 7 |
+| Record classes, `with`, deconstruction, object initialisers | Implemented for classes. See [Record classes](features/records.md) |
+| Nullable values | Implemented, including lifted updates, user-defined lifted operators and nullable struct boxing |
+| `decimal` | Implemented as a synthesised struct with `arc_dec_*` runtime support. See [Decimal](features/decimal.md) |
 | Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |
 | Retain and release statistics (`ARC_STATS=1`) | Implemented: opt-in `[arc-stats]` line. The `[arc]` line is unchanged |
 | Deterministic finalisers (`~T()`, `GC.SuppressFinalize`, worklist release) | Implemented. `ARC2016` rejects a visible resurrection, and the runtime aborts a hidden one |

@@ -57,6 +57,7 @@ can be used from another.
 | `long`, `ulong` | 64 bits | |
 | `float` | 32 bits | |
 | `double` | 64 bits | |
+| `decimal` | 128 bits | Exact base-ten arithmetic with a scale of up to 28. See [Decimal](features/decimal.md) |
 
 Integer arithmetic wraps on overflow by default. In a `checked` context,
 arithmetic overflow and out-of-range numeric conversions raise `OverflowException`.
@@ -70,6 +71,7 @@ their underlying integer representation. See [Nullable values](features/nullable
 ### Reference types
 
 - **Classes** you declare.
+- **Record classes**, with the members C# writes for them. Record structs and generic records are not supported. See [Record classes](features/records.md).
 - **`string`**, an immutable sequence of UTF-8 bytes.
 - **Single-dimensional arrays** `T[]` of supported value and reference types.
   Multi-dimensional and jagged array syntax
@@ -129,17 +131,16 @@ Not supported yet, each reported as `ARC3001`:
 
 ## Generics
 
-Generic classes, structs, interfaces, and non-virtual methods are specialised
+Generic classes, structs, interfaces, and methods are specialised
 for each closed set of type arguments. For example, `Box<int>` and
 `Box<string>` have separate layouts, type descriptors, methods, destructors,
 and static fields. Nested arguments such as `Box<Box<string>>` are supported,
 as are arrays and `WeakReference<T>` as type arguments.
 
-Methods accept explicit arguments, such as `Identity<int>(42)`. Basic inference
-also recognises exact parameter types, array elements, and matching closed
-generic types, so `Identity(42)` infers `int`. Conflicting inferred arguments
-require explicit types; full C# overload inference and variance are not
-implemented. A non-generic overload wins when its conversions are equally good.
+Methods accept explicit arguments, such as `Identity<int>(42)`. Roslyn infers
+the rest with the full C# rules, so `Identity(42)` infers `int`, and
+`Pick(1, 2.5)` infers `double`. A non-generic overload wins when its
+conversions are equally good.
 
 ```csharp
 using System;
@@ -168,8 +169,13 @@ Parameterless construction of primitive value types produces zero.
 Struct type arguments can be stored inline, passed by value, returned, and
 placed in arrays. Virtual methods
 on generic classes and methods of generic interfaces work. Methods that are
-themselves generic cannot be virtual, overrides, abstract, or interface members
-(`ARC3001`). Method type parameters must not shadow enclosing type parameters.
+themselves generic can be `virtual`, `abstract`, overrides, or interface
+members, except that a struct cannot implement a generic interface method
+(`ARC3001`). Interfaces can declare `static abstract` and `static virtual`
+members, including operators, that code calls through a constrained type
+parameter, but a generic `static abstract` method is `ARC3001`. See
+[generic dispatch](features/generic-dispatch.md). Method type parameters must
+not shadow enclosing type parameters.
 Templates are checked when instantiated. Generic interfaces support covariant
 and contravariant dispatch for reference type arguments. Types nested in
 generic types remain unsupported. `default(T)` uses the closed type's zero
@@ -222,10 +228,16 @@ An explicit static constructor runs once, after static initialisers, on the
 first relevant use of the type. A failure surfaces as
 `TypeInitializationException` on the triggering use and on later uses.
 
-Not supported yet: `sealed`, `partial`, types nested in
+Partial classes, including parts in different files, and extension methods
+are supported. `++`, `--` and compound assignments work through properties and
+indexers that have accessor bodies, except through a struct receiver. See
+[Updates through accessors](features/accessor-updates.md) and
+[Extension methods and partial types](features/extensions-partial.md).
+
+Not supported yet: `sealed`, types nested in
 generic types,
-default interface accessor bodies, ref-returning properties and indexers,
-updates through user-written accessors, and extension methods. Method and constructor calls accept
+default interface accessor bodies, and ref-returning properties and indexers.
+Method and constructor calls accept
 named arguments, optional defaults and `params T[]`.
 
 Access modifiers are accepted but **not enforced**. Code in one class can read
@@ -356,7 +368,7 @@ error.
 | `try`, `catch`, `finally` | See [Exceptions](#exceptions). |
 | `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
-Not supported: recursive and list patterns, `goto`,
+Not supported: tuple, extension-method and indexer patterns, list patterns on types other than arrays, `goto`,
 `lock`, `yield`, `unsafe`, `fixed`, and local functions.
 
 ### Exceptions
@@ -485,8 +497,8 @@ use the declared truth operator to decide whether to evaluate the right operand.
 | Integral bitwise and shifts | `&`, `\|`, `^`, `~`, `<<`, `>>`, `>>>` |
 | Assignment | `=`, `+=`, `-=`. Assignment can be used as an expression. |
 | String | `+` concatenates a string with a string, number, or `bool` |
-| Type tests and patterns | `x is T`, `x as T`, casts `(T)x`, and supported constant, relational, declaration and logical patterns |
-| Object creation | `new T(args)`, `new T[n]`, `new WeakReference<T>(x)` |
+| Type tests and patterns | `x is T`, `x as T`, casts `(T)x`, and supported constant, relational, declaration, logical, property, positional and array list patterns |
+| Object creation | `new T(args)`, `new T { Member = value }` on classes, `new T[n]`, `new WeakReference<T>(x)`, and `with` on records. See [Object initialisers](features/object-initialisers.md) |
 | Access | Fields, properties, static members, `this`, `base` constructor calls, array indexing `a[i]` |
 | Choice | `condition ? first : second` and `switch` expressions with supported patterns |
 | Grouping | Parentheses |
@@ -497,9 +509,10 @@ assignments `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
 and `>>>=`. String storage accepts `+=` for supported concatenation operands.
 
 The `??` operator can select a fallback for a nullable value or a reference.
+A nullable value also accepts compound assignment, `++` and `--`, user-defined lifted operators, and boxing when it is a nullable struct. A nullable primitive still cannot be boxed.
+`decimal` supports the arithmetic, comparison, increment and conversion operators, including on `decimal?`.
 Not supported: `??=`, `?.`, `typeof`, `sizeof`,
-`nameof`, lambdas, anonymous types, tuples, pattern matching beyond
-scalar, declaration and type patterns, object and collection initialisers, and
+`nameof`, lambdas, anonymous types, tuples, tuple and indexer patterns, collection initialisers, object initialisers on structs, and
 interpolated strings (`$"..."`).
 
 ### Conversions
@@ -508,6 +521,7 @@ Implicit conversions:
 
 - From `int` to `long`, and from `char` to `int` or `long`.
 - Between numeric types.
+- From any integer type or `char` to `decimal`. Conversions from `float` and `double` to `decimal`, and every conversion from `decimal`, are explicit. A conversion to an integer type truncates and raises `OverflowException` when the value does not fit.
 - From a class to its base class or to an interface it implements.
 - From `S[]` to `T[]` when `S` converts to `T` as a reference (array
   covariance). A store into such an array is checked at run time.
@@ -547,6 +561,7 @@ directly:
 | Member | Notes |
 |---|---|
 | `Console.Write(x)`, `Console.WriteLine(x)` | `x` is a `string`, `bool`, `char`, integer, `float`, or `double`. A `char` prints as the character. `Console.WriteLine()` with no argument prints an empty line. |
+| `decimal.Zero`, `One`, `MinusOne`, `MaxValue`, `MinValue` | Constants of `decimal`. `Console.Write`, `Console.WriteLine`, string concatenation and `ToString()` print a decimal |
 | `array.Length` | Number of elements |
 | `str.Length` | Number of **bytes** in the UTF-8 encoding |
 | `new WeakReference<T>(target)` | |
@@ -571,7 +586,7 @@ items that target marks as full and items it marks as limited.
 - Generic features outside the subset described under [Generics](#generics).
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
-- Delegates, events, and records.
+- Delegates and events. Record structs, generic records, and records with a struct or array member are also rejected.
 - Lambdas, closures, local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
@@ -603,6 +618,8 @@ says so. The finalisation contract is the runtime's compatibility profile.
 | Reference cycles | Collected. Finalisers of cyclic objects may still run | Permitted. `ARC3100` warns when the type graph can form one. An ignored warning, including in a library, leaks, and a finaliser in the cycle does not run. `WeakReference<T>` breaks the cycle |
 | `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false`. The weak reference does not keep the object alive |
 | `string.Length` | UTF-16 code units | UTF-8 bytes. `"héllo".Length` is 6, not 5. |
+| `(decimal)` of a `double` | The exact binary value, rounded to 28 digits, in current .NET | The same. Older .NET versions rounded to 15 digits |
+| Formatting a `decimal` | `ToString` takes formats and a culture | `ToString()` and string concatenation only. The result is digits, an optional minus sign and a point |
 | Formatting a `double` or `float` | Shortest round-trippable form, such as `0.3333333333333333` | Six significant digits, such as `0.333333` |
 | Null dereference, index out of range, invalid class cast, integer division by zero, array type mismatch | `NullReferenceException`, `IndexOutOfRangeException`, `InvalidCastException`, `DivideByZeroException`, `ArrayTypeMismatchException`, all catchable | The same exceptions, all catchable. See [Exceptions](#exceptions) |
 | Unhandled exception | Prints the type, message, and stack trace, and exits with a non-zero code | Prints `Unhandled exception. Type: message`, then the `[arc]` line, and exits with code 70. There is no stack trace |

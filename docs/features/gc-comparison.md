@@ -231,6 +231,40 @@ total for those three was 21.517 ms. The other two runs saw only the second
 pause, at 15.448 ms and 15.491 ms. The median of the longest pause in each run
 was 16.153 ms. ArcSharp has no collector, so it has no pause to report.
 
+## M6 medians (23 November 2026)
+
+The five-run comparison completed on Windows x64 with .NET SDK 11.0.100
+and clang 22.1.8, after the ordinary C# milestone landed. All checksums
+matched and every ArcSharp run reported `live=0`.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---:|---:|---:|
+| baseline | ArcSharp | 20.4 ms | 3.9 MiB | 0.6 MiB |
+| baseline | .NET | 59.0 ms | 23.1 MiB | 6.3 MiB |
+| retained | ArcSharp | 66.6 ms | 25.1 MiB | 23.3 MiB |
+| retained | .NET | 74.8 ms | 35.4 MiB | 18.7 MiB |
+| churn | ArcSharp | 165.6 ms | 35.8 MiB | 34.7 MiB |
+| churn | .NET | 121.0 ms | 61.0 MiB | 44.2 MiB |
+
+The ARC traffic did not change. The churn workload recorded 9,200,856 retains
+and 10,601,216 releases per run, and the retained workload recorded 3,200,351
+retains and 3,600,456 releases, the same counts as M5. None of the three
+workloads uses a feature that M6 added.
+
+The script was run twice, and the two runs disagree by more than the
+differences between milestones. In the first run the ArcSharp medians were
+21.7 ms, 69.7 ms and 159.8 ms, and the .NET medians were 72.9 ms, 103.5 ms and
+104.5 ms. The table above is the second run. Compared with M5, its ArcSharp wall
+time was 1.3 ms higher on the baseline, 3.7 ms higher on the retained set and
+16.6 ms higher on the churn program. The .NET churn median moved by 13.6 ms
+in the same direction, and the .NET retained median moved by 29 ms in the
+first run, so the machine was noisier than during M5. The extra ArcSharp time
+was not isolated and is not evidence of a cost. Memory use is within 0.1 MiB of
+M5 on every row.
+
+The churn sampler saw both .NET pauses in all five runs. The median of the
+longest pause in each run was 18.049 ms, and the median total was 23.239 ms.
+ArcSharp has no collector, so it has no pause to report.
 ## What the original numbers support
 
 **The empty process is smaller.** The ArcSharp baseline commits 0.6 MiB and

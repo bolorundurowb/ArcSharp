@@ -67,9 +67,9 @@ and threads are not targets.
 
 | Feature | Target | Today | Milestone | Notes |
 |---|---|---|---|---|
-| Classes, structs, records | Full | Classes, and structs with restrictions. Records are rejected. | [M6](#m6--ordinary-c) | Ordinary C# semantics, including the member forms, statements, and operators that come with them. |
-| Interfaces, inheritance | Full | Single inheritance, transitive base interfaces, virtual tables, and interface tables. | [M6](#m6--ordinary-c) | Native dispatch tables. |
-| Generics | Full | Monomorphisation, basic inference, and constraints for a subset. | [M6](#m6--ordinary-c) | Each closed type is specialised ahead of time. A single shared representation for all type arguments is not the plan. |
+| Classes, structs, records | Full | Classes, structs, and record classes. Record structs and generic records are rejected. | [Shipped](#where-we-are) | Ordinary C# semantics, including the member forms, statements, and operators that come with them. |
+| Interfaces, inheritance | Full | Single inheritance, transitive base interfaces, virtual tables, and interface tables. | [Shipped](#where-we-are) | Native dispatch tables. |
+| Generics | Full | Monomorphisation, inference, virtual and interface generic methods, static abstract members, variance, and constraints. | [Shipped](#where-we-are) | Each closed type is specialised ahead of time. A single shared representation for all type arguments is not the plan. |
 | Delegates, events | Full | Rejected (`ARC3001`). | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
 | LINQ | Full | Rejected. | [M8](#m8--core-library-iterators-and-linq) | A library written against delegates, generics, iterators, and the core collections. Query syntax lowers to those methods. |
 | `async` / `await` | Full | Rejected. | [M9](#m9--async-and-await) | A state machine whose suspended locals follow the ARC rules. Continuations run on one thread. |
@@ -137,6 +137,7 @@ results are in [Verification](verification.md).
   derived before base, with `GC.SuppressFinalize`, a worklist release that
   handles very deep graphs, and rejected resurrection. See
   [Deterministic finalisers](features/finalisers.md).
+- The M6 ordinary C# surface. Statements, operators, member forms, enums, struct storage and calls, patterns, generics with virtual and static abstract members, record classes, object initialisers, nullable values with boxing and updates, and `decimal`. See [Records](features/records.md), [Object initialisers](features/object-initialisers.md), [Generic dispatch](features/generic-dispatch.md), [Nullable values](features/nullable-values.md) and [Decimal](features/decimal.md).
 - The M5 exceptions. `try`, `catch`, `finally`, and `throw`, a small `System`
   exception library, `using` disposal while unwinding, runtime checks that
   raise catchable exceptions, an unhandled-exception exit with code 70, and a
@@ -391,6 +392,8 @@ finaliser. The differences from .NET in the language reference are updated.
 
 ## M6 — Ordinary C#
 
+**Landed.** The benchmark medians are in the [GC comparison](features/gc-comparison.md).
+
 **Goal.** The full rows for classes, structs, records, interfaces, and
 generics: the member forms, statements, and operators that ordinary C# code
 uses. Each step below ships on its own.
@@ -409,23 +412,27 @@ uses. Each step below ships on its own.
    [constants, readonly fields, nested types and expression-bodied methods and
    constructors](features/operators-members.md),
    [named, optional and parameter-array arguments](features/arguments.md), and
-   [accessor bodies and auto-property initialisers](features/accessors.md) are
+   [accessor bodies and auto-property initialisers](features/accessors.md),
+   [updates through accessors](features/accessor-updates.md), and
+   [extension methods and partial classes](features/extensions-partial.md) are
    implemented within the documented subset.
 4. [Enums](features/enums.md) and [indexer get and set](features/accessors.md)
    are implemented within the documented subset.
 5. [Struct parameters and return values](features/struct-calls.md),
    [struct arrays, static fields and properties](features/struct-storage.md), and [struct interface dispatch, overrides and printing](features/struct-interfaces.md)
    are implemented within the documented subset.
-6. Records with the members C# synthesises and recursive and list patterns remain.
+6. [Record classes](features/records.md) with the members C# synthesises, and [object initialisers](features/object-initialisers.md), are implemented.
    [Switch expressions](features/conditional-values.md) are implemented.
    [Base interface lists and explicit implementations](features/base-interfaces.md)
-   and [scalar and type patterns](features/patterns.md) are implemented.
-7. Virtual and interface generic methods, full inference, and remaining
-   constraint forms. [Interface variance and additional constraints](features/generic-variance.md)
+   and [scalar, type, recursive and array list patterns](features/patterns.md)
    are implemented.
-8. [Nullable storage, conversions and lifted built-in operations](features/nullable-values.md)
-   are implemented. Nullable boxing, lifted updates and user-defined operators,
-   and `decimal` remain.
+7. [Virtual and interface generic methods, static abstract members, full
+   inference](features/generic-dispatch.md), and
+   [interface variance and additional constraints](features/generic-variance.md)
+   are implemented.
+8. [Nullable storage, conversions, lifted operations, updates, user-defined
+   operators and struct boxing](features/nullable-values.md) and [`decimal`](features/decimal.md)
+   are implemented.
 
 **Done when.** Each step has samples and must-fail samples, its `ARC3001`
 entries are gone from the compiler and the analyser, and the language reference

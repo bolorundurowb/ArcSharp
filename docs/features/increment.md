@@ -19,4 +19,6 @@ operand runs and transfers the concatenation result to that slot.
 
 The verification harness checks prefix and postfix results, array index
 evaluation, narrow integer wrapping, and floating-point arithmetic. It also
-checks the diagnostic for an increment through an unsupported accessor body.
+checks the diagnostic for an increment through a struct property with accessor
+bodies. [Updates through accessors](accessor-updates.md) covers properties and
+indexers that have bodies.
