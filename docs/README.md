@@ -59,6 +59,7 @@ before you rely on it for anything beyond experiments.
 - [Struct interfaces, boxing and printing](features/struct-interfaces.md)
 - [Patterns and switch guards](features/patterns.md)
 - [Conditional values](features/conditional-values.md)
+- [Overloaded storage updates](features/operator-updates.md)
 - [Constant-label switch statements](features/switch-statement.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 

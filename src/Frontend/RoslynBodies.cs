@@ -1375,9 +1375,17 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerIncrement(IIncrementOrDecrementOperation operation)
     {
-        if (operation.OperatorMethod != null || operation.IsLifted
-            || LowerUpdateTarget(operation.Target) is not { } target
-            || !(target.Type.IsInteger || target.Type.IsFloat))
+        if (operation.IsLifted || LowerUpdateTarget(operation.Target) is not { } target)
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        if (operation.OperatorMethod is { } method)
+        {
+            return LowerOperatorUpdate(operation, target, method, null, operation.IsPostfix, operation.IsChecked);
+        }
+
+        if (!(target.Type.IsInteger || target.Type.IsFloat))
         {
             return UnsupportedExpr(operation);
         }
@@ -1394,10 +1402,15 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerCompound(ICompoundAssignmentOperation assignment)
     {
-        if (assignment.OperatorMethod != null || assignment.IsLifted
-            || LowerUpdateTarget(assignment.Target) is not { } target)
+        if (assignment.IsLifted || LowerUpdateTarget(assignment.Target) is not { } target)
         {
             return UnsupportedExpr(assignment);
+        }
+
+        if (assignment.OperatorMethod is { } method)
+        {
+            return LowerOperatorUpdate(assignment, target, method, LowerExpr(assignment.Value), false,
+                assignment.IsChecked, assignment.InConversion, assignment.OutConversion);
         }
 
         if (target.Type == _string && assignment.OperatorKind == BinaryOperatorKind.Add)
@@ -1446,6 +1459,53 @@ sealed partial class RoslynLowering
             OperationType = operationType,
             Op = BinaryToken(assignment.OperatorKind),
             IsChecked = assignment.IsChecked
+        };
+    }
+
+    private BoundExpr LowerOperatorUpdate(IOperation operation, BoundExpr target, IMethodSymbol method,
+        BoundExpr? right, bool postfix, bool isChecked, CommonConversion incoming = default, CommonConversion outgoing = default)
+    {
+        var mapped = MapMethod(method, operation.Syntax.GetLocation());
+        if (mapped == null || mapped.IsAbstract || mapped.Parameters.Any(parameter => parameter.RefKind != RefKind.None))
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        if (target is BoundParam { Symbol: { RefKind: RefKind.None, Type.IsReferenceType: true } })
+        {
+            Report(operation.Syntax, "reassigning a reference-typed parameter is not supported", "ARC2001");
+            return ErrorExpr();
+        }
+
+        BoundExpr Convert(BoundExpr value, TypeSymbol type, CommonConversion conversion)
+        {
+            if (conversion.MethodSymbol is { } conversionMethod)
+            {
+                var implementation = MapMethod(conversionMethod, operation.Syntax.GetLocation());
+                if (implementation == null)
+                {
+                    return UnsupportedExpr(operation);
+                }
+
+                value = new BoundCall { Type = implementation.ReturnType, Method = implementation, Arguments = [value] };
+            }
+
+            return value.Type == type
+                ? value
+                : new BoundConversion { Operand = value, Type = type, IsChecked = isChecked };
+        }
+
+        var input = new BoundPatternInput { Type = target.Type };
+        var arguments = new List<BoundExpr> { Convert(input, mapped.Parameters[0].Type, incoming) };
+        if (right != null)
+        {
+            arguments.Add(Convert(right, mapped.Parameters[1].Type, default));
+        }
+
+        var call = new BoundCall { Type = mapped.ReturnType, Method = mapped, Arguments = arguments };
+        return new BoundOperatorUpdate
+        {
+            Target = target, Type = target.Type, Input = input, Result = Convert(call, target.Type, outgoing), IsPostfix = postfix
         };
     }
 

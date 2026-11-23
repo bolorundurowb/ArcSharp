@@ -403,8 +403,8 @@ uses. Each step below ships on its own.
    are implemented.
 2. Operators: [bitwise operators and shifts](features/bitwise.md),
    [checked arithmetic](features/checked.md), and [direct operator overloads](features/operators-members.md)
-   are implemented, including [overloaded short-circuit operators](features/conditional-values.md).
-   Overloaded compound assignment, increment and decrement still need support.
+   are implemented, including [overloaded short-circuit operators](features/conditional-values.md)
+   and [overloaded storage updates](features/operator-updates.md).
 3. Member forms: [static constructors](features/static-constructors.md),
    [constants, readonly fields, nested types and expression-bodied methods and
    constructors](features/operators-members.md),

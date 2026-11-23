@@ -162,7 +162,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeIncrement(OperationAnalysisContext context)
     {
         var operation = (Microsoft.CodeAnalysis.Operations.IIncrementOrDecrementOperation)context.Operation;
-        if (operation.OperatorMethod != null || operation.IsLifted
+        if (operation.IsLifted
             || operation.Target.Kind is not (OperationKind.LocalReference or OperationKind.ParameterReference
                 or OperationKind.FieldReference or OperationKind.ArrayElementReference or OperationKind.PropertyReference)
             || operation.Target.Type?.SpecialType == SpecialType.System_Decimal)

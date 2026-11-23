@@ -5,9 +5,13 @@ class Gate
 
 static class Program
 {
+    static Gate Update(Gate value)
+    {
+        value++;
+        return value;
+    }
+
     static void Main()
     {
-        var gate = new Gate();
-        gate++;
     }
 }

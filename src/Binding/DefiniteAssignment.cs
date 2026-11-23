@@ -358,6 +358,11 @@ public static class DefiniteAssignment
                     VisitExpr(compound.Right, assigned);
                     break;
 
+                case BoundOperatorUpdate update:
+                    VisitExpr(update.Target, assigned);
+                    VisitExpr(update.Result, assigned);
+                    break;
+
                 case BoundIncrement increment:
                     VisitExpr(increment.Target, assigned);
                     break;

@@ -225,7 +225,7 @@ first relevant use of the type. A failure surfaces as
 Not supported yet: `sealed`, `partial`, types nested in
 generic types,
 default interface accessor bodies, ref-returning properties and indexers,
-overloaded updates, and extension methods. Method and constructor calls accept
+updates through user-written accessors, and extension methods. Method and constructor calls accept
 named arguments, optional defaults and `params T[]`.
 
 Access modifiers are accepted but **not enforced**. Code in one class can read
@@ -473,8 +473,8 @@ interface slots. See [Base interfaces](features/base-interfaces.md).
 ## Expressions and operators
 
 User-defined unary, binary and conversion operators work with supported
-by-value signatures, including struct values. Overloaded compound assignment,
-increment and decrement remain unsupported. Overloaded `&&` and `||`
+by-value signatures, including struct values. Compound assignment, increment
+and decrement can call overloads on supported storage. Overloaded `&&` and `||`
 use the declared truth operator to decide whether to evaluate the right operand.
 
 | Category | Operators and forms |

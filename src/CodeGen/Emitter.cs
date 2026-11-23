@@ -1636,6 +1636,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundUnary u: return EmitUnary(u);
             case BoundAssign asn: return EmitAssign(asn);
             case BoundIncrement increment: return EmitIncrement(increment);
+            case BoundOperatorUpdate update: return EmitOperatorUpdate(update);
             case BoundNumericCompound compound: return EmitNumericCompound(compound);
             case BoundStringCompound compound: return EmitStringCompound(compound);
             case BoundConversion cv: return EmitConversion(cv);
@@ -2568,6 +2569,73 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         return EmitIntegerArithmetic(TokenKind.Minus, u.Type.IsUnsignedInteger,
             int.Parse(u.Type.LlvmType.AsSpan(1)), "0", v, u.IsChecked);
+    }
+
+    private string EmitOperatorUpdate(BoundOperatorUpdate update)
+    {
+        var type = update.Type;
+        var pins = BeginPins();
+        string? array = null;
+        string? index = null;
+        string address;
+        if (update.Target is BoundIndex element && type.IsReferenceType)
+        {
+            array = EmitR(element.Receiver);
+            _stmtTemps.Add(array);
+            PinOwner(pins, array);
+            index = EmitR(element.Index);
+            address = ElemAddr(array, index, element.Type);
+        }
+        else
+        {
+            address = EmitManagedAddress(update.Target, pins);
+        }
+
+        string before;
+        if (type.Kind == TypeKind.Struct)
+        {
+            before = NewStructTemp(type);
+            CopyStruct(type, before, address);
+        }
+        else
+        {
+            before = EmitLoadSlot(address, type);
+            if (type.IsReferenceType)
+            {
+                _stmtTemps.Add(before);
+            }
+        }
+
+        _patternInputs.Add(update.Input, before);
+        var after = EmitR(update.Result);
+        _patternInputs.Remove(update.Input);
+        var result = update.IsPostfix ? before : after;
+        if (type.IsReferenceType)
+        {
+            if (array != null && index != null)
+            {
+                var pending = _stmtTemps.Count;
+                _stmtTemps.Add(after);
+                var wideIndex = Inst($"sext i32 {index} to i64");
+                Do($"call void @arc_array_store_check(i8* {array}, i64 {wideIndex}, i8* {after})");
+                EmitPendingCheck();
+                UntrackInFlight(pending);
+            }
+
+            Do($"call void @arc_assign_take(i8** {address}, i8* {after})");
+            Do($"call void @arc_retain(i8* {result})");
+        }
+        else if (type.Kind == TypeKind.Struct)
+        {
+            CopyStruct(type, address, after);
+        }
+        else
+        {
+            Do($"store {type.LlvmType} {after}, {type.LlvmType}* {address}");
+        }
+
+        EndPins(pins);
+        return result;
     }
 
     private string EmitStringCompound(BoundStringCompound compound)

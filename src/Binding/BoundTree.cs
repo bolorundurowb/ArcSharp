@@ -137,6 +137,14 @@ public sealed class BoundUnary : BoundExpr
     public required BoundExpr Operand;
 }
 
+public sealed class BoundOperatorUpdate : BoundExpr
+{
+    public required BoundExpr Target;
+    public required BoundPatternInput Input;
+    public required BoundExpr Result;
+    public bool IsPostfix;
+}
+
 public sealed class BoundStringCompound : BoundExpr
 {
     public required BoundExpr Target;

@@ -289,6 +289,7 @@ public sealed class LifetimeAnalysis
         BoundUnary unary => [unary.Operand],
         BoundAssign assignment => [assignment.Target, assignment.Value],
         BoundIncrement increment => [increment.Target],
+        BoundOperatorUpdate update => [update.Target, update.Result],
         BoundNumericCompound compound => [compound.Target, compound.Right],
         BoundStringCompound compound => [compound.Target, compound.Right],
         BoundConversion conversion => [conversion.Operand],

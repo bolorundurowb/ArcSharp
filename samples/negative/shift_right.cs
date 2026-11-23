@@ -8,9 +8,16 @@ struct Custom
 
 static class Program
 {
+    static Custom field;
+
+    static Custom Value
+    {
+        get => field;
+        set => field = value;
+    }
+
     static void Main()
     {
-        Custom value = new Custom();
-        value >>= 1;
+        Value >>= 1;
     }
 }

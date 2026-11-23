@@ -457,7 +457,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 - **Reflection, `dynamic`, and `unsafe`.** Limited, as that table says. Reflection is emitted metadata. `dynamic` binds only to members this compiler can lower. A pointer must not outlive the proved lifetime of the object it addresses.
 - **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
 - **Struct forms still rejected.** Using a struct resource and self-containing structs are `ARC3001`. They belong to the full struct row.
-- **Remaining ordinary C# features.** Recursive and list patterns, records, overloaded updates, partial classes, extension methods, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c).
+- **Remaining ordinary C# features.** Recursive and list patterns, records, updates through user-written accessors, partial classes, extension methods, `decimal`, and nullable value types are absent. They belong to the ordinary C# milestone, [M6](roadmap.md#m6--ordinary-c).
 - **Name handling.** A trailing `?` is accepted and ignored. A namespace is part of the type's identity.
 
 ### Not part of the target
