@@ -397,11 +397,12 @@ uses. Each step below ships on its own.
 
 **Steps.**
 
-1. Statements: `foreach` over arrays, `switch`, `break`, `continue`,
-   `++`, `--`, and compound assignment. [Post-test loops](features/do-while.md)
+1. Statements: [constant-label switch statements](features/switch-statement.md)
+   and [storage updates](features/increment.md) are implemented.
+   [Post-test loops, loop branches, and array iteration](features/do-while.md)
    are implemented.
-2. Operators: bitwise operators and shifts, operator overloading, and
-   `checked` / `unchecked`, which uses the exceptions from M5.
+2. Operators: operator overloading. [Bitwise operators and shifts](features/bitwise.md)
+   and [checked arithmetic](features/checked.md) are implemented.
 3. Member forms: `const`, `readonly`, static constructors, nested types,
    expression-bodied members, accessor bodies, `params`, and optional and named
    arguments.

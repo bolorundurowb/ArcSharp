@@ -138,11 +138,11 @@ C# construct it cannot lower. The message names the construct.
 The rule covers virtual/interface generic methods, exception filters
 (`catch ... when`), throw expressions, `lock`, `foreach`, `switch`, `break`, `continue`, `do`/`while`, `goto`,
 lambdas, local functions, `async`/`await`, `yield`, LINQ, pattern matching,
-interpolated strings, `default`, `checked`/`unchecked`, top-level statements,
+interpolated strings, `default`, top-level statements,
 attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,
 `params`, optional and named arguments, `base.` access, and the struct
 restrictions listed in the [Language reference](language-reference.md#structs).
-Bitwise and shift operators are `ARC3001`. So are `GC.ReRegisterForFinalize`
+Unsupported constructs also include `GC.ReRegisterForFinalize`
 and a value-type argument to `GC.SuppressFinalize`, which would need boxing. A bad Unicode escape is Roslyn's
 `CS1009`. A missing type such as `List<T>`, a wrong generic arity, and a
 failed constraint are Roslyn `CS` codes.

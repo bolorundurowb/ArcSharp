@@ -58,6 +58,18 @@ return 0;
 
 static SurfaceCase[] Cases() =>
 [
+    new("array foreach", """
+        class P
+        {
+            static void M(int[] values)
+            {
+                foreach (long value in values)
+                {
+                    System.Console.WriteLine(value);
+                }
+            }
+        }
+        """),
     new("console", """
         using System;
         class P

@@ -106,6 +106,8 @@ public enum BinKind
     DoubleCmp,
     RefEq,
     BoolLogic,
+    BoolArith,
+    BoolCmp,
     StrConcat,
     StrEq
 }
@@ -115,6 +117,7 @@ public sealed class BoundBinary : BoundExpr
     public TokenKind Op;
     public BinKind Kind;
     public bool IsUnsigned;
+    public bool IsChecked;
     public required BoundExpr Left;
     public required BoundExpr Right;
 }
@@ -122,7 +125,31 @@ public sealed class BoundBinary : BoundExpr
 public sealed class BoundUnary : BoundExpr
 {
     public TokenKind Op;
+    public bool IsChecked;
     public required BoundExpr Operand;
+}
+
+public sealed class BoundStringCompound : BoundExpr
+{
+    public required BoundExpr Target;
+    public required BoundExpr Right;
+}
+
+public sealed class BoundNumericCompound : BoundExpr
+{
+    public required BoundExpr Target;
+    public required BoundExpr Right;
+    public required TypeSymbol OperationType;
+    public required TokenKind Op;
+    public bool IsChecked;
+}
+
+public sealed class BoundIncrement : BoundExpr
+{
+    public required BoundExpr Target;
+    public bool IsDecrement;
+    public bool IsPostfix;
+    public bool IsChecked;
 }
 
 public sealed class BoundAssign : BoundExpr
@@ -138,6 +165,7 @@ public sealed class BoundConversion : BoundExpr
     // An explicit reference cast to a class. The emitter tests the runtime type
     // and raises InvalidCastException when the operand is not an instance.
     public bool CastCheck;
+    public bool IsChecked;
 }
 
 public sealed class BoundIs : BoundExpr
@@ -227,6 +255,24 @@ public sealed class BoundFor : BoundStmt
     public BoundExpr? Condition;
     public BoundExpr? Update;
     public required BoundStmt Body;
+}
+
+public sealed class BoundSwitch : BoundStmt
+{
+    public required BoundExpr Value;
+    public List<BoundSwitchSection> Sections = [];
+}
+
+public sealed class BoundSwitchSection
+{
+    public bool IsDefault;
+    public List<BoundExpr> Labels = [];
+    public required BoundBlock Body;
+}
+
+public sealed class BoundBranch : BoundStmt
+{
+    public required bool IsContinue;
 }
 
 public sealed class BoundReturn : BoundStmt

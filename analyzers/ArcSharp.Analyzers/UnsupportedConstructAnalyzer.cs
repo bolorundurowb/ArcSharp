@@ -29,10 +29,12 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeDeclaration, DeclarationKinds);
         context.RegisterSyntaxNodeAction(AnalyzeMember, MemberKinds);
         context.RegisterSyntaxNodeAction(AnalyzeUsing, SyntaxKind.UsingStatement);
+        context.RegisterSyntaxNodeAction(AnalyzeForEach, SyntaxKind.ForEachStatement);
+        context.RegisterSyntaxNodeAction(AnalyzeSwitch, SyntaxKind.SwitchStatement);
+        context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
         context.RegisterSyntaxNodeAction(AnalyzeParameter, SyntaxKind.Parameter);
         context.RegisterSyntaxNodeAction(AnalyzeArgument, SyntaxKind.Argument);
-        context.RegisterSyntaxNodeAction(AnalyzeBinary, BinaryKinds);
         context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeAccessor, AccessorKinds);
         context.RegisterSyntaxNodeAction(AnalyzeStruct, SyntaxKind.StructDeclaration);
@@ -43,19 +45,15 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
 
     private static readonly SyntaxKind[] UnsupportedKinds =
     {
-        SyntaxKind.BreakStatement,
-        SyntaxKind.ContinueStatement,
         SyntaxKind.GotoStatement,
-        SyntaxKind.ForEachStatement,
+        SyntaxKind.GotoCaseStatement,
+        SyntaxKind.GotoDefaultStatement,
         SyntaxKind.ForEachVariableStatement,
-        SyntaxKind.SwitchStatement,
         SyntaxKind.ThrowExpression,
         SyntaxKind.CatchFilterClause,
         SyntaxKind.LockStatement,
         SyntaxKind.YieldReturnStatement,
         SyntaxKind.YieldBreakStatement,
-        SyntaxKind.CheckedStatement,
-        SyntaxKind.CheckedExpression,
         SyntaxKind.UnsafeStatement,
         SyntaxKind.FixedStatement,
         SyntaxKind.StackAllocArrayCreationExpression,
@@ -119,16 +117,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.ConversionOperatorDeclaration
     };
 
-    private static readonly SyntaxKind[] BinaryKinds =
-    {
-        SyntaxKind.LeftShiftExpression,
-        SyntaxKind.RightShiftExpression,
-        SyntaxKind.UnsignedRightShiftExpression,
-        SyntaxKind.LeftShiftAssignmentExpression,
-        SyntaxKind.RightShiftAssignmentExpression,
-        SyntaxKind.UnsignedRightShiftAssignmentExpression
-    };
-
     private static readonly SyntaxKind[] AccessorKinds =
     {
         SyntaxKind.GetAccessorDeclaration,
@@ -148,29 +136,60 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
+    private static void AnalyzeSwitch(SyntaxNodeAnalysisContext context)
+    {
+        var selection = (SwitchStatementSyntax)context.Node;
+        var type = context.SemanticModel.GetTypeInfo(selection.Expression, context.CancellationToken).Type;
+        if (type?.SpecialType is not (SpecialType.System_String or SpecialType.System_Boolean
+                or SpecialType.System_Char or SpecialType.System_SByte or SpecialType.System_Byte
+                or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Int32
+                or SpecialType.System_UInt32 or SpecialType.System_Int64 or SpecialType.System_UInt64
+                or SpecialType.System_Single or SpecialType.System_Double)
+            || selection.Sections.SelectMany(section => section.Labels).Any(label => label is CasePatternSwitchLabelSyntax))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                selection.GetLocation(), "'switch' requires a supported value and constant case labels"));
+        }
+    }
+
+    private static void AnalyzeIncrement(OperationAnalysisContext context)
+    {
+        var operation = (Microsoft.CodeAnalysis.Operations.IIncrementOrDecrementOperation)context.Operation;
+        if (operation.OperatorMethod != null || operation.IsLifted
+            || operation.Target.Kind is not (OperationKind.LocalReference or OperationKind.ParameterReference
+                or OperationKind.FieldReference or OperationKind.ArrayElementReference or OperationKind.PropertyReference)
+            || operation.Target.Type?.TypeKind == TypeKind.Enum
+            || operation.Target.Type?.SpecialType == SpecialType.System_Decimal)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                operation.Syntax.GetLocation(), "'++' and '--' require supported numeric storage"));
+        }
+    }
+
+    private static void AnalyzeForEach(SyntaxNodeAnalysisContext context)
+    {
+        var loop = (ForEachStatementSyntax)context.Node;
+        var model = context.SemanticModel;
+        var type = model.GetTypeInfo(loop.Expression, context.CancellationToken).Type;
+        var conversion = model.GetForEachStatementInfo(loop).ElementConversion;
+        if (type is not IArrayTypeSymbol { IsSZArray: true } || loop.Type is RefTypeSyntax
+            || conversion.IsUserDefined || conversion.IsBoxing || conversion.IsUnboxing)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                loop.GetLocation(), "'foreach' requires a single-dimensional array and a supported element conversion"));
+        }
+    }
+
     private static string? Describe(SyntaxNode node) => node.Kind() switch
     {
-        SyntaxKind.BreakStatement =>
-            "'break' is not supported: end a loop by making its condition false",
-        SyntaxKind.ContinueStatement =>
-            "'continue' is not supported: restructure the loop with an 'if'",
-        SyntaxKind.GotoStatement => "'goto' is not supported",
-        SyntaxKind.ForEachStatement or SyntaxKind.ForEachVariableStatement =>
-            "'foreach' is not supported: use a 'for' loop with an index",
-        SyntaxKind.SwitchStatement => "'switch' is not supported: use 'if'/'else'",
+        SyntaxKind.GotoStatement or SyntaxKind.GotoCaseStatement or SyntaxKind.GotoDefaultStatement =>
+            "'goto' is not supported",
+        SyntaxKind.ForEachVariableStatement => "deconstructing 'foreach' is not supported",
         SyntaxKind.ThrowExpression => "throw expressions are not supported: use a 'throw' statement",
         SyntaxKind.CatchFilterClause => "exception filters are not supported",
         SyntaxKind.LockStatement => "'lock' is not supported: there are no threads",
         SyntaxKind.YieldReturnStatement or SyntaxKind.YieldBreakStatement =>
             "'yield' is not supported: iterators are not implemented",
-        SyntaxKind.CheckedStatement =>
-            ((CheckedStatementSyntax)node).Keyword.IsKind(SyntaxKind.CheckedKeyword)
-                ? "'checked' is not supported: arithmetic is always unchecked"
-                : "'unchecked' is not supported: arithmetic is always unchecked",
-        SyntaxKind.CheckedExpression =>
-            ((CheckedExpressionSyntax)node).Keyword.IsKind(SyntaxKind.CheckedKeyword)
-                ? "'checked' is not supported: arithmetic is always unchecked"
-                : "'unchecked' is not supported: arithmetic is always unchecked",
         SyntaxKind.UnsafeStatement => "'unsafe' is not supported",
         SyntaxKind.FixedStatement => "'fixed' is not supported",
         SyntaxKind.StackAllocArrayCreationExpression or SyntaxKind.ImplicitStackAllocArrayCreationExpression =>
@@ -333,14 +352,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
                 Descriptors.UnsupportedConstruct, a.GetLocation(),
                 "named arguments are not supported"));
         }
-    }
-
-    private static void AnalyzeBinary(SyntaxNodeAnalysisContext context)
-    {
-        var b = (BinaryExpressionSyntax)context.Node;
-        context.ReportDiagnostic(Diagnostic.Create(
-            Descriptors.UnsupportedConstruct, b.OperatorToken.GetLocation(),
-            "shift operators ('<<', '>>', '>>>') are not supported"));
     }
 
     private static void AnalyzeProperty(SyntaxNodeAnalysisContext context)

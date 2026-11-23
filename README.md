@@ -75,7 +75,10 @@ reclaimed.
   `string`, plus single-dimensional arrays.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept
   alive for the call. Also `is` and `as`.
-- `if`, `while`, `do`/`while`, `for`, and `return`.
+- `if`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, constant-label
+  `switch`, and array `foreach`.
+- Bitwise operators, shifts, prefix and postfix updates, compound assignments,
+  and checked numeric arithmetic.
 - `using` statements with deterministic `Dispose()` at scope exit, including
   when an exception unwinds
   (`IDisposable` is structural: any type with a `Dispose()` method qualifies).
@@ -92,7 +95,7 @@ reclaimed.
 - A Roslyn analyser in `analyzers/ArcSharp.Analyzers` that reports the same
   `ARC3001`, `ARC3100` and `ARC3200` rules inside an ordinary `dotnet build`.
 
-Exception filters, `foreach`, `switch`, `++`, lambdas, and the .NET class
+Exception filters, switch expressions, lambdas, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
 has the full list, the differences from .NET, and the known issues. The
 [compatibility target](docs/roadmap.md#compatibility-target) is the language

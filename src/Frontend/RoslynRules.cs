@@ -138,15 +138,8 @@ sealed partial class RoslynLowering
 
             switch (node.Kind())
             {
-                case SyntaxKind.BreakStatement:
-                    Reject(node, "'break' is not supported");
-                    break;
-                case SyntaxKind.ContinueStatement:
-                    Reject(node, "'continue' is not supported");
-                    break;
-                case SyntaxKind.ForEachStatement:
                 case SyntaxKind.ForEachVariableStatement:
-                    Reject(node, "'foreach' is not supported");
+                    Reject(node, "deconstructing 'foreach' is not supported");
                     break;
                 case SyntaxKind.ThrowExpression:
                     Reject(node, "throw expressions are not supported: use a 'throw' statement");
@@ -154,7 +147,6 @@ sealed partial class RoslynLowering
                 case SyntaxKind.CatchFilterClause:
                     Reject(node, "exception filters are not supported");
                     break;
-                case SyntaxKind.SwitchStatement:
                 case SyntaxKind.SwitchExpression:
                     Reject(node, "'switch' is not supported");
                     break;
@@ -164,12 +156,6 @@ sealed partial class RoslynLowering
                 case SyntaxKind.YieldReturnStatement:
                 case SyntaxKind.YieldBreakStatement:
                     Reject(node, "'yield' is not supported");
-                    break;
-                case SyntaxKind.CheckedStatement:
-                case SyntaxKind.CheckedExpression:
-                case SyntaxKind.UncheckedStatement:
-                case SyntaxKind.UncheckedExpression:
-                    Reject(node, "'checked' and 'unchecked' are not supported");
                     break;
                 case SyntaxKind.UnsafeStatement:
                     Reject(node, "'unsafe' is not supported");
@@ -184,22 +170,6 @@ sealed partial class RoslynLowering
                     break;
                 case SyntaxKind.ArrowExpressionClause:
                     Reject(node, "expression-bodied members are not supported");
-                    break;
-                case SyntaxKind.LeftShiftExpression:
-                case SyntaxKind.RightShiftExpression:
-                case SyntaxKind.UnsignedRightShiftExpression:
-                    Reject(node, "shift operators are not supported");
-                    break;
-                case SyntaxKind.BitwiseAndExpression:
-                case SyntaxKind.BitwiseOrExpression:
-                case SyntaxKind.ExclusiveOrExpression:
-                    Reject(node, "bitwise operators are not supported");
-                    break;
-                case SyntaxKind.PreIncrementExpression:
-                case SyntaxKind.PostIncrementExpression:
-                case SyntaxKind.PreDecrementExpression:
-                case SyntaxKind.PostDecrementExpression:
-                    Reject(node, "'++' and '--' are not supported");
                     break;
                 case SyntaxKind.ConditionalExpression:
                     Reject(node, "the conditional operator is not supported");

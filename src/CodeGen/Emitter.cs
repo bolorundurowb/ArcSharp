@@ -39,6 +39,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         public Action? Cleanup;
     }
 
+    private readonly Stack<(string Break, string? Continue, int RegionDepth)> _branchTargets = [];
     private readonly List<Region> _regions = []; // open try and using statements, innermost last
     private readonly List<string> _hiddenSlots = []; // owned references released at func.exit
     private readonly List<string> _catchSlots = []; // the exception each enclosing catch block holds
@@ -188,6 +189,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             "declare void @arc_null_check(i8*)",
             "declare void @arc_cast_check(i8*, %TypeInfo*)",
             "declare void @arc_div_check(i64, i64, i32)",
+            "declare void @arc_overflow_check(i32)",
+            "declare float @llvm.trunc.f32(float)",
+            "declare double @llvm.trunc.f64(double)",
             "@arc_exception = external global i8*",
                  })
         {
@@ -808,6 +812,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundIf i: EmitIf(i); break;
             case BoundWhile w: EmitWhile(w); break;
             case BoundFor f: EmitFor(f); break;
+            case BoundSwitch selection: EmitSwitch(selection); break;
+            case BoundBranch branch: EmitBranch(branch); break;
             case BoundReturn r: EmitReturn(r); break;
             case BoundUsing u: EmitUsing(u); break;
             case BoundTry t: EmitTry(t); break;
@@ -955,12 +961,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         ReleaseTemps(mark);
         ReleaseStructTemps(smark);
         Term($"br i1 {c}, label %{bodyL}, label %{endL}");
-        Lbl(bodyL);
-        EmitStmt(s.Body);
-        if (!_terminated)
-        {
-            Term($"br label %{condL}");
-        }
+        EmitLoopBody(s.Body, bodyL, condL, endL);
 
         Lbl(endL);
     }
@@ -989,12 +990,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             Term($"br label %{bodyL}");
         }
 
-        Lbl(bodyL);
-        EmitStmt(s.Body);
-        if (!_terminated)
-        {
-            Term($"br label %{stepL}");
-        }
+        EmitLoopBody(s.Body, bodyL, stepL, endL);
 
         Lbl(stepL);
         if (s.Update != null)
@@ -1008,6 +1004,84 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         Term($"br label %{condL}");
         Lbl(endL);
+    }
+
+    private void EmitSwitch(BoundSwitch selection)
+    {
+        var labels = selection.Sections.Select(_ => L("switch.case")).ToArray();
+        var end = L("switch.end");
+        var mark = _stmtTemps.Count;
+        var structMark = _stmtStructTemps.Count;
+        var value = EmitR(selection.Value);
+        TrackReferenceTemp(selection.Value, value);
+        var fallback = selection.Sections.FindIndex(section => section.IsDefault);
+        var index = fallback.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var type = selection.Value.Type.LlvmType;
+        for (var i = 0; i < selection.Sections.Count; i++)
+        {
+            foreach (var label in selection.Sections[i].Labels)
+            {
+                var argument = EmitR(label);
+                TrackReferenceTemp(label, argument);
+                string equal;
+                if (selection.Value.Type.Kind == TypeKind.String)
+                {
+                    var result = Inst($"call i32 @arc_str_equal(i8* {value}, i8* {argument})");
+                    equal = Inst($"icmp ne i32 {result}, 0");
+                }
+                else
+                {
+                    equal = type is "float" or "double"
+                        ? Inst($"fcmp oeq {type} {value}, {argument}")
+                        : Inst($"icmp eq {type} {value}, {argument}");
+                }
+
+                index = Inst($"select i1 {equal}, i32 {i}, i32 {index}");
+            }
+        }
+
+        ReleaseTemps(mark);
+        ReleaseStructTemps(structMark);
+        var cases = string.Join(" ", labels.Select((label, i) => $"i32 {i}, label %{label}"));
+        Term($"switch i32 {index}, label %{end} [ {cases} ]");
+
+        _branchTargets.Push((end, null, _regions.Count));
+        for (var i = 0; i < labels.Length; i++)
+        {
+            Lbl(labels[i]);
+            EmitStmt(selection.Sections[i].Body);
+            if (!_terminated)
+            {
+                Term($"br label %{end}");
+            }
+        }
+
+        _branchTargets.Pop();
+        Lbl(end);
+    }
+
+    private void EmitBranch(BoundBranch branch)
+    {
+        var target = branch.IsContinue
+            ? _branchTargets.First(candidate => candidate.Continue != null)
+            : _branchTargets.Peek();
+        EmitRegionCleanups(target.RegionDepth);
+        if (!_terminated)
+        {
+            Term($"br label %{(branch.IsContinue ? target.Continue : target.Break)}");
+        }
+    }
+
+    private void EmitLoopBody(BoundStmt body, string bodyLabel, string continueLabel, string breakLabel)
+    {
+        Lbl(bodyLabel);
+        _branchTargets.Push((breakLabel, continueLabel, _regions.Count));
+        EmitStmt(body);
+        _branchTargets.Pop();
+        if (!_terminated)
+        {
+            Term($"br label %{continueLabel}");
+        }
     }
 
     private void EmitReturn(BoundReturn r)
@@ -1042,7 +1116,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             ReleaseStructTemps(smark);
         }
 
-        EmitReturnCleanups();
+        EmitRegionCleanups(0);
+        if (_terminated)
+        {
+            return;
+        }
+
         if (held != null)
         {
             var v = Inst($"load i8*, i8** {held}");
@@ -1057,9 +1136,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     // mirroring how C# finally blocks run before control leaves. While one
     // cleanup is emitted, the regions it was inside are closed, so an exception
     // it throws goes to the enclosing handler.
-    private void EmitReturnCleanups()
+    private void EmitRegionCleanups(int depth)
     {
-        for (var i = _regions.Count - 1; i >= 0; i--)
+        for (var i = _regions.Count - 1; i >= depth && !_terminated; i--)
         {
             var region = _regions[i];
             if (region.Cleanup == null)
@@ -1476,6 +1555,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundBinary b: return EmitBinary(b);
             case BoundUnary u: return EmitUnary(u);
             case BoundAssign asn: return EmitAssign(asn);
+            case BoundIncrement increment: return EmitIncrement(increment);
+            case BoundNumericCompound compound: return EmitNumericCompound(compound);
+            case BoundStringCompound compound: return EmitStringCompound(compound);
             case BoundConversion cv: return EmitConversion(cv);
             case BoundIs i: return EmitIs(i);
             case BoundAs a: return EmitAs(a);
@@ -1971,6 +2053,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         switch (b.Kind)
         {
+            case BinKind.BoolArith: return EmitIntegerArithmetic(b, 1);
+            case BinKind.BoolCmp: return Inst($"icmp {CmpOp(b.Op, false)} i1 {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.IntArith: return EmitIntegerArithmetic(b, 32);
             case BinKind.LongArith: return EmitIntegerArithmetic(b, 64);
             case BinKind.FloatArith: return Inst($"{FloatArithOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
@@ -2004,20 +2088,52 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private string EmitIntegerArithmetic(BoundBinary b, int bits)
     {
-        var left = EmitR(b.Left);
-        var right = EmitR(b.Right);
-        if (b.Op is TokenKind.Slash or TokenKind.Percent && !IsSafeDivisor(right))
+        return EmitIntegerArithmetic(b.Op, b.IsUnsigned, bits, EmitR(b.Left), EmitR(b.Right), b.IsChecked);
+    }
+
+    private string EmitIntegerArithmetic(TokenKind op, bool unsigned, int bits, string left, string right, bool isChecked = false)
+    {
+        if (isChecked && op is TokenKind.Plus or TokenKind.Minus or TokenKind.Star)
+        {
+            var narrowType = $"i{bits}";
+            var wideType = $"i{bits * 2}";
+            var extend = unsigned ? "zext" : "sext";
+            var wideLeft = Inst($"{extend} {narrowType} {left} to {wideType}");
+            var wideRight = Inst($"{extend} {narrowType} {right} to {wideType}");
+            var wideResult = Inst($"{ArithOp(op, unsigned)} {wideType} {wideLeft}, {wideRight}");
+            var result = Inst($"trunc {wideType} {wideResult} to {narrowType}");
+            var restored = Inst($"{extend} {narrowType} {result} to {wideType}");
+            EmitOverflowCheck(Inst($"icmp ne {wideType} {wideResult}, {restored}"));
+            return result;
+        }
+
+        if (op is TokenKind.LeftShift or TokenKind.RightShift or TokenKind.UnsignedRightShift)
+        {
+            right = Inst($"and i32 {right}, {bits - 1}");
+            if (bits == 64)
+            {
+                right = Inst($"zext i32 {right} to i64");
+            }
+        }
+
+        if (op is TokenKind.Slash or TokenKind.Percent && !IsSafeDivisor(right))
         {
             // Hardware division traps on zero and on the minimum value divided
             // by -1. The runtime turns both into exceptions.
-            var widen = b.IsUnsigned ? "zext" : "sext";
+            var widen = unsigned ? "zext" : "sext";
             var wideLeft = bits == 64 ? left : Inst($"{widen} i32 {left} to i64");
             var wideRight = bits == 64 ? right : Inst($"{widen} i32 {right} to i64");
-            Do($"call void @arc_div_check(i64 {wideLeft}, i64 {wideRight}, i32 {(b.IsUnsigned ? 0 : bits)})");
+            Do($"call void @arc_div_check(i64 {wideLeft}, i64 {wideRight}, i32 {(unsigned ? 0 : bits)})");
             EmitPendingCheck();
         }
 
-        return Inst($"{ArithOp(b.Op, b.IsUnsigned)} i{bits} {left}, {right}");
+        return Inst($"{ArithOp(op, unsigned)} i{bits} {left}, {right}");
+    }
+
+    private void EmitOverflowCheck(string overflowed)
+    {
+        Do($"call void @arc_overflow_check(i32 {ZeroExtendBool(overflowed)})");
+        EmitPendingCheck();
     }
 
     // A literal divisor other than zero and -1 cannot fail.
@@ -2031,6 +2147,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         TokenKind.Star => "mul",
         TokenKind.Slash => unsigned ? "udiv" : "sdiv",
         TokenKind.Percent => unsigned ? "urem" : "srem",
+        TokenKind.Amp => "and",
+        TokenKind.Pipe => "or",
+        TokenKind.Caret => "xor",
+        TokenKind.LeftShift => "shl",
+        TokenKind.RightShift => unsigned ? "lshr" : "ashr",
+        TokenKind.UnsignedRightShift => "lshr",
         _ => "add"
     };
 
@@ -2177,12 +2299,83 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             return Inst($"xor i1 {v}, true");
         }
 
+        if (u.Op == TokenKind.Tilde)
+        {
+            return Inst($"xor {u.Type.LlvmType} {v}, -1");
+        }
+
         if (u.Type.LlvmType is "float" or "double")
         {
             return Inst($"fneg {u.Type.LlvmType} {v}");
         }
 
-        return Inst($"sub {u.Type.LlvmType} 0, {v}");
+        return EmitIntegerArithmetic(TokenKind.Minus, u.Type.IsUnsignedInteger,
+            int.Parse(u.Type.LlvmType.AsSpan(1)), "0", v, u.IsChecked);
+    }
+
+    private string EmitStringCompound(BoundStringCompound compound)
+    {
+        var pins = BeginPins();
+        var address = EmitManagedAddress(compound.Target, pins);
+        var left = EmitLoadSlot(address, compound.Type);
+        _stmtTemps.Add(left);
+        var right = EmitStringOperand(compound.Right);
+        _stmtTemps.Add(right);
+        var result = Inst($"call i8* @arc_str_concat(i8* {left}, i8* {right})");
+        Do($"call void @arc_assign_take(i8** {address}, i8* {result})");
+        Do($"call void @arc_retain(i8* {result})");
+        EndPins(pins);
+        return result;
+    }
+
+    private string EmitNumericCompound(BoundNumericCompound compound)
+    {
+        var pins = BeginPins();
+        var address = EmitManagedAddress(compound.Target, pins);
+        var storage = compound.Type;
+        var operation = compound.OperationType;
+        var before = Inst($"load {storage.LlvmType}, {storage.LlvmType}* {address}");
+        var left = EmitNumericConversion(before, storage, operation);
+        var right = EmitR(compound.Right);
+        if (compound.Op is not (TokenKind.LeftShift or TokenKind.RightShift or TokenKind.UnsignedRightShift))
+        {
+            right = EmitNumericConversion(right, compound.Right.Type, operation);
+        }
+        var combined = operation.IsFloat
+            ? Inst($"{FloatArithOp(compound.Op)} {operation.LlvmType} {left}, {right}")
+            : EmitIntegerArithmetic(compound.Op, operation.IsUnsignedInteger,
+                int.Parse(operation.LlvmType.AsSpan(1)), left, right, compound.IsChecked);
+        var after = EmitNumericConversion(combined, operation, storage, compound.IsChecked);
+
+        Do($"store {storage.LlvmType} {after}, {storage.LlvmType}* {address}");
+        EndPins(pins);
+        return after;
+    }
+
+    private string EmitIncrement(BoundIncrement increment)
+    {
+        var pins = BeginPins();
+        var address = EmitManagedAddress(increment.Target, pins);
+        var type = increment.Type.LlvmType;
+        var before = Inst($"load {type}, {type}* {address}");
+        var op = increment.IsDecrement ? TokenKind.Minus : TokenKind.Plus;
+        var after = type is "float" or "double"
+            ? Inst($"{FloatArithOp(op)} {type} {before}, 1.0")
+            : EmitIntegerArithmetic(op, increment.Type.IsUnsignedInteger,
+                int.Parse(type.AsSpan(1)), before, "1", increment.IsChecked);
+        if (increment.Type.Name == "char")
+        {
+            if (increment.IsChecked)
+            {
+                EmitOverflowCheck(Inst($"icmp ugt i32 {after}, 65535"));
+            }
+
+            after = Inst($"and i32 {after}, 65535");
+        }
+
+        Do($"store {type} {after}, {type}* {address}");
+        EndPins(pins);
+        return increment.IsPostfix ? before : after;
     }
 
     private string EmitAssign(BoundAssign a)
@@ -2368,11 +2561,32 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             return v;
         }
 
+        return EmitNumericConversion(v, from, to, cv.IsChecked);
+    }
+
+    private string EmitNumericConversion(string v, TypeSymbol from, TypeSymbol to, bool isChecked = false)
+    {
+        if (isChecked && from != to && to.IsInteger)
+        {
+            EmitCheckedConversion(v, from, to);
+        }
+
         // integer extension/truncation
         if (from.IsInteger && to.IsInteger)
         {
             var fromBits = int.Parse(from.LlvmType.TrimStart('i'));
             var toBits = int.Parse(to.LlvmType.TrimStart('i'));
+            if (to.Name == "char" && from.Name != "char")
+            {
+                var narrow = fromBits switch
+                {
+                    > 16 => Inst($"trunc {from.LlvmType} {v} to i16"),
+                    < 16 => Inst($"{(from.IsUnsignedInteger ? "zext" : "sext")} {from.LlvmType} {v} to i16"),
+                    _ => v
+                };
+                return Inst($"zext i16 {narrow} to i32");
+            }
+
             if (fromBits < toBits)
             {
                 return Inst($"{(from.IsUnsignedInteger ? "zext" : "sext")} {from.LlvmType} {v} to {to.LlvmType}");
@@ -2396,7 +2610,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         // floating point -> integer
         if (from.IsFloat && to.IsInteger)
         {
-            var op = to.IsUnsignedInteger ? "fptoui" : "fptosi";
+            var op = to.IsUnsignedInteger || to.Name == "char" ? "fptoui" : "fptosi";
             return Inst($"{op} {from.LlvmType} {v} to {to.LlvmType}");
         }
 
@@ -2412,6 +2626,36 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         return v;
+    }
+
+    private void EmitCheckedConversion(string value, TypeSymbol from, TypeSymbol to)
+    {
+        var unsigned = to.IsUnsignedInteger || to.Name == "char";
+        var bits = to.Name == "char" ? 16 : int.Parse(to.LlvmType.AsSpan(1));
+        if (from.IsInteger)
+        {
+            var sourceExtend = from.IsUnsignedInteger || from.Name == "char" ? "zext" : "sext";
+            var destinationExtend = unsigned ? "zext" : "sext";
+            var wide = Inst($"{sourceExtend} {from.LlvmType} {value} to i128");
+            var narrow = Inst($"trunc i128 {wide} to i{bits}");
+            var restored = Inst($"{destinationExtend} i{bits} {narrow} to i128");
+            EmitOverflowCheck(Inst($"icmp ne i128 {wide}, {restored}"));
+        }
+        else if (from.IsFloat)
+        {
+            var type = from.LlvmType;
+            var intrinsic = type == "float" ? "f32" : "f64";
+            var truncated = Inst($"call {type} @llvm.trunc.{intrinsic}({type} {value})");
+            var bound = Math.ScaleB(1.0, unsigned ? bits : bits - 1);
+            var lower = unsigned ? 0.0 : -bound;
+            var culture = System.Globalization.CultureInfo.InvariantCulture;
+            var min = FormatFloatConstant(lower.ToString(culture));
+            var max = FormatFloatConstant(bound.ToString(culture));
+            var aboveMin = Inst($"fcmp oge {type} {truncated}, {min}");
+            var belowMax = Inst($"fcmp olt {type} {truncated}, {max}");
+            var inRange = Inst($"and i1 {aboveMin}, {belowMax}");
+            EmitOverflowCheck(Inst($"xor i1 {inRange}, true"));
+        }
     }
 
     private string EmitIs(BoundIs i)

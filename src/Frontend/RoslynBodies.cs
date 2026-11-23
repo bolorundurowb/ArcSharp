@@ -205,6 +205,10 @@ sealed partial class RoslynLowering
             ConditionIsTop = loop.ConditionIsTop
         },
         IForLoopOperation loop => LowerFor(loop),
+        IForEachLoopOperation loop => LowerArrayForEach(loop),
+        ISwitchOperation selection => LowerSwitch(selection),
+        IBranchOperation { BranchKind: BranchKind.Break or BranchKind.Continue } branch =>
+            new BoundBranch { IsContinue = branch.BranchKind == BranchKind.Continue },
         IUsingOperation usingOperation => LowerUsing(usingOperation),
         ITryOperation tryOperation => LowerTry(tryOperation),
         IThrowOperation thrown => new BoundThrow
@@ -317,6 +321,139 @@ sealed partial class RoslynLowering
         };
     }
 
+    private BoundStmt LowerSwitch(ISwitchOperation operation)
+    {
+        var value = LowerExpr(operation.Value);
+        if (value.Type.Kind != BoundKind.Primitive && value.Type != _string)
+        {
+            return UnsupportedStmt(operation);
+        }
+
+        var result = new BoundSwitch { Value = value };
+        foreach (var arm in operation.Cases)
+        {
+            var section = new BoundSwitchSection { Body = new BoundBlock() };
+            foreach (var clause in arm.Clauses)
+            {
+                switch (clause)
+                {
+                    case IDefaultCaseClauseOperation:
+                        section.IsDefault = true;
+                        break;
+                    case ISingleValueCaseClauseOperation label:
+                        section.Labels.Add(LowerExpr(label.Value));
+                        break;
+                    default:
+                        return UnsupportedStmt(clause);
+                }
+            }
+
+            section.Body.Statements.AddRange(arm.Body.Select(LowerStmt));
+            result.Sections.Add(section);
+        }
+
+        return result;
+    }
+
+    private BoundStmt LowerArrayForEach(IForEachLoopOperation loop)
+    {
+        if (loop.Syntax is not ForEachStatementSyntax syntax
+            || loop.IsAsynchronous
+            || loop.LoopControlVariable is not IVariableDeclaratorOperation { Symbol.RefKind: Microsoft.CodeAnalysis.RefKind.None } variable)
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var model = _compilation.GetSemanticModel(syntax.SyntaxTree);
+        if (model.GetTypeInfo(syntax.Expression).Type is not IArrayTypeSymbol { IsSZArray: true })
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var conversion = model.GetForEachStatementInfo(syntax).ElementConversion;
+        if (conversion.IsUserDefined || conversion.IsBoxing || conversion.IsUnboxing)
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var collection = loop.Collection is IConversionOperation { IsImplicit: true } implicitConversion
+            ? implicitConversion.Operand
+            : loop.Collection;
+        var receiver = LowerExpr(collection);
+        if (receiver.Type.ElementType is not { } elementType)
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var array = new LocalSymbol { Name = "#foreach_array", Type = receiver.Type, Id = _localId++ };
+        var index = new LocalSymbol { Name = "#foreach_index", Type = _int, Id = _localId++ };
+        _methodLocals.Add(array);
+        _methodLocals.Add(index);
+
+        BoundLocal Read(LocalSymbol local) => new() { Symbol = local, Type = local.Type };
+        BoundLiteral Number(int value) => new() { Type = _int, LitKind = LiteralKind.Int, IntValue = value };
+        BoundTry ReleaseAfter(LocalSymbol local, BoundBlock body) => new()
+        {
+            Body = body,
+            Finally = new BoundBlock
+            {
+                Statements = [new BoundExprStmt
+                {
+                    Expression = new BoundAssign
+                    {
+                        Target = Read(local), Value = DefaultValue(local.Type), Type = local.Type
+                    }
+                }]
+            }
+        };
+
+        var iteration = Local(variable.Symbol);
+        BoundExpr item = new BoundIndex { Receiver = Read(array), Index = Read(index), Type = elementType };
+        if (iteration.Type != elementType)
+        {
+            item = new BoundConversion
+            {
+                Operand = item,
+                Type = iteration.Type,
+                CastCheck = conversion is { IsReference: true, IsImplicit: false }
+                    && iteration.Type.Kind == BoundKind.Class && iteration.Type != _object
+            };
+        }
+
+        var body = new BoundBlock
+        {
+            Statements = [
+                new BoundLocalDecl { Symbol = iteration, Initializer = item },
+                LowerStmt(loop.Body)
+            ]
+        };
+        var lowered = new BoundFor
+        {
+            Init = new BoundLocalDecl { Symbol = index, Initializer = Number(0) },
+            Condition = new BoundBinary
+            {
+                Op = TokenKind.Less, Kind = BinKind.IntCmp, Left = Read(index), Type = _bool,
+                Right = new BoundLength { Receiver = Read(array), Type = _int }
+            },
+            Body = iteration.Type.IsReferenceType ? ReleaseAfter(iteration, body) : body,
+            Update = new BoundAssign
+            {
+                Target = Read(index), Type = _int,
+                Value = new BoundBinary
+                {
+                    Op = TokenKind.Plus, Kind = BinKind.IntArith, Left = Read(index), Right = Number(1), Type = _int
+                }
+            }
+        };
+        return new BoundBlock
+        {
+            Statements = [
+                new BoundLocalDecl { Symbol = array, Initializer = receiver },
+                ReleaseAfter(array, new BoundBlock { Statements = [lowered] })
+            ]
+        };
+    }
+
     private BoundStmt LowerUsing(IUsingOperation operation)
     {
         if (operation.IsAsynchronous)
@@ -417,6 +554,7 @@ sealed partial class RoslynLowering
         },
         ISimpleAssignmentOperation assignment => LowerAssignment(assignment),
         ICompoundAssignmentOperation assignment => LowerCompound(assignment),
+        IIncrementOrDecrementOperation increment => LowerIncrement(increment),
         IDefaultValueOperation value => value.Type == null
             ? ErrorExpr()
             : DefaultValue(value.Type, value.Syntax.GetLocation()),
@@ -887,12 +1025,6 @@ sealed partial class RoslynLowering
             };
         }
 
-        if (binary.OperatorKind is BinaryOperatorKind.And or BinaryOperatorKind.Or or BinaryOperatorKind.ExclusiveOr
-            or BinaryOperatorKind.LeftShift or BinaryOperatorKind.RightShift)
-        {
-            return UnsupportedExpr(binary);
-        }
-
         if (binary.OperatorKind is BinaryOperatorKind.Add or BinaryOperatorKind.Concatenate
             && (IsStringSide(binary.LeftOperand) || IsStringSide(binary.RightOperand)))
         {
@@ -927,6 +1059,7 @@ sealed partial class RoslynLowering
             or TokenKind.GreaterEquals or TokenKind.EqualsEquals or TokenKind.BangEquals;
         var (kind, unsigned) = operand switch
         {
+            _ when operand == _bool => (compare ? BinKind.BoolCmp : BinKind.BoolArith, false),
             _ when operand == _double && compare => (BinKind.DoubleCmp, false),
             _ when operand == _float && compare => (BinKind.FloatCmp, false),
             _ when operand == _long || operand == _ulong => compare
@@ -941,6 +1074,7 @@ sealed partial class RoslynLowering
             Op = op,
             Kind = kind,
             IsUnsigned = unsigned,
+            IsChecked = binary.IsChecked,
             Left = left,
             Right = right,
             Type = compare ? _bool : operand
@@ -955,9 +1089,14 @@ sealed partial class RoslynLowering
             return new BoundUnary { Op = TokenKind.Bang, Operand = operand, Type = _bool };
         }
 
+        if (unary.OperatorKind == UnaryOperatorKind.BitwiseNegation)
+        {
+            return new BoundUnary { Op = TokenKind.Tilde, Operand = operand, Type = operand.Type };
+        }
+
         if (unary.OperatorKind == UnaryOperatorKind.Minus)
         {
-            return new BoundUnary { Op = TokenKind.Minus, Operand = operand, Type = operand.Type };
+            return new BoundUnary { Op = TokenKind.Minus, Operand = operand, Type = operand.Type, IsChecked = unary.IsChecked };
         }
 
         return UnsupportedExpr(unary);
@@ -990,7 +1129,7 @@ sealed partial class RoslynLowering
         var castCheck = conversion.Conversion is { IsReference: true, IsImplicit: false }
             && type.Kind == BoundKind.Class
             && type != _object;
-        return new BoundConversion { Operand = value, Type = type, CastCheck = castCheck };
+        return new BoundConversion { Operand = value, Type = type, CastCheck = castCheck, IsChecked = conversion.IsChecked };
     }
 
     private BoundExpr LowerAssignment(ISimpleAssignmentOperation assignment)
@@ -1011,49 +1150,149 @@ sealed partial class RoslynLowering
         return new BoundAssign { Target = target, Value = value, Type = target.Type == _error ? value.Type : target.Type };
     }
 
+    private BoundExpr? LowerUpdateTarget(IOperation operation)
+    {
+        if (operation is ILocalReferenceOperation or IParameterReferenceOperation
+            or IFieldReferenceOperation or IArrayElementReferenceOperation)
+        {
+            return LowerExpr(operation);
+        }
+
+        if (operation is not IPropertyReferenceOperation property || property.Property.IsVirtual
+            || property.Property.IsOverride || property.Property.IsAbstract || property.Property.IsIndexer
+            || property.Property.GetMethod is not { } getter
+            || property.Property.SetMethod is not { } setter
+            || HasAccessorBody(getter) || HasAccessorBody(setter))
+        {
+            return null;
+        }
+
+        var method = MapMethod(getter, operation.Syntax.GetLocation());
+        var field = method?.Owner.Properties.Find(candidate => candidate.Getter == method)?.BackingField;
+        if (field == null)
+        {
+            return null;
+        }
+
+        return new BoundFieldAccess
+        {
+            Type = field.Type,
+            Field = field,
+            Receiver = field.IsStatic ? null : property.Instance == null
+                ? new BoundThis { Type = _currentType }
+                : LowerExpr(property.Instance)
+        };
+    }
+
+    private BoundExpr LowerIncrement(IIncrementOrDecrementOperation operation)
+    {
+        if (operation.OperatorMethod != null || operation.IsLifted
+            || LowerUpdateTarget(operation.Target) is not { } target
+            || !(target.Type.IsInteger || target.Type.IsFloat))
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        return new BoundIncrement
+        {
+            Target = target,
+            Type = target.Type,
+            IsDecrement = operation.Kind == OperationKind.Decrement,
+            IsPostfix = operation.IsPostfix,
+            IsChecked = operation.IsChecked
+        };
+    }
+
     private BoundExpr LowerCompound(ICompoundAssignmentOperation assignment)
     {
-        if (assignment.OperatorKind is not (BinaryOperatorKind.Add or BinaryOperatorKind.Subtract))
+        if (assignment.OperatorMethod != null || assignment.IsLifted
+            || LowerUpdateTarget(assignment.Target) is not { } target)
         {
             return UnsupportedExpr(assignment);
         }
 
-        if (assignment.Target is IPropertyReferenceOperation property)
+        if (target.Type == _string && assignment.OperatorKind == BinaryOperatorKind.Add)
         {
-            var read = LowerProperty(property);
-            var combined = new BoundBinary
+            if (target is BoundParam { Symbol.RefKind: RefKind.None })
             {
-                Op = assignment.OperatorKind == BinaryOperatorKind.Add ? TokenKind.Plus : TokenKind.Minus,
-                Kind = read.Type == _string ? BinKind.StrConcat : read.Type == _long || read.Type == _ulong ? BinKind.LongArith : BinKind.IntArith,
-                IsUnsigned = read.Type.IsUnsignedInteger,
-                Left = read,
-                Right = LowerExpr(assignment.Value),
-                Type = read.Type == _string ? _string : read.Type
-            };
-            return AssignProperty(property, combined, assignment.Syntax);
+                Report(assignment.Syntax, "reassigning a reference-typed parameter is not supported", "ARC2001");
+                return ErrorExpr();
+            }
+
+            var value = LowerExpr(UnwrapBoxing(assignment.Value));
+            if (value.Type != _string && !(value.Type.IsInteger || value.Type.IsFloat || value.Type == _bool)
+                && value is not BoundLiteral { LitKind: LiteralKind.Null })
+            {
+                return UnsupportedExpr(assignment);
+            }
+
+            return new BoundStringCompound { Target = target, Right = value, Type = _string };
         }
 
-        var target = LowerExpr(assignment.Target);
-        var op = assignment.OperatorKind == BinaryOperatorKind.Add ? TokenKind.Plus : TokenKind.Minus;
-        BoundExpr value = target.Type == _string && op == TokenKind.Plus
-            ? new BoundBinary
-            {
-                Op = TokenKind.Plus,
-                Kind = BinKind.StrConcat,
-                Left = target,
-                Right = LowerExpr(assignment.Value),
-                Type = _string
-            }
-            : new BoundBinary
-            {
-                Op = op,
-                Kind = target.Type == _long || target.Type == _ulong ? BinKind.LongArith : BinKind.IntArith,
-                IsUnsigned = target.Type.IsUnsignedInteger,
-                Left = target,
-                Right = LowerExpr(assignment.Value),
-                Type = target.Type
-            };
-        return new BoundAssign { Target = target, Value = value, Type = target.Type };
+        if (assignment.OperatorKind is not (BinaryOperatorKind.Add or BinaryOperatorKind.Subtract
+            or BinaryOperatorKind.Multiply or BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder
+            or BinaryOperatorKind.And or BinaryOperatorKind.Or or BinaryOperatorKind.ExclusiveOr
+            or BinaryOperatorKind.LeftShift or BinaryOperatorKind.RightShift or BinaryOperatorKind.UnsignedRightShift))
+        {
+            return UnsupportedExpr(assignment);
+        }
+
+        var operand = LowerExpr(assignment.Value);
+        if (!(target.Type.IsInteger || target.Type.IsFloat || target.Type == _bool)
+            || !(operand.Type.IsInteger || operand.Type.IsFloat || operand.Type == _bool))
+        {
+            return UnsupportedExpr(assignment);
+        }
+
+        var isShift = assignment.OperatorKind is BinaryOperatorKind.LeftShift
+            or BinaryOperatorKind.RightShift or BinaryOperatorKind.UnsignedRightShift;
+        var operationType = isShift
+            ? (target.Type == _uint || target.Type == _long || target.Type == _ulong ? target.Type : _int)
+            : ArithmeticType(target.Type, operand.Type);
+        return new BoundNumericCompound
+        {
+            Target = target,
+            Right = operand,
+            Type = target.Type,
+            OperationType = operationType,
+            Op = BinaryToken(assignment.OperatorKind),
+            IsChecked = assignment.IsChecked
+        };
+    }
+
+    private TypeSymbol ArithmeticType(TypeSymbol left, TypeSymbol right)
+    {
+        if (left == _bool)
+        {
+            return _bool;
+        }
+
+        if (left == _double || right == _double)
+        {
+            return _double;
+        }
+
+        if (left == _float || right == _float)
+        {
+            return _float;
+        }
+
+        if (left == _ulong || right == _ulong)
+        {
+            return _ulong;
+        }
+
+        if (left == _long || right == _long)
+        {
+            return _long;
+        }
+
+        if (left == _uint || right == _uint)
+        {
+            return left.IsUnsignedInteger && right.IsUnsignedInteger ? _uint : _long;
+        }
+
+        return _int;
     }
 
     private BoundExpr AssignProperty(IPropertyReferenceOperation property, BoundExpr value, SyntaxNode syntax)
@@ -1204,6 +1443,12 @@ sealed partial class RoslynLowering
         BinaryOperatorKind.Multiply => TokenKind.Star,
         BinaryOperatorKind.Divide => TokenKind.Slash,
         BinaryOperatorKind.Remainder => TokenKind.Percent,
+        BinaryOperatorKind.And => TokenKind.Amp,
+        BinaryOperatorKind.Or => TokenKind.Pipe,
+        BinaryOperatorKind.ExclusiveOr => TokenKind.Caret,
+        BinaryOperatorKind.LeftShift => TokenKind.LeftShift,
+        BinaryOperatorKind.RightShift => TokenKind.RightShift,
+        BinaryOperatorKind.UnsignedRightShift => TokenKind.UnsignedRightShift,
         BinaryOperatorKind.Equals => TokenKind.EqualsEquals,
         BinaryOperatorKind.NotEquals => TokenKind.BangEquals,
         BinaryOperatorKind.LessThan => TokenKind.Less,

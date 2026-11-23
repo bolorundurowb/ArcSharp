@@ -374,6 +374,12 @@ void arc_cast_check(void* obj, TypeInfo* target) {
     arc_raise(ARC_EXC_INVALID_CAST, message);
 }
 
+void arc_overflow_check(int overflowed) {
+    if (overflowed) {
+        arc_raise(ARC_EXC_OVERFLOW, "Arithmetic operation resulted in an overflow.");
+    }
+}
+
 /* Integer division and remainder. bits is 0 for an unsigned operation, which
    can only fail on a zero divisor, and 32 or 64 for a signed one, which can
    also overflow. The operands arrive widened to 64 bits. */

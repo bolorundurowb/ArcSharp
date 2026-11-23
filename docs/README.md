@@ -44,7 +44,11 @@ before you rely on it for anything beyond experiments.
 - [Confined allocation lifetimes](features/confined-allocation-lifetimes.md)
 - [Deterministic finalisers](features/finalisers.md)
 - [Exceptions](features/exceptions.md)
-- [Post-test loops](features/do-while.md)
+- [Post-test loops, loop branches, and array iteration](features/do-while.md)
+- [Numeric updates](features/increment.md)
+- [Bitwise operators and shifts](features/bitwise.md)
+- [Checked arithmetic](features/checked.md)
+- [Constant-label switch statements](features/switch-statement.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo

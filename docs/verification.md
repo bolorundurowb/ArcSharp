@@ -28,12 +28,12 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (47 samples, Windows x64, 23 November 2026)
+## Results (55 samples, Windows x64, 23 November 2026)
 
-`tools\verify.ps1` reported **94 passed, 0 failed** with the .NET 11.0.100 SDK:
-47 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 29 must-fail
+`tools\verify.ps1` reported **106 passed, 0 failed** with the .NET 11.0.100 SDK:
+55 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 33 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 5 cycle checks,
-2 `ARC3200` checks, one run of the analyser unit tests (74 cases), and one
+2 `ARC3200` checks, one run of the analyser unit tests, and one
 reference-surface check. `live=0` means every object was reclaimed.
 `numerics` and `byref` allocate nothing because they use only value types.
 `cycle_strong`, `cycle_struct` and `finaliser_cycle` are the leaks the harness
@@ -86,6 +86,13 @@ asserts on purpose.
 | `exceptions_basic` | `try`, `catch`, `finally`, a `throw` caught in the same method and one caught across a call, a runtime division by zero, and a catch clause that does not match | alloc=16 dead=16 freed=16 **live=0** | `outer caught inner` |
 | `exceptions_unwind` | cleanup on every unwind path: argument temporaries, locals across frames, a throwing constructor, a store that throws, a concatenation that throws, `return` through `finally`, nested `finally`, rethrow, a `finally` that replaces an exception, and a thrown stored exception | alloc=97 dead=97 freed=97 **live=0** | `exceptions unwind PASS` |
 | `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, `throw null`, and a base-class catch | alloc=53 dead=53 freed=53 **live=0** | `exceptions runtime PASS` |
+| `array_foreach` | Single evaluation, numeric conversion and reference iteration with early exits | alloc=5 dead=5 freed=5 **live=0** | `array foreach PASS` |
+| `checked_arithmetic` | Checked integral overflow and conversions, catchable exceptions, and nested unchecked arithmetic | alloc=13 dead=13 freed=13 **live=0** | `checked PASS` |
+| `bitwise` | Eager Boolean operators, masked shifts, signed and unsigned shifts, and compound updates | alloc=1 dead=1 freed=1 **live=0** | `bitwise PASS` |
+| `numeric_compound` | One evaluation of an update target, numeric promotion, and auto-property updates including string concatenation | alloc=10 dead=10 freed=10 **live=0** | `compound PASS` |
+| `increment` | Prefix and postfix results, single array-index evaluation, narrowing, and floating point | alloc=2 dead=2 freed=2 **live=0** | `increment PASS` |
+| `switch_statement` | String and numeric labels, default dispatch, and continue through a switch inside a loop | alloc=4 dead=4 freed=4 **live=0** | `switch PASS` |
+| `loop_branches` | Nested loop targets, for updates, and cleanups on break and continue | alloc=3 dead=3 freed=3 **live=0** | `loop branches PASS` |
 | `do_while` | Body runs before the condition and repeats until it becomes false | alloc=1 dead=1 freed=1 **live=0** | `do while PASS` |
 | `exceptions_using` | `Dispose()` while an exception unwinds, a `Dispose()` that throws after the body and during an unwind, `return` from `using`, and `using` inside `try` with `finally` | alloc=74 dead=74 freed=74 **live=0** | `exceptions using PASS` |
 | `exceptions_finaliser` | a finaliser that throws is reported and ignored, the object's children are still finalised, an exception already unwinding survives it, and a finaliser that catches its own exception | alloc=32 dead=32 freed=32 **live=0** | `exceptions finaliser PASS` |

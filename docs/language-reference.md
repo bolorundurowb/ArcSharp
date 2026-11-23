@@ -58,8 +58,9 @@ can be used from another.
 | `float` | 32 bits | |
 | `double` | 64 bits | |
 
-Integer arithmetic wraps on overflow, as in an `unchecked` context. There are
-no `checked` contexts.
+Integer arithmetic wraps on overflow by default. In a `checked` context,
+arithmetic overflow and out-of-range numeric conversions raise `OverflowException`.
+An `unchecked` context restores the default arithmetic behaviour.
 
 Value types never live on the heap on their own and never take part in
 reference counting. Struct values are stored inline in the local, field, or
@@ -338,16 +339,18 @@ error.
 | `if` and `else`, including `else if` | The condition must be `bool`. |
 | `while` | |
 | `do`/`while` | Evaluates the condition after each iteration. |
+| `break`, `continue` | `break` exits the innermost switch or loop. `continue` advances the innermost loop. |
+| `switch` | Constant case labels and `default` for supported numeric, Boolean, character and string values. |
+| `foreach` | Iterates over single-dimensional arrays. |
 | `for` | Each of the three clauses is optional. |
 | `using` | `using (var x = expr) { ... }` or `using (expr) { ... }`. See below. |
 | `return` | With or without a value. |
+| `checked`, `unchecked` | Set overflow behaviour for the enclosed operations. |
 | `try`, `catch`, `finally` | See [Exceptions](#exceptions). |
 | `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
-Not supported: `foreach`, `switch`, `break`, `continue`, `goto`,
-`lock`, `yield`, `checked`,
-`unchecked`, `unsafe`, `fixed`, and local functions. Because `break` and
-`continue` are missing, end a loop by making its condition false.
+Not supported: switch expressions, pattern case labels, `goto`,
+`lock`, `yield`, `unsafe`, `fixed`, and local functions.
 
 ### Exceptions
 
@@ -455,7 +458,8 @@ Differences from .NET:
 |---|---|
 | Arithmetic | `+`, `-`, `*`, `/`, `%`, unary `-` |
 | Comparison | `==`, `!=`, `<`, `<=`, `>`, `>=` |
-| Logical | `&&`, `\|\|`, `!` (short-circuiting) |
+| Logical | `&&`, `\|\|`, `!`, and eager Boolean `&`, `\|`, `^` |
+| Integral bitwise and shifts | `&`, `\|`, `^`, `~`, `<<`, `>>`, `>>>` |
 | Assignment | `=`, `+=`, `-=`. Assignment can be used as an expression. |
 | String | `+` concatenates a string with a string, number, or `bool` |
 | Type tests | `x is T`, `x as T`, and casts `(T)x` |
@@ -463,15 +467,16 @@ Differences from .NET:
 | Access | Fields, properties, static members, `this`, `base` constructor calls, array indexing `a[i]` |
 | Grouping | Parentheses |
 
-Not supported: `++` and `--` (write `i = i + 1`), the conditional operator
-`?:`, `*=`, `/=` and the other compound assignments, the bitwise and shift
-operators (`&`, `|`, `^`, `~`, `<<`, `>>`), `??` and `?.`, `typeof`, `sizeof`,
+Prefix and postfix `++` and `--` work on numeric locals, parameters, fields
+array elements and non-virtual auto-properties. These storage forms also accept compound
+assignments `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
+and `>>>=`. String storage accepts `+=` for supported concatenation operands.
+
+Not supported: the conditional operator
+`?:`, `??` and `?.`, `typeof`, `sizeof`,
 `nameof`, `default`, lambdas, anonymous types, tuples, pattern matching beyond
 a plain `is T`, `switch` expressions, object and collection initialisers, and
 interpolated strings (`$"..."`).
-
-A single `&` or `|`, and the shift operators, are rejected with
-[`ARC3001`](diagnostics.md#arc3001).
 
 ### Conversions
 

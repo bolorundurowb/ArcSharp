@@ -300,6 +300,13 @@ try {
     Invoke-Sample exceptions_basic "alloc=16 dead=16 freed=16 live=0" "outer caught inner" @("exceptions_basic")          # try, catch, finally, throw
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
     Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
+    Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
+    Invoke-Sample checked_arithmetic "alloc=13 dead=13 freed=13 live=0" "checked PASS" @("checked_arithmetic")
+    Invoke-Sample bitwise "alloc=1 dead=1 freed=1 live=0" "bitwise PASS" @("bitwise")
+    Invoke-Sample numeric_compound "alloc=10 dead=10 freed=10 live=0" "compound PASS" @("numeric_compound")
+    Invoke-Sample increment "alloc=2 dead=2 freed=2 live=0" "increment PASS" @("increment")
+    Invoke-Sample switch_statement "alloc=4 dead=4 freed=4 live=0" "switch PASS" @("switch_statement")
+    Invoke-Sample loop_branches "alloc=3 dead=3 freed=3 live=0" "loop branches PASS" @("loop_branches")
     Invoke-Sample do_while "alloc=1 dead=1 freed=1 live=0" "do while PASS" @("do_while")
     Invoke-Sample exceptions_using "alloc=74 dead=74 freed=74 live=0" "exceptions using PASS" @("exceptions_using")       # Dispose runs while unwinding
     Invoke-Sample exceptions_finaliser "alloc=32 dead=32 freed=32 live=0" "exceptions finaliser PASS" @("exceptions_finaliser") # a throwing finaliser is reported and teardown continues
@@ -330,10 +337,12 @@ try {
 
     Write-Host "--- unsupported constructs must be rejected (ARC3001 / CS / ARC2011 / ARC2012 / ARC2013 / ARC2015 / ARC2016) ---"
     Invoke-MustFail do_while_condition "CS0029" @("do_while_condition")
-    Invoke-MustFail break           "ARC3001" @("break")
+    Invoke-MustFail break           "CS0139" @("break")
     Invoke-MustFail exception_filter "ARC3001" @("exception_filter")
     Invoke-MustFail throw_expression "throw expressions are not supported" @("throw_expression")
     Invoke-MustFail throw_non_exception "CS0029" @("throw_non_exception")
+    Invoke-MustFail switch_pattern "ARC3001" @("switch_pattern")
+    Invoke-MustFail increment_property "ARC3001" @("increment_property")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
     Invoke-MustFail lambda          "ARC3001" @("lambda")
     Invoke-MustFail generic         "CS0246" @("generic")
@@ -344,8 +353,9 @@ try {
     Invoke-MustFail generic_constructor_constraint "CS0310" @("generic_constructor_constraint")
     Invoke-MustFail generic_expansion "ARC2013" @("generic_expansion")
     Invoke-MustFail generic_virtual_method "ARC3001" @("generic_virtual_method")
+    Invoke-MustFail checked_constant "CS0220" @("checked_constant")
     Invoke-MustFail shift_right "ARC3001" @("shift_right")
-    Invoke-MustFail shift           "ARC3001" @("shift")
+    Invoke-MustFail shift           "CS0019" @("shift")
     Invoke-MustFail expression_body "ARC3001" @("expression_body")
     Invoke-MustFail named_arg       "ARC3001" @("named_arg")
     Invoke-MustFail optional_param  "ARC3001" @("optional_param")

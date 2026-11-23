@@ -8,10 +8,8 @@ public sealed class UnsupportedConstructTests
 {
     public static TheoryData<string, string> UnsupportedSources => new()
     {
-        { "break", "class C { static void Main() { while (true) { break; } } }" },
-        { "continue", "class C { static void Main() { while (true) { continue; } } }" },
-        { "foreach", "class C { static void Main() { int[] xs = new int[1]; foreach (int x in xs) { } } }" },
-        { "switch", "class C { static void Main() { int x = 1; switch (x) { case 1: break; } } }" },
+        { "foreach", "class C { static void Main() { string xs = \"x\"; foreach (char x in xs) { } } }" },
+        { "switch", "class C { static void Main() { int x = 1; switch (x) { case > 0: break; } } }" },
         { "exception filter", "class C { static void Main() { try { } catch (System.Exception e) when (e != null) { } } }" },
         { "throw expression", "class C { static int Main() { int x = 1; return x > 0 ? x : throw new System.Exception(); } }" },
         { "lock", "class C { static void Main() { object o = new object(); lock (o) { } } }" },
@@ -23,7 +21,6 @@ public sealed class UnsupportedConstructTests
         { "coalesce", "class C { static void Main() { string s = null; string t = s ?? \"x\"; } }" },
         { "interpolated string", "class C { static void Main() { System.Console.WriteLine($\"x\"); } }" },
         { "default", "class C { static void Main() { int x = default(int); } }" },
-        { "checked", "class C { static void Main() { int x = checked(1 + 2); } }" },
         { "target-typed new", "class C { static void Main() { C c = new(); } }" },
         { "object initializer", "class C { static void Main() { C c = new C { }; } }" },
         { "attribute", "[System.Obsolete] class C { }" },
@@ -38,7 +35,6 @@ public sealed class UnsupportedConstructTests
         { "optional parameter", "class C { static void M(int x = 1) { } }" },
         { "params parameter", "class C { static void M(params int[] xs) { } }" },
         { "named argument", "class C { static void M(int x) { } static void Main() { M(x: 1); } }" },
-        { "shift", "class C { static void Main() { int x = 1 << 2; } }" },
         { "using var", "class C { static void Main() { using var d = new System.IO.MemoryStream(); } }" },
         { "struct interface", "struct S : System.IDisposable { public void Dispose() { } } class C { }" },
         { "multi-dimensional array", "class C { static void Main() { int[,] xs = new int[1, 1]; } }" },

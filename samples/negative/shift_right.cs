@@ -1,7 +1,16 @@
-class Program
+struct Custom
+{
+    public static Custom operator >>(Custom value, int count)
+    {
+        return value;
+    }
+}
+
+static class Program
 {
     static void Main()
     {
-        Console.WriteLine(8 >> 1);
+        Custom value = new Custom();
+        value >>= 1;
     }
 }
