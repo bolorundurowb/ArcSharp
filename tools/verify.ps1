@@ -301,6 +301,7 @@ try {
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
     Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
+    Invoke-Sample operators_members "alloc=4 dead=4 freed=4 live=0" "operators and members PASS" @("operators_members")
     Invoke-Sample checked_arithmetic "alloc=13 dead=13 freed=13 live=0" "checked PASS" @("checked_arithmetic")
     Invoke-Sample bitwise "alloc=1 dead=1 freed=1 live=0" "bitwise PASS" @("bitwise")
     Invoke-Sample numeric_compound "alloc=10 dead=10 freed=10 live=0" "compound PASS" @("numeric_compound")
@@ -356,6 +357,9 @@ try {
     Invoke-MustFail checked_constant "CS0220" @("checked_constant")
     Invoke-MustFail shift_right "ARC3001" @("shift_right")
     Invoke-MustFail shift           "CS0019" @("shift")
+    Invoke-MustFail readonly_field "CS0191" @("readonly_field")
+    Invoke-MustFail nested_generic_outer "ARC3001" @("nested_generic_outer")
+    Invoke-MustFail operator_conditional "ARC3001" @("operator_conditional")
     Invoke-MustFail expression_body "ARC3001" @("expression_body")
     Invoke-MustFail named_arg       "ARC3001" @("named_arg")
     Invoke-MustFail optional_param  "ARC3001" @("optional_param")

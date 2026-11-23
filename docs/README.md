@@ -48,6 +48,7 @@ before you rely on it for anything beyond experiments.
 - [Numeric updates](features/increment.md)
 - [Bitwise operators and shifts](features/bitwise.md)
 - [Checked arithmetic](features/checked.md)
+- [Operator overloads and member declarations](features/operators-members.md)
 - [Constant-label switch statements](features/switch-statement.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 

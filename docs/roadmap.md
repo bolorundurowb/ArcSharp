@@ -401,11 +401,14 @@ uses. Each step below ships on its own.
    and [storage updates](features/increment.md) are implemented.
    [Post-test loops, loop branches, and array iteration](features/do-while.md)
    are implemented.
-2. Operators: operator overloading. [Bitwise operators and shifts](features/bitwise.md)
-   and [checked arithmetic](features/checked.md) are implemented.
-3. Member forms: `const`, `readonly`, static constructors, nested types,
-   expression-bodied members, accessor bodies, `params`, and optional and named
-   arguments.
+2. Operators: [bitwise operators and shifts](features/bitwise.md),
+   [checked arithmetic](features/checked.md), and [direct operator overloads](features/operators-members.md)
+   are implemented. Overloaded compound assignment, increment and decrement,
+   short-circuiting operators and struct operator signatures still need support.
+3. Member forms: static constructors, accessor bodies, `params`, and optional
+   and named arguments. [Constants, readonly fields, non-generic containing
+   types, and expression-bodied methods and constructors](features/operators-members.md)
+   are implemented.
 4. Enums and indexers.
 5. The remaining struct forms: arrays of structs, struct returns, static struct
    fields, by-value struct parameters, struct-typed properties,

@@ -32,6 +32,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeForEach, SyntaxKind.ForEachStatement);
         context.RegisterSyntaxNodeAction(AnalyzeSwitch, SyntaxKind.SwitchStatement);
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
+        context.RegisterOperationAction(AnalyzeOverloadedBinary, OperationKind.Binary);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
         context.RegisterSyntaxNodeAction(AnalyzeParameter, SyntaxKind.Parameter);
         context.RegisterSyntaxNodeAction(AnalyzeArgument, SyntaxKind.Argument);
@@ -84,8 +85,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleType,
         SyntaxKind.GlobalStatement,
         SyntaxKind.AttributeList,
-        SyntaxKind.OperatorDeclaration,
-        SyntaxKind.ConversionOperatorDeclaration,
         SyntaxKind.IndexerDeclaration,
         SyntaxKind.EnumDeclaration,
         SyntaxKind.DelegateDeclaration,
@@ -149,6 +148,18 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
                 selection.GetLocation(), "'switch' requires a supported value and constant case labels"));
+        }
+    }
+
+    private static void AnalyzeOverloadedBinary(OperationAnalysisContext context)
+    {
+        var operation = (Microsoft.CodeAnalysis.Operations.IBinaryOperation)context.Operation;
+        if (operation.OperatorMethod != null && (operation.IsLifted
+            || operation.OperatorKind is Microsoft.CodeAnalysis.Operations.BinaryOperatorKind.ConditionalAnd
+                or Microsoft.CodeAnalysis.Operations.BinaryOperatorKind.ConditionalOr))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                operation.Syntax.GetLocation(), "this overloaded binary operator is not supported"));
         }
     }
 
@@ -221,15 +232,15 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleExpression or SyntaxKind.TupleType => "tuples are not supported",
         SyntaxKind.GlobalStatement => "top-level statements are not supported: declare a class with 'static void Main()'",
         SyntaxKind.AttributeList => "attributes are not supported",
-        SyntaxKind.OperatorDeclaration or SyntaxKind.ConversionOperatorDeclaration =>
-            "operator overloading is not supported",
         SyntaxKind.IndexerDeclaration => "indexers are not supported",
         SyntaxKind.EnumDeclaration => "enums are not supported: use named constants or plain 'int' fields",
         SyntaxKind.DelegateDeclaration => "delegates are not supported",
         SyntaxKind.EventDeclaration or SyntaxKind.EventFieldDeclaration => "events are not supported",
         SyntaxKind.RecordDeclaration or SyntaxKind.RecordStructDeclaration => "records are not supported",
         SyntaxKind.LocalFunctionStatement => "local functions are not supported",
-        SyntaxKind.ArrowExpressionClause => "expression-bodied members are not supported: use a block body",
+        SyntaxKind.ArrowExpressionClause when node.Parent is not
+            (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
+                or ConversionOperatorDeclarationSyntax) => "this expression-bodied member is not supported",
         SyntaxKind.CollectionExpression => "collection expressions ('[...]') are not supported",
         SyntaxKind.ImplicitArrayCreationExpression => "array initialisers are not supported: use 'new T[n]'",
         _ => null
@@ -238,8 +249,14 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeDeclaration(SyntaxNodeAnalysisContext context)
     {
         var decl = (TypeDeclarationSyntax)context.Node;
-        var message = ModifierMessage(decl.Modifiers) ??
-                      (decl is ClassDeclarationSyntax && decl.ParameterList != null
+        var message = ModifierMessage(decl.Modifiers);
+        if (context.SemanticModel.GetDeclaredSymbol(decl, context.CancellationToken) is INamedTypeSymbol
+            { ContainingType.IsGenericType: true })
+        {
+            message ??= "types nested in generic types are not supported";
+        }
+
+        message ??= (decl is ClassDeclarationSyntax && decl.ParameterList != null
                           ? "primary constructors are not supported"
                           : null);
         if (message != null)
@@ -252,7 +269,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeMember(SyntaxNodeAnalysisContext context)
     {
         var decl = (MemberDeclarationSyntax)context.Node;
-        var message = ModifierMessage(decl.Modifiers);
+        var message = ModifierMessage(decl.Modifiers, decl is FieldDeclarationSyntax);
         if (decl is MethodDeclarationSyntax { TypeParameterList: not null } method
             && (method.Parent is InterfaceDeclarationSyntax
                 || method.Modifiers.Any(SyntaxKind.VirtualKeyword)
@@ -268,7 +285,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static string? ModifierMessage(SyntaxTokenList modifiers)
+    private static string? ModifierMessage(SyntaxTokenList modifiers, bool field = false)
     {
         foreach (var m in modifiers)
         {
@@ -278,10 +295,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
                     return "'sealed' is not supported";
                 case SyntaxKind.PartialKeyword:
                     return "'partial' is not supported";
-                case SyntaxKind.ReadOnlyKeyword:
-                    return "'readonly' is not supported";
-                case SyntaxKind.ConstKeyword:
-                    return "constants are not supported: use a 'static' field";
+                case SyntaxKind.ReadOnlyKeyword when !field:
+                    return "'readonly' is not supported on this declaration";
                 case SyntaxKind.ExternKeyword:
                     return "'extern' is not supported";
                 case SyntaxKind.AsyncKeyword:

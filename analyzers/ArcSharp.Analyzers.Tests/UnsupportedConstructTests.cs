@@ -29,7 +29,7 @@ public sealed class UnsupportedConstructTests
         { "indexer", "class C { public int this[int i] { get { return i; } } }" },
         { "record", "record R(int X); class C { }" },
         { "local function", "class C { static void Main() { void F() { } F(); } }" },
-        { "expression body", "class C { static int One() => 1; }" },
+        { "expression body", "class C { static int One => 1; }" },
         { "virtual generic method", "class C { public virtual T M<T>(T value) { return value; } }" },
         { "interface generic method", "interface I { T M<T>(T value); }" },
         { "optional parameter", "class C { static void M(int x = 1) { } }" },

@@ -215,8 +215,12 @@ Supported:
 - A finaliser, `~T()`, with no parameters and no modifiers. See
   [Finalisers](#finalisers).
 
-Not supported yet: `sealed`, `readonly`, `const`, `partial`, static constructors,
-nested types, expression-bodied members (`=> expr`),
+Classes and structs can declare `const` and `readonly` fields. Non-generic
+types can contain nested types. Methods, constructors and supported operators
+can use an expression body (`=> expr`).
+
+Not supported yet: `sealed`, `partial`, static constructors, types nested in
+generic types, expression-bodied properties and accessors,
 properties with accessor bodies, get-only auto-properties, indexers, operator
 overloading, extension methods, `params`, and optional or named arguments.
 
@@ -453,6 +457,10 @@ Differences from .NET:
   one statement (`using (a = ..., b = ...)`), are not supported.
 
 ## Expressions and operators
+
+User-defined unary, binary and conversion operators work with supported
+by-value signatures. Struct signatures, overloaded compound assignment,
+increments and decrements, and overloaded `&&` and `||` remain unsupported.
 
 | Category | Operators and forms |
 |---|---|

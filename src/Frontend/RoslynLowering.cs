@@ -102,14 +102,14 @@ sealed partial class RoslynLowering
             var model = _compilation.GetSemanticModel(tree);
             foreach (var declaration in tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
             {
-                if (declaration.Parent is TypeDeclarationSyntax)
+                if (model.GetDeclaredSymbol(declaration) is not INamedTypeSymbol symbol)
                 {
-                    Report(declaration, "nested types are not supported", DiagnosticCatalog.UnsupportedConstructId);
                     continue;
                 }
 
-                if (model.GetDeclaredSymbol(declaration) is not INamedTypeSymbol symbol)
+                if (symbol.ContainingType?.IsGenericType == true)
                 {
+                    Report(declaration, "types nested in generic types are not supported", DiagnosticCatalog.UnsupportedConstructId);
                     continue;
                 }
 
@@ -299,7 +299,7 @@ sealed partial class RoslynLowering
         try
         {
             var created = CreateShell(definition);
-            created.Name = SpecialisedName(definition.Name, arguments);
+            created.Name = SpecialisedName(created.Name, arguments);
             created.GenericDefinition = definition.Name;
             created.TypeArguments = arguments;
             _generic.Add(key, created);
@@ -337,14 +337,24 @@ sealed partial class RoslynLowering
         var file = location?.SourceTree == null ? "" : Path.GetFileName(location.SourceTree.FilePath);
         return new TypeSymbol
         {
-            Name = symbol.ContainingNamespace is { IsGlobalNamespace: false } ns
-                ? ns.ToDisplayString() + "." + symbol.Name
-                : symbol.Name,
+            Name = QualifiedTypeName(symbol),
             Kind = kind,
             IsAbstract = symbol.IsAbstract,
             DeclarationLine = line,
             SourceFile = file
         };
+    }
+
+    private static string QualifiedTypeName(INamedTypeSymbol symbol)
+    {
+        if (symbol.ContainingType != null)
+        {
+            return QualifiedTypeName(symbol.ContainingType) + "." + symbol.Name;
+        }
+
+        return symbol.ContainingNamespace is { IsGlobalNamespace: false } ns
+            ? ns.ToDisplayString() + "." + symbol.Name
+            : symbol.Name;
     }
 
     private int _fillDepth;
@@ -410,14 +420,11 @@ sealed partial class RoslynLowering
                 case IFieldSymbol field when !field.IsImplicitlyDeclared && !field.IsConst:
                     declaredFields.Add(CreateField(type, field));
                     break;
-                case IFieldSymbol field when field.IsConst:
-                    ReportOnce(field, "constants are not supported: use a 'static' field");
-                    break;
                 case IPropertySymbol property:
                     CreateProperty(type, property, declaredFields, declaredMethods);
                     break;
                 case IMethodSymbol method when method.MethodKind is MethodKind.Ordinary or MethodKind.Constructor
-                    or MethodKind.ExplicitInterfaceImplementation:
+                    or MethodKind.ExplicitInterfaceImplementation or MethodKind.UserDefinedOperator or MethodKind.Conversion:
                     CreateMethod(type, method, declaredMethods);
                     break;
                 case IMethodSymbol method when method.MethodKind is MethodKind.Destructor:
@@ -436,10 +443,6 @@ sealed partial class RoslynLowering
                     break;
                 case IMethodSymbol method when method.MethodKind is MethodKind.StaticConstructor:
                     ReportOnce(method, "static constructors are not supported yet");
-                    break;
-                case IMethodSymbol method when method.MethodKind is MethodKind.UserDefinedOperator
-                    or MethodKind.Conversion:
-                    ReportOnce(method, "operator declarations are not supported yet");
                     break;
                 case IEventSymbol:
                     Report(member.Locations.FirstOrDefault(), "events are not supported yet", DiagnosticCatalog.UnsupportedConstructId);
@@ -691,7 +694,12 @@ sealed partial class RoslynLowering
 
         var created = new MethodSymbol
         {
-            Name = method.MethodKind == MethodKind.Constructor ? "<ctor>" : method.Name,
+            Name = method.MethodKind switch
+            {
+                MethodKind.Constructor => "<ctor>",
+                MethodKind.Conversion => method.Name + "$" + returnType.Name,
+                _ => method.Name
+            },
             Owner = owner,
             ReturnType = returnType,
             IsStatic = method.IsStatic,
@@ -772,6 +780,10 @@ sealed partial class RoslynLowering
                 case MethodDeclarationSyntax { ExpressionBody: not null }:
                 case ConstructorDeclarationSyntax { Body: not null }:
                 case ConstructorDeclarationSyntax { ExpressionBody: not null }:
+                case OperatorDeclarationSyntax { Body: not null }:
+                case OperatorDeclarationSyntax { ExpressionBody: not null }:
+                case ConversionOperatorDeclarationSyntax { Body: not null }:
+                case ConversionOperatorDeclarationSyntax { ExpressionBody: not null }:
                     return true;
             }
         }

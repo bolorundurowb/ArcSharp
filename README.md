@@ -68,7 +68,8 @@ reclaimed.
 - Generic classes, structs, interfaces, and methods through monomorphisation,
   with basic type inference and generic constraints.
 - Constructors, instance and static methods and fields, and instance
-  auto-properties.
+  auto-properties, constants, readonly fields, and expression-bodied methods
+  and constructors.
 - Structs with value semantics, including reference fields, nested structs,
   and structs inside classes.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and

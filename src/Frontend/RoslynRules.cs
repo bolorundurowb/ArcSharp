@@ -168,8 +168,10 @@ sealed partial class RoslynLowering
                 case SyntaxKind.LocalFunctionStatement:
                     Reject(node, "local functions are not supported");
                     break;
-                case SyntaxKind.ArrowExpressionClause:
-                    Reject(node, "expression-bodied members are not supported");
+                case SyntaxKind.ArrowExpressionClause when node.Parent is not
+                    (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
+                        or ConversionOperatorDeclarationSyntax):
+                    Reject(node, "this expression-bodied member is not supported");
                     break;
                 case SyntaxKind.ConditionalExpression:
                     Reject(node, "the conditional operator is not supported");

@@ -79,15 +79,10 @@ sealed partial class RoslynLowering
                         block.Statements.Add(new BoundExprStmt { Expression = initialiser });
                     }
 
-                    AppendBlock(block, constructor.BlockBody);
+                    AppendBlock(block, constructor.BlockBody ?? constructor.ExpressionBody);
                     break;
                 case IMethodBodyOperation body:
-                    AppendBlock(block, body.BlockBody);
-                    if (body.ExpressionBody != null)
-                    {
-                        Report(body.ExpressionBody.Syntax, "expression-bodied members are not supported", DiagnosticCatalog.UnsupportedConstructId);
-                    }
-
+                    AppendBlock(block, body.BlockBody ?? body.ExpressionBody);
                     break;
                 case IBlockOperation blockOperation:
                     AppendBlock(block, blockOperation);
@@ -270,7 +265,10 @@ sealed partial class RoslynLowering
         {
             foreach (var declarator in declaration.Declarators)
             {
-                block.Statements.Add(LowerDeclarator(declarator));
+                if (!declarator.Symbol.IsConst)
+                {
+                    block.Statements.Add(LowerDeclarator(declarator));
+                }
             }
         }
 
@@ -533,6 +531,8 @@ sealed partial class RoslynLowering
     private BoundExpr LowerExpr(IOperation operation) => operation switch
     {
         ILiteralOperation literal => LowerLiteral(literal),
+        ILocalReferenceOperation { Local.HasConstantValue: true } local =>
+            LowerConstant(local.Local.ConstantValue, local.Type, local.Syntax),
         ILocalReferenceOperation local => LocalRef(local.Local),
         IParameterReferenceOperation parameter => ParameterRef(parameter.Parameter),
         IInstanceReferenceOperation => new BoundThis { Type = _currentType },
@@ -562,18 +562,20 @@ sealed partial class RoslynLowering
         _ => UnsupportedExpr(operation)
     };
 
-    private BoundExpr LowerLiteral(ILiteralOperation literal)
+    private BoundExpr LowerLiteral(ILiteralOperation literal) =>
+        LowerConstant(literal.ConstantValue.HasValue ? literal.ConstantValue.Value : null, literal.Type, literal.Syntax);
+
+    private BoundExpr LowerConstant(object? value, ITypeSymbol? roslynType, SyntaxNode syntax)
     {
-        if (literal.ConstantValue.HasValue == false || literal.ConstantValue.Value == null)
+        if (value == null)
         {
-            var nullType = literal.Type == null || literal.Type.TypeKind == RoslynKind.Error
+            var nullType = roslynType == null || roslynType.TypeKind == RoslynKind.Error
                 ? _null
-                : MapType(literal.Type, literal.Syntax.GetLocation());
+                : MapType(roslynType, syntax.GetLocation());
             return new BoundLiteral { Type = nullType == _error ? _null : nullType, LitKind = LiteralKind.Null };
         }
 
-        var value = literal.ConstantValue.Value;
-        var type = MapType(literal.Type, literal.Syntax.GetLocation());
+        var type = MapType(roslynType, syntax.GetLocation());
         return value switch
         {
             bool boolean => new BoundLiteral { Type = _bool, LitKind = LiteralKind.Bool, BoolValue = boolean },
@@ -583,7 +585,7 @@ sealed partial class RoslynLowering
                 Type = _string,
                 LitKind = LiteralKind.String,
                 StringValue = text,
-                Site = Site(literal.Syntax)
+                Site = Site(syntax)
             },
             float number => new BoundLiteral { Type = _float, LitKind = LiteralKind.Float, FloatValue = number },
             double number => new BoundLiteral { Type = _double, LitKind = LiteralKind.Double, FloatValue = number },
@@ -638,6 +640,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerField(IFieldReferenceOperation operation)
     {
+        if (operation.Field.HasConstantValue)
+        {
+            return LowerConstant(operation.Field.ConstantValue, operation.Type, operation.Syntax);
+        }
+
         var field = MapField(operation.Field, operation.Syntax.GetLocation());
         if (field == null)
         {
@@ -1013,6 +1020,13 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerBinary(IBinaryOperation binary)
     {
+        if (binary.OperatorMethod is { } method)
+        {
+            return binary.IsLifted || binary.OperatorKind is BinaryOperatorKind.ConditionalAnd or BinaryOperatorKind.ConditionalOr
+                ? UnsupportedExpr(binary)
+                : LowerOperator(binary, method, binary.LeftOperand, binary.RightOperand);
+        }
+
         if (binary.OperatorKind is BinaryOperatorKind.ConditionalAnd or BinaryOperatorKind.ConditionalOr)
         {
             return new BoundBinary
@@ -1083,7 +1097,17 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerUnary(IUnaryOperation unary)
     {
+        if (unary.OperatorMethod is { } method)
+        {
+            return unary.IsLifted ? UnsupportedExpr(unary) : LowerOperator(unary, method, unary.Operand);
+        }
+
         var operand = LowerExpr(unary.Operand);
+        if (unary.OperatorKind == UnaryOperatorKind.Plus)
+        {
+            return operand;
+        }
+
         if (unary.OperatorKind == UnaryOperatorKind.Not)
         {
             return new BoundUnary { Op = TokenKind.Bang, Operand = operand, Type = _bool };
@@ -1104,6 +1128,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerConversion(IConversionOperation conversion)
     {
+        if (conversion.OperatorMethod is { } method)
+        {
+            return LowerOperator(conversion, method, conversion.Operand);
+        }
+
         if (conversion.IsTryCast)
         {
             var operand = LowerExpr(conversion.Operand);
@@ -1130,6 +1159,23 @@ sealed partial class RoslynLowering
             && type.Kind == BoundKind.Class
             && type != _object;
         return new BoundConversion { Operand = value, Type = type, CastCheck = castCheck, IsChecked = conversion.IsChecked };
+    }
+
+    private BoundExpr LowerOperator(IOperation operation, IMethodSymbol method, params IOperation[] operands)
+    {
+        var mapped = MapMethod(method, operation.Syntax.GetLocation());
+        if (mapped == null || mapped.IsAbstract || !mapped.IsStatic
+            || mapped.Parameters.Any(parameter => parameter.RefKind != RefKind.None))
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        return new BoundCall
+        {
+            Method = mapped,
+            Arguments = operands.Select(LowerExpr).ToList(),
+            Type = mapped.ReturnType
+        };
     }
 
     private BoundExpr LowerAssignment(ISimpleAssignmentOperation assignment)
