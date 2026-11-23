@@ -5,6 +5,7 @@ namespace ArcSharp.Binding;
 public enum TypeKind
 {
     Primitive,
+    Enum,
     String,
     Class,
     Struct,
@@ -42,6 +43,7 @@ public sealed class TypeSymbol
 
     // array
     public TypeSymbol? ElementType;
+    public TypeSymbol? EnumUnderlyingType;
 
     public bool IsReferenceType =>
         Kind is TypeKind.Class or TypeKind.String or TypeKind.Array or TypeKind.Interface or TypeKind.WeakRef;
@@ -64,6 +66,7 @@ public sealed class TypeSymbol
             "double" => "double",
             _ => "i32"
         },
+        TypeKind.Enum => EnumUnderlyingType?.LlvmType ?? throw new InvalidOperationException("missing enum representation"),
         TypeKind.Void => "void",
         // A struct value is an opaque blob of one 8-byte slot per field, so
         // every field sits at a known 8*i byte offset without declaring an
@@ -74,8 +77,11 @@ public sealed class TypeSymbol
         _ => "i8*" // all reference types are opaque pointers
     };
 
-    public bool IsUnsignedInteger => Kind == TypeKind.Primitive && Name is "byte" or "ushort" or "uint" or "ulong";
-    public bool IsSignedInteger => Kind == TypeKind.Primitive && Name is "sbyte" or "short" or "int" or "long";
+    public bool IsUnsignedInteger => EnumUnderlyingType?.IsUnsignedInteger
+        ?? (Kind == TypeKind.Primitive && Name is "byte" or "ushort" or "uint" or "ulong");
+
+    public bool IsSignedInteger => EnumUnderlyingType?.IsSignedInteger
+        ?? (Kind == TypeKind.Primitive && Name is "sbyte" or "short" or "int" or "long");
     public bool IsInteger => IsSignedInteger || IsUnsignedInteger || Name == "char";
     public bool IsFloat => Kind == TypeKind.Primitive && Name is "float" or "double";
 

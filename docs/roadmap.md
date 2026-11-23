@@ -411,7 +411,8 @@ uses. Each step below ships on its own.
    [named, optional and parameter-array arguments](features/arguments.md), and
    [accessor bodies and auto-property initialisers](features/accessors.md) are
    implemented within the documented subset.
-4. Enums remain. [Indexer get and set](features/accessors.md) are implemented.
+4. [Enums](features/enums.md) and [indexer get and set](features/accessors.md)
+   are implemented within the documented subset.
 5. The remaining struct forms: arrays of structs, struct returns, static struct
    fields, by-value struct parameters, struct-typed properties,
    `virtual`/`override` and interfaces on structs, and printing a struct.

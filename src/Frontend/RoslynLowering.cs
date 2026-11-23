@@ -256,6 +256,12 @@ sealed partial class RoslynLowering
             return _error;
         }
 
+        if (named.TypeKind == RoslynKind.Enum && named.ContainingType?.IsGenericType == true)
+        {
+            Report(location, "types nested in generic types are not supported", DiagnosticCatalog.UnsupportedConstructId);
+            return _error;
+        }
+
         if (named.IsGenericType)
         {
             var arguments = named.TypeArguments.Select(argument => MapType(argument, location)).ToList();
@@ -275,7 +281,15 @@ sealed partial class RoslynLowering
 
         var created = CreateShell(named);
         _named.Add(named, created);
-        Fill(created, named);
+        if (named.EnumUnderlyingType is { } underlying)
+        {
+            created.EnumUnderlyingType = MapType(underlying, location);
+        }
+        else
+        {
+            Fill(created, named);
+        }
+
         return created;
     }
 
@@ -329,6 +343,7 @@ sealed partial class RoslynLowering
         var kind = symbol.TypeKind switch
         {
             RoslynKind.Struct => BoundKind.Struct,
+            RoslynKind.Enum => BoundKind.Enum,
             RoslynKind.Interface => BoundKind.Interface,
             _ => BoundKind.Class
         };

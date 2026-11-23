@@ -368,7 +368,7 @@ sealed partial class RoslynLowering
     private BoundStmt LowerSwitch(ISwitchOperation operation)
     {
         var value = LowerExpr(operation.Value);
-        if (value.Type.Kind != BoundKind.Primitive && value.Type != _string)
+        if (value.Type.Kind is not (BoundKind.Primitive or BoundKind.Enum) && value.Type != _string)
         {
             return UnsupportedStmt(operation);
         }
@@ -592,6 +592,7 @@ sealed partial class RoslynLowering
         IBinaryOperation binary => LowerBinary(binary),
         IUnaryOperation unary => LowerUnary(unary),
         IConversionOperation conversion => LowerConversion(conversion),
+        IIsTypeOperation { TypeOperand.TypeKind: RoslynKind.Enum } test => UnsupportedExpr(test),
         IIsTypeOperation test => new BoundIs
         {
             Operand = LowerExpr(test.ValueOperand),
@@ -622,6 +623,11 @@ sealed partial class RoslynLowering
         }
 
         var type = MapType(roslynType, syntax.GetLocation());
+        if (type == _error)
+        {
+            return ErrorExpr();
+        }
+
         return value switch
         {
             bool boolean => new BoundLiteral { Type = _bool, LitKind = LiteralKind.Bool, BoolValue = boolean },
@@ -635,12 +641,12 @@ sealed partial class RoslynLowering
             },
             float number => new BoundLiteral { Type = _float, LitKind = LiteralKind.Float, FloatValue = number },
             double number => new BoundLiteral { Type = _double, LitKind = LiteralKind.Double, FloatValue = number },
-            ulong number => new BoundLiteral { Type = _ulong, LitKind = LiteralKind.ULong, IntValue = unchecked((long)number) },
-            long number => new BoundLiteral { Type = _long, LitKind = LiteralKind.Long, IntValue = number },
-            uint number => new BoundLiteral { Type = _uint, LitKind = LiteralKind.UInt, IntValue = number },
+            ulong number => new BoundLiteral { Type = type, LitKind = LiteralKind.ULong, IntValue = unchecked((long)number) },
+            long number => new BoundLiteral { Type = type, LitKind = LiteralKind.Long, IntValue = number },
+            uint number => new BoundLiteral { Type = type, LitKind = LiteralKind.UInt, IntValue = number },
             _ => new BoundLiteral
             {
-                Type = type == _error ? _int : type,
+                Type = type,
                 LitKind = LiteralKind.Int,
                 IntValue = Convert.ToInt64(value)
             }
@@ -963,7 +969,7 @@ sealed partial class RoslynLowering
     private BoundExpr LowerTypeParameterCreation(ITypeSymbol? type, SyntaxNode syntax)
     {
         var concrete = MapType(type, syntax.GetLocation());
-        if (concrete.Kind == BoundKind.Primitive || concrete.Kind == BoundKind.String)
+        if (concrete.Kind is BoundKind.Primitive or BoundKind.Enum or BoundKind.String)
         {
             return DefaultValue(concrete);
         }
@@ -985,7 +991,7 @@ sealed partial class RoslynLowering
         }
 
         var type = MapType(creation.Type, creation.Syntax.GetLocation());
-        if (type.Kind == BoundKind.Primitive)
+        if (type.Kind is BoundKind.Primitive or BoundKind.Enum)
         {
             return DefaultValue(type);
         }
@@ -1123,6 +1129,21 @@ sealed partial class RoslynLowering
         var operand = left.Type.Kind == BoundKind.Error ? right.Type : left.Type;
         var compare = op is TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater
             or TokenKind.GreaterEquals or TokenKind.EqualsEquals or TokenKind.BangEquals;
+        var representation = left.Type.EnumUnderlyingType ?? right.Type.EnumUnderlyingType;
+        if (representation != null)
+        {
+            return new BoundBinary
+            {
+                Op = op,
+                Kind = compare ? BinKind.IntCmp : BinKind.IntArith,
+                IsUnsigned = representation.IsUnsignedInteger,
+                IsChecked = binary.IsChecked,
+                Left = left,
+                Right = right,
+                Type = MapType(binary.Type, binary.Syntax.GetLocation())
+            };
+        }
+
         var (kind, unsigned) = operand switch
         {
             _ when operand == _bool => (compare ? BinKind.BoolCmp : BinKind.BoolArith, false),
@@ -1190,6 +1211,12 @@ sealed partial class RoslynLowering
             var operand = LowerExpr(conversion.Operand);
             var target = MapType(conversion.Type, conversion.Syntax.GetLocation());
             return new BoundAs { Operand = operand, TestType = target, Type = target };
+        }
+
+        if ((conversion.Operand.Type?.TypeKind == RoslynKind.Enum && conversion.Type?.IsReferenceType == true)
+            || (conversion.Type?.TypeKind == RoslynKind.Enum && conversion.Operand.Type?.IsReferenceType == true))
+        {
+            return UnsupportedExpr(conversion);
         }
 
         if (IsBoxing(conversion) || conversion.Conversion.IsIdentity)
@@ -1360,6 +1387,11 @@ sealed partial class RoslynLowering
 
     private TypeSymbol ArithmeticType(TypeSymbol left, TypeSymbol right)
     {
+        if (left.EnumUnderlyingType != null)
+        {
+            return left.EnumUnderlyingType;
+        }
+
         if (left == _bool)
         {
             return _bool;

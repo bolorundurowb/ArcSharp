@@ -187,9 +187,6 @@ sealed partial class RoslynLowering
                 case SyntaxKind.RecordStructDeclaration:
                     Reject(node, "records are not supported");
                     break;
-                case SyntaxKind.EnumDeclaration:
-                    Reject(node, "enums are not supported");
-                    break;
                 case SyntaxKind.DelegateDeclaration:
                     Reject(node, "delegates are not supported");
                     break;

@@ -461,6 +461,13 @@ Differences from .NET:
 - `using var x = ...;` declarations without a block, and multiple resources in
   one statement (`using (a = ..., b = ...)`), are not supported.
 
+### Enums
+
+Enums use their declared integral width and signedness. Enum values can be
+stored in fields, locals and arrays, passed to methods, used in constant-label
+switches, and converted explicitly to and from numeric values. Enum boxing
+and unboxing remain unsupported. See [Enums](features/enums.md).
+
 ## Expressions and operators
 
 User-defined unary, binary and conversion operators work with supported
@@ -560,7 +567,7 @@ items that target marks as full and items it marks as limited.
 - Generic features outside the subset described under [Generics](#generics).
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
-- Enums, delegates, events, and records.
+- Delegates, events, and records.
 - Lambdas, closures, local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference

@@ -24,7 +24,6 @@ public sealed class UnsupportedConstructTests
         { "target-typed new", "class C { static void Main() { C c = new(); } }" },
         { "object initializer", "class C { static void Main() { C c = new C { }; } }" },
         { "attribute", "[System.Obsolete] class C { }" },
-        { "enum", "enum E { A } class C { }" },
         { "delegate", "delegate void D(); class C { }" },
         { "record", "record R(int X); class C { }" },
         { "local function", "class C { static void Main() { void F() { } F(); } }" },

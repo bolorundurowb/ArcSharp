@@ -517,7 +517,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 case TypeKind.Struct:
                     fns.AppendLine($"  call void @{f.Type.Name}__copy({f.Type.LlvmType}* {dst}, {f.Type.LlvmType}* {src})");
                     break;
-                case TypeKind.Primitive when !f.IsWeak:
+                case TypeKind.Primitive or TypeKind.Enum when !f.IsWeak:
                 {
                     fns.AppendLine($"  %v{n} = load {f.Type.LlvmType}, {f.Type.LlvmType}* {src}");
                     fns.AppendLine($"  store {f.Type.LlvmType} %v{n}, {f.Type.LlvmType}* {dst}");
@@ -2185,11 +2185,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         {
             case BinKind.BoolArith: return EmitIntegerArithmetic(b, 1);
             case BinKind.BoolCmp: return Inst($"icmp {CmpOp(b.Op, false)} i1 {EmitR(b.Left)}, {EmitR(b.Right)}");
-            case BinKind.IntArith: return EmitIntegerArithmetic(b, 32);
+            case BinKind.IntArith: return EmitIntegerArithmetic(b, int.Parse(b.Left.Type.LlvmType.AsSpan(1)));
             case BinKind.LongArith: return EmitIntegerArithmetic(b, 64);
             case BinKind.FloatArith: return Inst($"{FloatArithOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleArith: return Inst($"{FloatArithOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
-            case BinKind.IntCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.IntCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} {b.Left.Type.LlvmType} {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.LongCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.FloatCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");

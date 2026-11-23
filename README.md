@@ -74,7 +74,7 @@ reclaimed.
 - Structs with value semantics, including reference fields, nested structs,
   and structs inside classes.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
-  `string`, plus single-dimensional arrays.
+  `string`, enums, and single-dimensional arrays.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept
   alive for the call. Also `is` and `as`.
 - `if`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, constant-label

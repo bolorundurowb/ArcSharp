@@ -33,6 +33,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeSwitch, SyntaxKind.SwitchStatement);
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterOperationAction(AnalyzeOverloadedBinary, OperationKind.Binary);
+        context.RegisterOperationAction(AnalyzeEnumConversion, OperationKind.Conversion);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
         context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration, SyntaxKind.IndexerDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeStruct, SyntaxKind.StructDeclaration);
@@ -82,7 +83,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleType,
         SyntaxKind.GlobalStatement,
         SyntaxKind.AttributeList,
-        SyntaxKind.EnumDeclaration,
         SyntaxKind.DelegateDeclaration,
         SyntaxKind.EventDeclaration,
         SyntaxKind.EventFieldDeclaration,
@@ -126,11 +126,12 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     {
         var selection = (SwitchStatementSyntax)context.Node;
         var type = context.SemanticModel.GetTypeInfo(selection.Expression, context.CancellationToken).Type;
-        if (type?.SpecialType is not (SpecialType.System_String or SpecialType.System_Boolean
+        if ((type?.TypeKind != TypeKind.Enum
+            && type?.SpecialType is not (SpecialType.System_String or SpecialType.System_Boolean
                 or SpecialType.System_Char or SpecialType.System_SByte or SpecialType.System_Byte
                 or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Int32
                 or SpecialType.System_UInt32 or SpecialType.System_Int64 or SpecialType.System_UInt64
-                or SpecialType.System_Single or SpecialType.System_Double)
+                or SpecialType.System_Single or SpecialType.System_Double))
             || selection.Sections.SelectMany(section => section.Labels).Any(label => label is CasePatternSwitchLabelSyntax))
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
@@ -150,13 +151,23 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
+    private static void AnalyzeEnumConversion(OperationAnalysisContext context)
+    {
+        var operation = (Microsoft.CodeAnalysis.Operations.IConversionOperation)context.Operation;
+        if ((operation.Operand.Type?.TypeKind == TypeKind.Enum && operation.Type?.IsReferenceType == true)
+            || (operation.Type?.TypeKind == TypeKind.Enum && operation.Operand.Type?.IsReferenceType == true))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                operation.Syntax.GetLocation(), "boxing and unboxing enum values are not supported"));
+        }
+    }
+
     private static void AnalyzeIncrement(OperationAnalysisContext context)
     {
         var operation = (Microsoft.CodeAnalysis.Operations.IIncrementOrDecrementOperation)context.Operation;
         if (operation.OperatorMethod != null || operation.IsLifted
             || operation.Target.Kind is not (OperationKind.LocalReference or OperationKind.ParameterReference
                 or OperationKind.FieldReference or OperationKind.ArrayElementReference or OperationKind.PropertyReference)
-            || operation.Target.Type?.TypeKind == TypeKind.Enum
             || operation.Target.Type?.SpecialType == SpecialType.System_Decimal)
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
@@ -219,7 +230,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleExpression or SyntaxKind.TupleType => "tuples are not supported",
         SyntaxKind.GlobalStatement => "top-level statements are not supported: declare a class with 'static void Main()'",
         SyntaxKind.AttributeList => "attributes are not supported",
-        SyntaxKind.EnumDeclaration => "enums are not supported: use named constants or plain 'int' fields",
         SyntaxKind.DelegateDeclaration => "delegates are not supported",
         SyntaxKind.EventDeclaration or SyntaxKind.EventFieldDeclaration => "events are not supported",
         SyntaxKind.RecordDeclaration or SyntaxKind.RecordStructDeclaration => "records are not supported",
