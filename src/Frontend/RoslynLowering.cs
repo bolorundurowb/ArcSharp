@@ -667,6 +667,7 @@ sealed partial class RoslynLowering
             Name = name,
             Owner = owner,
             ReturnType = returnType,
+            IsPublic = roslyn.DeclaredAccessibility == Accessibility.Public,
             IsStatic = roslyn.IsStatic,
             IsVirtual = roslyn.IsVirtual,
             IsOverride = roslyn.IsOverride,
@@ -674,6 +675,7 @@ sealed partial class RoslynLowering
             Parameters = parameters
         };
         _methods[new MemberKey(roslyn.OriginalDefinition, owner)] = method;
+        RecordExplicitTargets(method, roslyn);
         return method;
     }
 
@@ -753,6 +755,7 @@ sealed partial class RoslynLowering
             },
             Owner = owner,
             ReturnType = returnType,
+            IsPublic = method.DeclaredAccessibility == Accessibility.Public,
             IsStatic = method.IsStatic,
             IsVirtual = method.IsVirtual || method.IsAbstract,
             IsOverride = method.IsOverride,
@@ -783,6 +786,7 @@ sealed partial class RoslynLowering
 
         methods.Add(created);
         _methods[new MemberKey(method.OriginalDefinition, owner)] = created;
+        RecordExplicitTargets(created, method);
         if (owner.Kind == BoundKind.Interface)
         {
             _selectors[created] = _selectors.Count;
@@ -792,6 +796,17 @@ sealed partial class RoslynLowering
         if (!method.IsAbstract && (method.IsImplicitlyDeclared || HasBody(method)))
         {
             Queue(created, method);
+        }
+    }
+
+    private void RecordExplicitTargets(MethodSymbol method, IMethodSymbol declaration)
+    {
+        foreach (var target in declaration.ExplicitInterfaceImplementations)
+        {
+            if (MapMethod(target, declaration.Locations.FirstOrDefault()) is { } mapped)
+            {
+                method.ExplicitInterfaceTargets.Add(mapped);
+            }
         }
     }
 
@@ -935,11 +950,14 @@ sealed partial class RoslynLowering
         {
             foreach (var pair in type.BaseType.InterfaceImpl)
             {
-                type.InterfaceImpl[pair.Key] = pair.Value;
+                var implementation = pair.Value;
+                type.InterfaceImpl[pair.Key] = implementation.IsVirtual || implementation.IsOverride
+                    ? FindVirtual(type, implementation) ?? implementation
+                    : implementation;
             }
         }
 
-        foreach (var iface in AllInterfaces(type))
+        foreach (var iface in DeclaredInterfaceClosure(type))
         {
             foreach (var method in iface.Methods)
             {
@@ -948,7 +966,7 @@ sealed partial class RoslynLowering
                     continue;
                 }
 
-                var implementation = FindExact(type, method);
+                var implementation = FindInterfaceImplementation(type, method);
                 if (implementation != null)
                 {
                     type.InterfaceImpl[selector] = implementation;
@@ -961,21 +979,22 @@ sealed partial class RoslynLowering
         }
     }
 
-    private static IEnumerable<TypeSymbol> AllInterfaces(TypeSymbol type)
+    private static IEnumerable<TypeSymbol> DeclaredInterfaceClosure(TypeSymbol type)
     {
         var seen = new HashSet<TypeSymbol>();
-        var current = type;
-        while (current != null)
+        var pending = new Queue<TypeSymbol>(type.Interfaces);
+        while (pending.TryDequeue(out var iface))
         {
-            foreach (var iface in current.Interfaces)
+            if (!seen.Add(iface))
             {
-                if (seen.Add(iface))
-                {
-                    yield return iface;
-                }
+                continue;
             }
 
-            current = current.BaseType;
+            yield return iface;
+            foreach (var parent in iface.Interfaces)
+            {
+                pending.Enqueue(parent);
+            }
         }
     }
 
@@ -998,16 +1017,21 @@ sealed partial class RoslynLowering
         return null;
     }
 
-    private static MethodSymbol? FindExact(TypeSymbol? type, MethodSymbol method)
+    private static MethodSymbol? FindInterfaceImplementation(TypeSymbol? type, MethodSymbol method)
     {
         while (type != null)
         {
-            foreach (var candidate in type.Methods)
+            var explicitImplementation = type.Methods.Find(candidate => candidate.ExplicitInterfaceTargets.Contains(method));
+            if (explicitImplementation != null)
             {
-                if (!candidate.IsConstructor && candidate.Name == method.Name && SameSignature(candidate, method))
-                {
-                    return candidate;
-                }
+                return explicitImplementation;
+            }
+
+            var implicitImplementation = type.Methods.Find(candidate => candidate.IsPublic && !candidate.IsStatic
+                && !candidate.IsConstructor && candidate.Name == method.Name && SameSignature(candidate, method));
+            if (implicitImplementation != null)
+            {
+                return implicitImplementation;
             }
 
             type = type.BaseType;

@@ -64,7 +64,8 @@ reclaimed.
 
 ## What works
 
-- Classes with single inheritance, interfaces, and `virtual`/`override` dispatch.
+- Classes with single inheritance, transitive base interfaces, and
+  `virtual`/`override` dispatch.
 - Generic classes, structs, interfaces, and methods through monomorphisation,
   with basic type inference and generic constraints.
 - Constructors, instance and static methods and fields, and instance

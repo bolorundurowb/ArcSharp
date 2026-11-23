@@ -475,6 +475,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Roslyn frontend                                        | Implemented                           |
 | Binder: classes, inheritance, fields, methods, statics | Implemented                           |
 | Type checking (core)                                   | Implemented (lightweight)             |
+| Base interface lists and explicit implementations       | Transitive interface slots with inherited virtual overrides |
 | Virtual / override dispatch (vtables)                  | Implemented                           |
 | ARC: retain/release/deinit, statement & scope cleanup  | Implemented                           |
 | `WeakReference<T>` fields, locals, and generic arguments | Implemented |

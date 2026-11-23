@@ -182,6 +182,8 @@ public sealed class MethodSymbol
     public required TypeSymbol Owner;
     public TypeSymbol ReturnType = null!;
     public List<ParamSymbol> Parameters = [];
+    public List<MethodSymbol> ExplicitInterfaceTargets = [];
+    public bool IsPublic;
     public bool IsStatic;
     public bool IsVirtual;
     public bool IsOverride;

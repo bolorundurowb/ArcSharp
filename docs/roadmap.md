@@ -68,7 +68,7 @@ and threads are not targets.
 | Feature | Target | Today | Milestone | Notes |
 |---|---|---|---|---|
 | Classes, structs, records | Full | Classes, and structs with restrictions. Records are rejected. | [M6](#m6--ordinary-c) | Ordinary C# semantics, including the member forms, statements, and operators that come with them. |
-| Interfaces, inheritance | Full | Single inheritance, interfaces, virtual tables, and interface tables. A base interface list is parsed and then ignored. | [M6](#m6--ordinary-c) | Native dispatch tables. |
+| Interfaces, inheritance | Full | Single inheritance, transitive base interfaces, virtual tables, and interface tables. | [M6](#m6--ordinary-c) | Native dispatch tables. |
 | Generics | Full | Monomorphisation, basic inference, and constraints for a subset. | [M6](#m6--ordinary-c) | Each closed type is specialised ahead of time. A single shared representation for all type arguments is not the plan. |
 | Delegates, events | Full | Rejected (`ARC3001`). | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
 | LINQ | Full | Rejected. | [M8](#m8--core-library-iterators-and-linq) | A library written against delegates, generics, iterators, and the core collections. Query syntax lowers to those methods. |
@@ -416,8 +416,9 @@ uses. Each step below ships on its own.
 5. The remaining struct forms: arrays of structs, struct returns, static struct
    fields, by-value struct parameters, struct-typed properties,
    `virtual`/`override` and interfaces on structs, and printing a struct.
-6. Base interface lists, records with the members C# synthesises, and pattern
-   matching.
+6. Records with the members C# synthesises and pattern matching.
+   [Base interface lists and explicit implementations](features/base-interfaces.md)
+   are implemented.
 7. The rest of generics: virtual and interface generic methods, variance, full
    inference, and the remaining constraint forms.
 8. Nullable value types and `decimal`.

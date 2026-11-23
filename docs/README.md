@@ -53,6 +53,7 @@ before you rely on it for anything beyond experiments.
 - [Properties and indexers](features/accessors.md)
 - [Static constructors](features/static-constructors.md)
 - [Enums](features/enums.md)
+- [Base interfaces](features/base-interfaces.md)
 - [Constant-label switch statements](features/switch-statement.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 

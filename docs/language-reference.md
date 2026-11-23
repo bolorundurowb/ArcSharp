@@ -303,8 +303,7 @@ parameter count. Calls through an interface-typed variable are dispatched at
 run time.
 
 The binder reports an error if a class does not implement every interface
-method. Interface inheritance (`interface IB : IA`) is parsed, but the base
-interface list is ignored.
+method. A derived interface inherits its base interfaces' dispatch slots.
 
 ### Methods and overloading
 
@@ -467,6 +466,10 @@ Enums use their declared integral width and signedness. Enum values can be
 stored in fields, locals and arrays, passed to methods, used in constant-label
 switches, and converted explicitly to and from numeric values. Enum boxing
 and unboxing remain unsupported. See [Enums](features/enums.md).
+
+Classes inherit interfaces through their base class and through base interface
+lists. Both implicit and explicit implementations dispatch through native
+interface slots. See [Base interfaces](features/base-interfaces.md).
 
 ## Expressions and operators
 
