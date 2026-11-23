@@ -34,8 +34,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterOperationAction(AnalyzeOverloadedBinary, OperationKind.Binary);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
-        context.RegisterSyntaxNodeAction(AnalyzeParameter, SyntaxKind.Parameter);
-        context.RegisterSyntaxNodeAction(AnalyzeArgument, SyntaxKind.Argument);
         context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeAccessor, AccessorKinds);
         context.RegisterSyntaxNodeAction(AnalyzeStruct, SyntaxKind.StructDeclaration);
@@ -338,34 +336,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
                 Descriptors.UnsupportedConstruct,
                 d.Modifiers.First(m => m.IsKind(SyntaxKind.RefKeyword)).GetLocation(),
                 "ref locals and ref returns are not supported: a managed reference must not outlive the call"));
-        }
-    }
-
-    private static void AnalyzeParameter(SyntaxNodeAnalysisContext context)
-    {
-        var p = (ParameterSyntax)context.Node;
-        if (p.Default != null)
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, p.GetLocation(),
-                "optional parameters are not supported"));
-        }
-        else if (p.Modifiers.Any(t => t.IsKind(SyntaxKind.ParamsKeyword)))
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, p.GetLocation(),
-                "parameter arrays are not supported"));
-        }
-    }
-
-    private static void AnalyzeArgument(SyntaxNodeAnalysisContext context)
-    {
-        var a = (ArgumentSyntax)context.Node;
-        if (a.NameColon != null)
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, a.GetLocation(),
-                "named arguments are not supported"));
         }
     }
 

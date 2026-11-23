@@ -68,6 +68,13 @@ public sealed class BoundNewArray : BoundExpr
     public string Site = "";
     public required TypeSymbol ElementType;
     public required BoundExpr Size;
+    public List<BoundExpr> Initializers = [];
+}
+
+public sealed class BoundNamedArgument : BoundExpr
+{
+    public required int Ordinal;
+    public required BoundExpr Value;
 }
 
 public sealed class BoundIndex : BoundExpr

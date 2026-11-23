@@ -58,6 +58,19 @@ return 0;
 
 static SurfaceCase[] Cases() =>
 [
+    new("parameter array", """
+        class P
+        {
+            static void Collect(params int[] values)
+            {
+            }
+
+            static void Call()
+            {
+                Collect(1, 2);
+            }
+        }
+        """),
     new("array foreach", """
         class P
         {

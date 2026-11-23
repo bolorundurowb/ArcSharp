@@ -69,7 +69,8 @@ reclaimed.
   with basic type inference and generic constraints.
 - Constructors, instance and static methods and fields, and instance
   auto-properties, constants, readonly fields, and expression-bodied methods
-  and constructors.
+  and constructors. Calls support named arguments, optional defaults, and
+  parameter arrays.
 - Structs with value semantics, including reference fields, nested structs,
   and structs inside classes.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and

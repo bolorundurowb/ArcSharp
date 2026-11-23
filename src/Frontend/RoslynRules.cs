@@ -199,22 +199,9 @@ sealed partial class RoslynLowering
                 case SyntaxKind.IndexerDeclaration:
                     Reject(node, "indexers are not supported");
                     break;
-                case SyntaxKind.NameColon:
-                    Reject(node, "named arguments are not supported");
-                    break;
             }
 
             base.Visit(node);
-        }
-
-        public override void VisitParameter(ParameterSyntax node)
-        {
-            if (node.Default != null)
-            {
-                Reject(node, "optional parameters are not supported");
-            }
-
-            base.VisitParameter(node);
         }
 
         public override void VisitMethodDeclaration(MethodDeclarationSyntax node)

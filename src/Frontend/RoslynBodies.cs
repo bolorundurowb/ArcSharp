@@ -976,7 +976,9 @@ sealed partial class RoslynLowering
         };
     }
 
-    private BoundExpr LowerArray(IArrayCreationOperation array)
+    private BoundExpr LowerArray(IArrayCreationOperation array) => LowerArray(array, isParams: false);
+
+    private BoundExpr LowerArray(IArrayCreationOperation array, bool isParams)
     {
         if (array.DimensionSizes.Length != 1)
         {
@@ -984,7 +986,7 @@ sealed partial class RoslynLowering
             return ErrorExpr();
         }
 
-        if (array.Initializer != null)
+        if (array.Initializer != null && !isParams)
         {
             Report(array.Syntax, "array initialisers are not supported", DiagnosticCatalog.UnsupportedConstructId);
             return ErrorExpr();
@@ -996,6 +998,7 @@ sealed partial class RoslynLowering
         {
             ElementType = element,
             Size = LowerExpr(array.DimensionSizes[0]),
+            Initializers = array.Initializer?.ElementValues.Select(LowerExpr).ToList() ?? [],
             Type = type,
             Site = Site(array.Syntax)
         };
@@ -1393,28 +1396,24 @@ sealed partial class RoslynLowering
         for (var i = 0; i < arguments.Length; i++)
         {
             var argument = arguments[i];
-            if (argument.ArgumentKind == ArgumentKind.DefaultValue || argument.Value is IOmittedArgumentOperation)
-            {
-                Report(argument.Syntax, "optional arguments are not supported", DiagnosticCatalog.UnsupportedConstructId);
-                bound.Add(ErrorExpr());
-                continue;
-            }
-
-            if (argument.Syntax is ArgumentSyntax { NameColon: not null })
-            {
-                Report(argument.Syntax, "named arguments are not supported", DiagnosticCatalog.UnsupportedConstructId);
-            }
-
-            var parameter = i < method.Parameters.Count ? method.Parameters[i] : null;
+            var ordinal = argument.Parameter?.Ordinal ?? i;
+            var parameter = ordinal < method.Parameters.Count ? method.Parameters[ordinal] : null;
+            BoundExpr value;
             if (parameter != null && parameter.RefKind != RefKind.None)
             {
-                var lvalue = LValue(argument.Value);
-                bound.Add(new BoundByRefArg { Lvalue = lvalue, Kind = parameter.RefKind, Type = lvalue.Type });
+                var lvalue = parameter.RefKind == RefKind.In
+                    ? LowerExpr(argument.Value)
+                    : LValue(argument.Value);
+                value = new BoundByRefArg { Lvalue = lvalue, Kind = parameter.RefKind, Type = lvalue.Type };
             }
             else
             {
-                bound.Add(LowerExpr(argument.Value));
+                value = argument is { ArgumentKind: ArgumentKind.ParamArray, Value: IArrayCreationOperation array }
+                    ? LowerArray(array, isParams: true)
+                    : LowerExpr(argument.Value);
             }
+
+            bound.Add(ordinal == i ? value : new BoundNamedArgument { Ordinal = ordinal, Value = value, Type = value.Type });
         }
 
         return bound;

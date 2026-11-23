@@ -140,7 +140,7 @@ The rule covers virtual/interface generic methods, exception filters
 lambdas, local functions, `async`/`await`, `yield`, LINQ, pattern matching,
 interpolated strings, `default`, top-level statements,
 attributes, expression-bodied members, `sealed`/`partial`/`readonly`/`const`,
-`params`, optional and named arguments, `base.` access, and the struct
+`base.` access and the struct
 restrictions listed in the [Language reference](language-reference.md#structs).
 Unsupported constructs also include `GC.ReRegisterForFinalize`
 and a value-type argument to `GC.SuppressFinalize`, which would need boxing. A bad Unicode escape is Roslyn's

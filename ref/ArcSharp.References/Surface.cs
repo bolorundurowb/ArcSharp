@@ -85,6 +85,11 @@ namespace System
             | Delegate | ReturnValue | GenericParameter
     }
 
+    // Roslyn attaches this attribute to the compiler-generated parameter array metadata.
+    public sealed class ParamArrayAttribute : Attribute
+    {
+    }
+
     public sealed class AttributeUsageAttribute : Attribute
     {
         public AttributeUsageAttribute(AttributeTargets validOn)

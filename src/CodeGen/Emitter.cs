@@ -1913,28 +1913,56 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         return result;
     }
 
-    private List<string> EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins)
+    private string[] EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins)
     {
-        var argVals = new List<string>();
+        var argVals = new string[args.Count];
         for (var i = 0; i < args.Count; i++)
         {
             var a = args[i];
-            var p = i < parameters.Count ? parameters[i] : null;
+            var ordinal = i;
+            if (a is BoundNamedArgument named)
+            {
+                ordinal = named.Ordinal;
+                a = named.Value;
+            }
+
+            var p = ordinal < parameters.Count ? parameters[ordinal] : null;
             if (p != null && p.RefKind != RefKind.None && a is BoundByRefArg bra)
             {
-                var addr = EmitManagedAddress(bra.Lvalue, pins);
-                argVals.Add($"{p.Type.LlvmType}* {addr}");
+                var addr = bra.Kind == RefKind.In ? EmitInAddress(bra.Lvalue, pins) : EmitManagedAddress(bra.Lvalue, pins);
+                argVals[ordinal] = $"{p.Type.LlvmType}* {addr}";
             }
             else
             {
                 var v = EmitR(a);
                 TrackReferenceTemp(a, v);
 
-                argVals.Add($"{a.Type.LlvmType} {v}");
+                argVals[ordinal] = $"{a.Type.LlvmType} {v}";
             }
         }
 
         return argVals;
+    }
+
+    private string EmitInAddress(BoundExpr value, List<string> pins)
+    {
+        if (value is BoundLocal or BoundParam or BoundFieldAccess or BoundIndex or BoundThis { Type.Kind: TypeKind.Struct })
+        {
+            return EmitManagedAddress(value, pins);
+        }
+
+        var result = EmitR(value);
+        if (value.Type.Kind == TypeKind.Struct)
+        {
+            return result;
+        }
+
+        TrackReferenceTemp(value, result);
+        var address = T();
+        var type = value.Type.LlvmType;
+        _entry.Add($"  {address} = alloca {type}");
+        Do($"store {type} {result}, {type}* {address}");
+        return address;
     }
 
     private void TrackReferenceTemp(BoundExpr expression, string value)
@@ -2016,7 +2044,32 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var elemTi = a.ElementType.Kind == TypeKind.Class
             ? $"%TypeInfo* @{a.ElementType.Name}__ti"
             : "%TypeInfo* null";
-        return Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef}, {elemTi}, i8* {SiteOperand(a.Site)})");
+        var array = Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef}, {elemTi}, i8* {SiteOperand(a.Site)})");
+        if (a.Initializers.Count == 0)
+        {
+            return array;
+        }
+
+        var tracked = _stmtTemps.Count;
+        _stmtTemps.Add(array);
+        for (var i = 0; i < a.Initializers.Count; i++)
+        {
+            var element = EmitR(a.Initializers[i]);
+            var address = ElemAddr(array, i.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                a.ElementType, checkBounds: false);
+            if (a.ElementType.IsReferenceType)
+            {
+                Do($"call void @arc_assign_take(i8** {address}, i8* {element})");
+            }
+            else
+            {
+                var type = a.ElementType.LlvmType;
+                Do($"store {type} {element}, {type}* {address}");
+            }
+        }
+
+        UntrackInFlight(tracked);
+        return array;
     }
 
     private string ElemAddr(string arr, string idx, TypeSymbol elem, bool checkBounds = true)

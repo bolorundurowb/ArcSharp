@@ -424,7 +424,18 @@ public static class DefiniteAssignment
 
                     break;
 
-                case BoundNewArray na: VisitExpr(na.Size, assigned); break;
+                case BoundNamedArgument argument:
+                    VisitExpr(argument.Value, assigned);
+                    break;
+
+                case BoundNewArray na:
+                    VisitExpr(na.Size, assigned);
+                    foreach (var initializer in na.Initializers)
+                    {
+                        VisitExpr(initializer, assigned);
+                    }
+
+                    break;
                 case BoundIndex ix: VisitExpr(ix.Receiver, assigned); VisitExpr(ix.Index, assigned); break;
                 case BoundBinary b: VisitExpr(b.Left, assigned); VisitExpr(b.Right, assigned); break;
                 case BoundUnary u: VisitExpr(u.Operand, assigned); break;

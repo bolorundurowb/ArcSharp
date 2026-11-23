@@ -221,8 +221,9 @@ can use an expression body (`=> expr`).
 
 Not supported yet: `sealed`, `partial`, static constructors, types nested in
 generic types, expression-bodied properties and accessors,
-properties with accessor bodies, get-only auto-properties, indexers, operator
-overloading, extension methods, `params`, and optional or named arguments.
+properties with accessor bodies, get-only auto-properties, indexers, overloaded updates and extension
+methods. Method and constructor calls accept
+named arguments, optional defaults and `params T[]`.
 
 Access modifiers are accepted but **not enforced**. Code in one class can read
 another class's `private` field.
