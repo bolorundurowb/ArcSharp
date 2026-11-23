@@ -254,6 +254,137 @@ void arc_weak_release(void* p) {
     }
 }
 
+/* ---- exceptions ------------------------------------------------------- */
+/* An exception in flight is the one reference held in arc_exception, and it
+   counts as an owned (+1) reference. Compiled code never unwinds the stack.
+   After a call or a runtime check that can fail, it loads arc_exception and
+   leaves through its cleanup code when the value is not null. That is how
+   every unwind path runs the same releases, and the same finalisers, as a
+   normal exit. A catch block takes the reference out of the global, and the
+   code that handles a failure inside a finaliser or at the top of Main
+   releases it.
+
+   The language raises exceptions without running a constructor. The class of
+   System.Exception keeps its message in the first field, at offset 24, and
+   the classes the runtime raises are registered by the compiled program in the
+   order of the ARC_EXC_* values below. */
+void* arc_exception = 0;
+
+enum {
+    ARC_EXC_NULL_REFERENCE,
+    ARC_EXC_INDEX_OUT_OF_RANGE,
+    ARC_EXC_INVALID_CAST,
+    ARC_EXC_DIVIDE_BY_ZERO,
+    ARC_EXC_OVERFLOW,
+    ARC_EXC_ARRAY_TYPE_MISMATCH,
+    ARC_EXC_KIND_COUNT
+};
+
+#define ARC_EXC_MESSAGE_OFFSET 24
+
+static TypeInfo** g_exc_types = 0;
+static intptr_t g_exc_count = 0;
+
+void arc_release(void* p);
+static void* arc_str_new(const char* data, intptr_t len, const char* site);
+
+void arc_set_exception_types(TypeInfo** types, intptr_t count) {
+    g_exc_types = types;
+    g_exc_count = count;
+}
+
+void arc_throw(void* ex);
+
+static void arc_raise(int kind, const char* message) {
+    TypeInfo* type = (g_exc_types && kind < g_exc_count) ? g_exc_types[kind] : 0;
+    void* ex;
+    if (!type) {
+        fprintf(stderr, "RuntimeError: %s\n", message);
+        arc_report();
+        exit(70);
+    }
+    ex = arc_alloc(type, "<runtime>");
+    *(void**)((char*)ex + ARC_EXC_MESSAGE_OFFSET) = arc_str_new(message, (intptr_t)strlen(message), "<runtime>");
+    arc_throw(ex);
+}
+
+/* Takes the caller's reference. Throwing null raises NullReferenceException. */
+void arc_throw(void* ex) {
+    if (!ex) {
+        arc_raise(ARC_EXC_NULL_REFERENCE, "Object reference not set to an instance of an object.");
+        return;
+    }
+    if (arc_exception) {
+        void* old = arc_exception;
+        arc_exception = 0;
+        arc_release(old);
+    }
+    arc_exception = ex;
+}
+
+/* Prints "Type: message", the form used for an unhandled exception and for one
+   that escaped a finaliser. */
+static void arc_print_exception(void* ex) {
+    ObjHeader* h = (ObjHeader*)ex;
+    void* message = *(void**)((char*)ex + ARC_EXC_MESSAGE_OFFSET);
+    const char* name = (h->type && h->type->name) ? h->type->name : "?";
+    if (message) {
+        fprintf(stderr, "%s: %s\n", name, (const char*)message + 32);
+    } else {
+        fprintf(stderr, "%s\n", name);
+    }
+}
+
+/* Called when Main returns with an exception in flight. The reference is
+   released first so the accounting line still shows a balanced program. */
+void arc_unhandled(void) {
+    void* ex = arc_exception;
+    arc_exception = 0;
+    fputs("Unhandled exception. ", stderr);
+    arc_print_exception(ex);
+    arc_release(ex);
+    arc_report();
+    exit(70);
+}
+
+/* A finaliser that throws is reported and then ignored: the exception does not
+   reach the code that released the last reference, and teardown carries on. */
+void arc_finaliser_exception(void* self) {
+    void* ex = arc_exception;
+    ObjHeader* h = (ObjHeader*)self;
+    if (!ex) return;
+    arc_exception = 0;
+    fprintf(stderr, "[arc] exception in finaliser of %s ignored: ",
+            (h && h->type && h->type->name) ? h->type->name : "?");
+    arc_print_exception(ex);
+    arc_release(ex);
+}
+
+void arc_null_check(void* p) {
+    if (!p) {
+        arc_raise(ARC_EXC_NULL_REFERENCE, "Object reference not set to an instance of an object.");
+    }
+}
+
+void arc_cast_check(void* obj, TypeInfo* target) {
+    char message[256];
+    if (!obj || arc_is_instance(obj, target)) return;
+    snprintf(message, sizeof message, "Unable to cast object of type '%s' to type '%s'.",
+             ((ObjHeader*)obj)->type->name, target->name);
+    arc_raise(ARC_EXC_INVALID_CAST, message);
+}
+
+/* Integer division and remainder. bits is 0 for an unsigned operation, which
+   can only fail on a zero divisor, and 32 or 64 for a signed one, which can
+   also overflow. The operands arrive widened to 64 bits. */
+void arc_div_check(long long a, long long b, int bits) {
+    if (b == 0) {
+        arc_raise(ARC_EXC_DIVIDE_BY_ZERO, "Attempted to divide by zero.");
+    } else if (b == -1 && ((bits == 32 && a == INT32_MIN) || (bits == 64 && a == INT64_MIN))) {
+        arc_raise(ARC_EXC_OVERFLOW, "Arithmetic operation resulted in an overflow.");
+    }
+}
+
 /* ---- destruction ------------------------------------------------------ */
 /* An object whose strong count reached zero goes through three steps: its user
    finalisers, the generated teardown that releases its fields, and the drop of
@@ -290,10 +421,18 @@ void arc_report(void);
    is about to be freed. */
 static void run_finalisers(ObjHeader* h) {
     TypeInfo* t = h->type;
+    void* outer;
     if (!t || !t->finalizer || (h->weak & ARC_FLAG_NO_FINALISE)) return;
+    /* A release can happen while an exception is in flight, on an unwind path.
+       The finaliser must not see that exception as its own, so it is set aside
+       and put back afterwards. */
+    outer = arc_exception;
+    arc_exception = 0;
     h->weak |= ARC_FLAG_FINALISING;
     h->strong = 1;
     t->finalizer(h);
+    arc_finaliser_exception(h);
+    arc_exception = outer;
     if (--h->strong != 0) {
         fprintf(stderr, "ResurrectionException: a finaliser of %s kept a reference to the object it was finalising\n",
                 t->name ? t->name : "?");
@@ -408,23 +547,32 @@ void* arc_array_new(intptr_t length, int isRef, TypeInfo* elemType, const char* 
 intptr_t arc_array_length(void* p) { return p ? *(intptr_t*)((char*)p + 24) : 0; }
 static TypeInfo* arc_array_elem_type(void* p) { return p ? *(TypeInfo**)((char*)p + 32) : 0; }
 
-void arc_bounds_check(void* arr, intptr_t i) {
-    intptr_t len = arc_array_length(arr);
-    if (i < 0 || i >= len) {
-        fprintf(stderr, "IndexOutOfRangeException: index %lld, length %lld\n", (long long)i, (long long)len);
-        arc_report();
-        exit(70);
+/* Raises NullReferenceException or IndexOutOfRangeException and returns 0 when
+   the access is not valid. The compiled code checks arc_exception afterwards. */
+static int arc_in_bounds(void* arr, intptr_t i) {
+    if (!arr) {
+        arc_raise(ARC_EXC_NULL_REFERENCE, "Object reference not set to an instance of an object.");
+        return 0;
     }
+    if (i < 0 || i >= arc_array_length(arr)) {
+        arc_raise(ARC_EXC_INDEX_OUT_OF_RANGE, "Index was outside the bounds of the array.");
+        return 0;
+    }
+    return 1;
+}
+
+void arc_bounds_check(void* arr, intptr_t i) {
+    arc_in_bounds(arr, i);
 }
 
 void arc_array_store_check(void* arr, intptr_t i, void* value) {
-    arc_bounds_check(arr, i);
-    TypeInfo* elem = arc_array_elem_type(arr);
+    TypeInfo* elem;
+    if (!arc_in_bounds(arr, i)) return;
+    elem = arc_array_elem_type(arr);
     if (!value || !elem) return;
     if (!arc_is_instance(value, elem)) {
-        fprintf(stderr, "ArrayTypeMismatchException: cannot store object in array of %s\n", elem->name);
-        arc_report();
-        exit(70);
+        arc_raise(ARC_EXC_ARRAY_TYPE_MISMATCH,
+                  "Attempted to access an element as a type incompatible with the array.");
     }
 }
 

@@ -134,6 +134,10 @@ public sealed class BoundAssign : BoundExpr
 public sealed class BoundConversion : BoundExpr
 {
     public required BoundExpr Operand; // e.g. int -> long, or reference upcast/downcast
+
+    // An explicit reference cast to a class. The emitter tests the runtime type
+    // and raises InvalidCastException when the operand is not an instance.
+    public bool CastCheck;
 }
 
 public sealed class BoundIs : BoundExpr
@@ -242,6 +246,28 @@ public sealed class BoundUsing : BoundStmt
     public bool DisposeInterface;
     public bool DisposeVirtual;
     public int DisposeSelector = -1;
+}
+
+// 'throw value;' or, when Value is null, 'throw;' inside a catch block.
+public sealed class BoundThrow : BoundStmt
+{
+    public BoundExpr? Value;
+}
+
+// One catch clause. ExceptionType is null for a clause that catches everything.
+public sealed class BoundCatch
+{
+    public TypeSymbol? ExceptionType;
+    public LocalSymbol? Variable;
+    public required BoundBlock Body;
+}
+
+// try/catch/finally. Catches and Finally are each optional, but not both empty.
+public sealed class BoundTry : BoundStmt
+{
+    public required BoundBlock Body;
+    public List<BoundCatch> Catches = [];
+    public BoundBlock? Finally;
 }
 
 public sealed class BoundMethodBody

@@ -205,12 +205,47 @@ sealed partial class RoslynLowering
         },
         IForLoopOperation loop => LowerFor(loop),
         IUsingOperation usingOperation => LowerUsing(usingOperation),
+        ITryOperation tryOperation => LowerTry(tryOperation),
+        IThrowOperation thrown => new BoundThrow
+        {
+            Value = thrown.Exception == null ? null : LowerExpr(thrown.Exception)
+        },
         IReturnOperation returned => new BoundReturn
         {
             Value = returned.ReturnedValue == null ? null : LowerExpr(returned.ReturnedValue)
         },
         _ => UnsupportedStmt(operation)
     };
+
+    private BoundStmt LowerTry(ITryOperation operation)
+    {
+        var bound = new BoundTry
+        {
+            Body = LowerBlock(operation.Body),
+            Finally = operation.Finally == null ? null : LowerBlock(operation.Finally)
+        };
+        foreach (var clause in operation.Catches)
+        {
+            // A clause without a type is reported as System.Object, and every
+            // thrown value derives from Exception, so Exception catches all.
+            var type = MapType(clause.ExceptionType, clause.Syntax.GetLocation());
+            var catchesAll = type == _object || type.Name == "System.Exception";
+            LocalSymbol? variable = null;
+            if (clause.ExceptionDeclarationOrExpression is IVariableDeclaratorOperation declarator)
+            {
+                variable = Local(declarator.Symbol);
+            }
+
+            bound.Catches.Add(new BoundCatch
+            {
+                ExceptionType = catchesAll ? null : type,
+                Variable = variable,
+                Body = LowerBlock(clause.Handler)
+            });
+        }
+
+        return bound;
+    }
 
     private BoundBlock LowerBlock(IBlockOperation block)
     {
@@ -948,7 +983,13 @@ sealed partial class RoslynLowering
             return value;
         }
 
-        return new BoundConversion { Operand = value, Type = type };
+        // An explicit reference conversion can fail at run time. A cast to an
+        // interface stays unchecked, because only classes have a type descriptor
+        // the runtime can test against.
+        var castCheck = conversion.Conversion is { IsReference: true, IsImplicit: false }
+            && type.Kind == BoundKind.Class
+            && type != _object;
+        return new BoundConversion { Operand = value, Type = type, CastCheck = castCheck };
     }
 
     private BoundExpr LowerAssignment(ISimpleAssignmentOperation assignment)

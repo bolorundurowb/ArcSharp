@@ -81,6 +81,13 @@ public sealed class LifetimeAnalysis
                 };
             }
 
+            // A finally block runs after the return value is stored, and it can
+            // still read the local. Moving the local's reference into the return
+            // slot would leave it null there, so a return inside a try keeps
+            // its ordinary read.
+            var returnsInTry = nodes.OfType<BoundTry>().SelectMany(statement => Walk(statement))
+                .OfType<BoundReturn>().ToHashSet();
+
             foreach (var node in nodes)
             {
                 switch (node)
@@ -101,7 +108,8 @@ public sealed class LifetimeAnalysis
                         }
 
                         break;
-                    case BoundReturn { Value: BoundLocal local } when stableReads.Contains(local):
+                    case BoundReturn { Value: BoundLocal local } returned
+                        when stableReads.Contains(local) && !returnsInTry.Contains(returned):
                         result._moves.Add(local);
                         result._ownership[local] = ReferenceOwnership.Owned;
                         break;
@@ -262,6 +270,8 @@ public sealed class LifetimeAnalysis
         BoundFor loop => [loop.Init, loop.Condition, loop.Body, loop.Update],
         BoundReturn statement => [statement.Value],
         BoundUsing scope => [scope.ResourceInit, scope.Body],
+        BoundThrow statement => [statement.Value],
+        BoundTry statement => [statement.Body, .. statement.Catches.Select(clause => clause.Body), statement.Finally],
         BoundByRefArg argument => [argument.Lvalue],
         BoundFieldAccess field => [field.Receiver],
         BoundCall call => [call.Receiver, .. call.Arguments],
