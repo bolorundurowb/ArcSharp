@@ -482,6 +482,10 @@ Classes inherit interfaces through their base class and through base interface
 lists. Both implicit and explicit implementations dispatch through native
 interface slots. See [Base interfaces](features/base-interfaces.md).
 
+### Delegates
+
+A `delegate` declaration, generic or not, creates a delegate type. A method group converts to it, and `+`, `-`, `+=`, `-=`, `==` and `!=` work on delegates, as does `?.Invoke(...)`. A multicast call returns the value of its last handler. The delegate holds its target strongly. `System.Action`, `System.Func` and `System.Predicate<T>` are available. A method group or a lambda can be the handler. See [Delegates](features/delegates.md) for the limits, including that `ARC3100` cannot see a cycle that runs through a method-group delegate.
+
 ## Expressions and operators
 
 User-defined unary, binary and conversion operators work with supported
@@ -511,16 +515,19 @@ and `>>>=`. String storage accepts `+=` for supported concatenation operands.
 The `??` operator can select a fallback for a nullable value or a reference.
 A nullable value also accepts compound assignment, `++` and `--`, user-defined lifted operators, and boxing when it is a nullable struct. A nullable primitive still cannot be boxed.
 `decimal` supports the arithmetic, comparison, increment and conversion operators, including on `decimal?`.
-Not supported: `??=`, `?.`, `typeof`, `sizeof`,
+The null-conditional operator `?.` works on a reference receiver when the result is a reference or the expression is a statement, such as `handler?.Invoke(1);`.
+Not supported: `??=`, `?.` with a value result, `typeof`, `sizeof`,
 `nameof`, anonymous types, tuples, tuple and indexer patterns, collection initialisers, object initialisers on structs, and
 interpolated strings (`$"..."`).
 
 ### Lambdas
 
-Expression and block lambdas can target non-generic, source-declared delegates
-with by-value parameters and results. A lambda can capture an initialised
+Expression and block lambdas can target any delegate type in the program,
+generic or not, and `System.Action`, `System.Func` and `System.Predicate<T>`.
+Their parameters and results are by value. A lambda can capture an initialised
 ordinary local, a by-value parameter, or a class receiver. Captured variables
-are shared and remain available after the method returns. See
+are shared and remain available after the method returns. A lambda creates a
+delegate, so it combines and compares like any other. See
 [Lambdas and captures](features/lambdas.md) for the current restrictions.
 
 ### Conversions
@@ -594,8 +601,8 @@ items that target marks as full and items it marks as limited.
 - Generic features outside the subset described under [Generics](#generics).
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
-- Delegates and events. Record structs, generic records, and records with a struct or array member are also rejected.
-- Nested and async lambdas, anonymous methods, local functions, `async`, `await`, and iterators.
+- Events, and delegates bound to library methods or to struct instance methods. Record structs, generic records, and records with a struct or array member are also rejected.
+- Nested or async lambdas, lambdas with `ref` parameters or results, anonymous methods, local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
   counts are not atomic.

@@ -70,7 +70,7 @@ and threads are not targets.
 | Classes, structs, records | Full | Classes, structs, and record classes. Record structs and generic records are rejected. | [Shipped](#where-we-are) | Ordinary C# semantics, including the member forms, statements, and operators that come with them. |
 | Interfaces, inheritance | Full | Single inheritance, transitive base interfaces, virtual tables, and interface tables. | [Shipped](#where-we-are) | Native dispatch tables. |
 | Generics | Full | Monomorphisation, inference, virtual and interface generic methods, static abstract members, variance, and constraints. | [Shipped](#where-we-are) | Each closed type is specialised ahead of time. A single shared representation for all type arguments is not the plan. |
-| Delegates, events | Full | Single-cast invocation for source-declared lambda delegates. Other delegate creation and events are pending. | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
+| Delegates, events | Full | Single and multicast delegates over method groups and lambdas, with captures, and `Action`, `Func` and `Predicate<T>`. Events are rejected (`ARC3001`). | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
 | LINQ | Full | Rejected. | [M8](#m8--core-library-iterators-and-linq) | A library written against delegates, generics, iterators, and the core collections. Query syntax lowers to those methods. |
 | `async` / `await` | Full | Rejected. | [M9](#m9--async-and-await) | A state machine whose suspended locals follow the ARC rules. Continuations run on one thread. |
 | Exceptions | Full | `try`, `catch`, `finally`, `throw`, and a small `System` exception library. Exception filters and throw expressions are rejected. | [Shipped](#where-we-are) | Every unwind path releases live references. Finalisation and `using` both run on that path. |
@@ -138,6 +138,7 @@ results are in [Verification](verification.md).
   handles very deep graphs, and rejected resurrection. See
   [Deterministic finalisers](features/finalisers.md).
 - The M6 ordinary C# surface. Statements, operators, member forms, enums, struct storage and calls, patterns, generics with virtual and static abstract members, record classes, object initialisers, nullable values with boxing and updates, and `decimal`. See [Records](features/records.md), [Object initialisers](features/object-initialisers.md), [Generic dispatch](features/generic-dispatch.md), [Nullable values](features/nullable-values.md) and [Decimal](features/decimal.md).
+- M7, first chunk: delegates. Single and multicast delegates over method groups, with `+`, `-`, `==`, `?.Invoke` and the `Action`, `Func` and `Predicate<T>` types. Lambdas, closures, local functions and events are the remaining M7 chunks. See [Delegates](features/delegates.md).
 - The M5 exceptions. `try`, `catch`, `finally`, and `throw`, a small `System`
   exception library, `using` disposal while unwinding, runtime checks that
   raise catchable exceptions, an unhandled-exception exit with code 70, and a
@@ -445,13 +446,18 @@ lists it as supported.
 **Goal.** Delegates, lambdas, local functions, and events, with captures as
 ordinary ARC objects.
 
+**Status.** Steps 1 and 2 are done. Single and multicast delegates over method
+groups and lambdas are described in [Delegates](features/delegates.md) and
+[Lambdas and captures](features/lambdas.md). Steps 3, 4 and 5 remain, and the
+milestone is not finished, so the benchmark comparison is not re-run yet.
+
 **Steps.**
 
-1. [Lambda lowering](features/lambdas.md) now uses shared ARC capture cells
-   and owns captured receivers. Nested lambdas and local functions are pending.
-2. Single-cast lambda invocation uses an existing virtual slot. Method-group
-   delegates and multicast invocation are pending. Caching non-capturing
-   lambda instances is a later optimisation.
+1. [Lambda lowering](features/lambdas.md) uses shared ARC capture cells and
+   owns captured receivers. Nested lambdas and local functions are pending.
+2. Lambdas and method groups are delegates with a handler list, so they share
+   single-cast and multicast invocation, combine, remove and equality. Caching
+   non-capturing lambda instances is a later optimisation.
 3. Add events as delegate fields with `add` and `remove` accessors.
 4. Teach the lifetime pass that a capture is an escape unless it is proved not
    to outlive the frame.

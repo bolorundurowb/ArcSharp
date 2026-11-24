@@ -250,6 +250,7 @@ the symbols, and the runtime.
 | Array | Length at 24, element `TypeInfo*` at 32, elements at 40 in 8-byte slots |
 | String | Length at 24, UTF-8 bytes at 32, NUL-terminated |
 | `WeakReference<T>` | One weak slot at 24 |
+| Delegate | One handler node: target at 24, function address at 32, next node at 40. A multicast delegate is an immutable list of nodes |
 
 `TypeInfo` has eleven fields: name, instance size, deinit, vtable, vtable
 length, itable, itable length, base, strong-slot metadata, slot count, and
@@ -460,8 +461,8 @@ The [compatibility target](docs/roadmap.md#compatibility-target) is the language
 - Record structs, generic records, records with a struct or array member,
   collection initialisers, and object initialisers on structs (`ARC3001`)
 - Boxing a primitive, an enum or a nullable primitive, and `??=` (`ARC3001`)
-- Delegates and events (`ARC3001`)
-- Lambdas, closures, local functions, `async`, `await`, iterators, and LINQ
+- Events (`ARC3001`). Delegates over method groups and lambdas work. A delegate cannot bind to a library method or a struct instance method (`ARC3001`), and a lambda cannot take a `ref` or `out` parameter (`ARC3001`)
+- Anonymous methods, nested or `async` lambdas, local functions, `async`, `await`, iterators, and LINQ
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, `WeakReference<T>`,

@@ -94,8 +94,7 @@ reclaimed.
 - `try`, `catch`, `finally`, and `throw`, with a small `System` exception
   library. Every unwind path releases the references it owns, and the runtime
   checks (null reference, index, cast, division) raise catchable exceptions.
-- Synchronous lambdas targeting source-declared delegates, with ARC-managed
-  captures and single-cast invocation.
+- Synchronous lambdas with captured variables, and delegates over method groups and lambdas, single and multicast, with `+`, `-`, `==`, `?.Invoke`, and `System.Action`, `Func` and `Predicate<T>`.
 - Cycle breaking with the standard `System.WeakReference<T>`.
 - Finalisers (`~T()`) that run at the last strong release, derived class
   before base, with `GC.SuppressFinalize`. Resurrection is rejected.
@@ -106,7 +105,7 @@ reclaimed.
 - A Roslyn analyser in `analyzers/ArcSharp.Analyzers` that reports the same
   `ARC3001`, `ARC3100` and `ARC3200` rules inside an ordinary `dotnet build`.
 
-Exception filters, events, multicast delegates, and the .NET class
+Exception filters, events, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
 has the full list, the differences from .NET, and the known issues. The
 [compatibility target](docs/roadmap.md#compatibility-target) is the language
@@ -138,10 +137,10 @@ workload recorded 9,200,856 retains and 10,601,216 releases per run.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 79 sample programs pass the test
-harness on Windows x64. The harness also runs four leak-report checks, 55
+executable, with ARC accounting) works, and 86 sample programs pass the test
+harness on Windows x64. The harness also runs four leak-report checks, 58
 must-fail diagnostics, two run-time abort checks, three command-line checks,
-cycle and `ARC3200` checks, and 74 analyser unit tests. The
+cycle and `ARC3200` checks, and 84 analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See
 [Verification](docs/verification.md) for the latest results.
 

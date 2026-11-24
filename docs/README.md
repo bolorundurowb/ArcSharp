@@ -70,6 +70,7 @@ before you rely on it for anything beyond experiments.
 - [Decimal](features/decimal.md)
 - [Constant-label switch statements](features/switch-statement.md)
 - [Lambdas and captures](features/lambdas.md)
+- [Delegates](features/delegates.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo
