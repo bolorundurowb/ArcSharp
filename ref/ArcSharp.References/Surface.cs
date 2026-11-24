@@ -82,8 +82,21 @@ namespace System
     {
     }
 
+    // Every delegate type derives from MulticastDelegate. The compiler lowers a
+    // delegate declaration itself. Roslyn names Combine and Remove when it emits
+    // '+=' and '-=', so they exist here, but a program that calls them directly
+    // is rejected, because the compiler lowers the operators on its own.
     public abstract class Delegate
     {
+        public static Delegate Combine(Delegate a, Delegate b)
+        {
+            return a;
+        }
+
+        public static Delegate Remove(Delegate source, Delegate value)
+        {
+            return source;
+        }
     }
 
     public abstract class MulticastDelegate : Delegate

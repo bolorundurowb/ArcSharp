@@ -14,9 +14,8 @@
 // The check is about types, not object graphs. It warns on a binary tree's
 // self-typed field, which does not leak unless an instance is later wired
 // into a loop, and it cannot see a cycle that only exists at run time through
-// a base-typed or interface-typed field. A lambda delegate has a closed set of
-// generated implementations, so its graph includes those capture paths.
-// The runtime [arc] line remains the
+// a base-typed or interface-typed field. A lambda's closure is followed through
+// its captured variables and receiver. The runtime [arc] line remains the
 // evidence either way.
 namespace ArcSharp.Binding;
 
@@ -32,8 +31,12 @@ public static class CycleAnalysis
         var edges = new Dictionary<TypeSymbol, List<TypeSymbol>>();
         foreach (var c in classes)
         {
-            edges[c] = c.IsLambdaDelegate
-                ? classes.Where(candidate => candidate.BaseType == c).ToList()
+            // A delegate's target is typed as object, so the graph cannot follow it.
+            // A lambda's closure is the only target the compiler knows, so the edges
+            // run through the closures that the delegate creates. A method group has
+            // no closure and therefore no outgoing edge.
+            edges[c] = c.IsDelegate
+                ? classes.Where(candidate => candidate.LambdaDelegate == c).ToList()
                 : StrongTargets(c, names);
         }
 

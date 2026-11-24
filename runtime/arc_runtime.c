@@ -1062,6 +1062,113 @@ void* arc_load_weak(void** slot) {
     return h;
 }
 
+/* ---- delegates -------------------------------------------------------- */
+/* A delegate is an immutable list of nodes. Each node has the layout the
+   emitter gives a delegate type: the target at offset 24, the function at 32,
+   and the next node at 40. A node is never changed after it is built, so a
+   list can share its tail with another list. Combining and removing build new
+   lists and leave the old ones alone. Every function here returns an owned (+1)
+   reference, or null for an empty list. */
+typedef struct DelegateNode {
+    ObjHeader            header;
+    void*                target;   /* owned (+1) reference, or null for a static method */
+    intptr_t             function;
+    struct DelegateNode* next;     /* owned (+1) reference */
+} DelegateNode;
+
+static DelegateNode** delegate_nodes(DelegateNode* list, size_t* count) {
+    size_t n = 0, i = 0;
+    DelegateNode* node;
+    DelegateNode** nodes;
+    for (node = list; node; node = node->next) n++;
+    nodes = (DelegateNode**)malloc((n ? n : 1) * sizeof(DelegateNode*));
+    if (!nodes) {
+        fprintf(stderr, "OutOfMemoryException: cannot read an invocation list\n");
+        exit(70);
+    }
+    for (node = list; node; node = node->next) nodes[i++] = node;
+    *count = n;
+    return nodes;
+}
+
+/* Copies nodes[0..count) in front of tail, which is an owned reference that
+   the new list takes over. */
+static DelegateNode* delegate_copy_onto(DelegateNode** nodes, size_t count, DelegateNode* tail) {
+    while (count > 0) {
+        DelegateNode* source = nodes[--count];
+        DelegateNode* copy = (DelegateNode*)arc_alloc(source->header.type, 0);
+        arc_retain(source->target);
+        copy->target = source->target;
+        copy->function = source->function;
+        copy->next = tail;
+        tail = copy;
+    }
+    return tail;
+}
+
+static int delegate_same_node(const DelegateNode* a, const DelegateNode* b) {
+    return a->target == b->target && a->function == b->function;
+}
+
+void* arc_delegate_combine(void* first, void* second) {
+    size_t count;
+    DelegateNode** nodes;
+    DelegateNode* result;
+    if (!first) { arc_retain(second); return second; }
+    if (!second) { arc_retain(first); return first; }
+    nodes = delegate_nodes((DelegateNode*)first, &count);
+    arc_retain(second);
+    result = delegate_copy_onto(nodes, count, (DelegateNode*)second);
+    free(nodes);
+    return result;
+}
+
+/* Removes the last occurrence of the value's list from the source's list. A
+   source that does not contain it is returned as it is. */
+void* arc_delegate_remove(void* source, void* value) {
+    size_t sourceCount, valueCount, start, k;
+    DelegateNode** sourceNodes;
+    DelegateNode** valueNodes;
+    DelegateNode* tail;
+    DelegateNode* result;
+    int found = 0;
+    if (!source || !value) { arc_retain(source); return source; }
+    sourceNodes = delegate_nodes((DelegateNode*)source, &sourceCount);
+    valueNodes = delegate_nodes((DelegateNode*)value, &valueCount);
+    start = valueCount <= sourceCount ? sourceCount - valueCount + 1 : 0;
+    while (!found && start > 0) {
+        start--;
+        found = 1;
+        for (k = 0; k < valueCount && found; k++) {
+            found = delegate_same_node(sourceNodes[start + k], valueNodes[k]);
+        }
+    }
+    if (!found) {
+        arc_retain(source);
+        result = (DelegateNode*)source;
+    } else {
+        /* The nodes after the removed run are untouched, so the new list shares them. */
+        tail = start + valueCount < sourceCount ? sourceNodes[start + valueCount] : 0;
+        arc_retain(tail);
+        result = delegate_copy_onto(sourceNodes, start, tail);
+    }
+    free(sourceNodes);
+    free(valueNodes);
+    return result;
+}
+
+int arc_delegate_equal(void* a, void* b) {
+    DelegateNode* x = (DelegateNode*)a;
+    DelegateNode* y = (DelegateNode*)b;
+    while (x && y) {
+        if (x == y) return 1;
+        if (!delegate_same_node(x, y)) return 0;
+        x = x->next;
+        y = y->next;
+    }
+    return x == y;
+}
+
 /* ---- arrays ---------------------------------------------------------- */
 static void arc_array_ref_deinit(void* p) {
     intptr_t len = *(intptr_t*)((char*)p + 24);

@@ -39,11 +39,22 @@ public sealed class TypeSymbol
     public bool LayoutDone;
     public bool LayoutInProgress;
     public bool IsAbstract;
-    public bool IsLambdaDelegate;
+    // The delegate type that a lambda closure implements the call of, when this
+    // type is such a closure.
+    public TypeSymbol? LambdaDelegate;
     public int DeclarationLine;
     public string SourceFile = "";
     public string? GenericDefinition;
     public List<TypeSymbol> TypeArguments = [];
+
+    // A delegate type is a class whose instances are immutable invocation
+    // lists: each node holds a target, a function, and the next node. Invoke
+    // walks the list in order. Delegate fields hold the three slots.
+    public bool IsDelegate;
+    public FieldSymbol? DelegateTarget;
+    public FieldSymbol? DelegateFunction;
+    public FieldSymbol? DelegateNext;
+    public MethodSymbol? DelegateInvoke;
 
     // array
     public TypeSymbol? ElementType;

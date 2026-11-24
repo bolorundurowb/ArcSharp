@@ -251,6 +251,8 @@ sealed partial class RoslynLowering
         IVariableDeclarationGroupOperation group => LowerDeclarations(group),
         IExpressionStatementOperation { Operation: IDeconstructionAssignmentOperation deconstruction } =>
             new BoundExprStmt { Expression = LowerDeconstruction(deconstruction) },
+        IExpressionStatementOperation { Operation: IConditionalAccessOperation access } =>
+            LowerConditionalAccessStatement(access),
         IExpressionStatementOperation statement => new BoundExprStmt { Expression = LowerExpr(statement.Operation) },
         IConditionalOperation ifOperation => new BoundIf
         {
@@ -613,7 +615,6 @@ sealed partial class RoslynLowering
         IFieldReferenceOperation field => LowerField(field),
         IPropertyReferenceOperation property => LowerProperty(property),
         IInvocationOperation invocation => LowerInvocation(invocation),
-        IDelegateCreationOperation creation => LowerLambda(creation),
         IObjectCreationOperation creation => LowerCreation(creation),
         IWithOperation with => LowerWith(with),
         ITypeParameterObjectCreationOperation { Initializer: not null } creation => UnsupportedExpr(creation),
@@ -642,6 +643,9 @@ sealed partial class RoslynLowering
             ? ErrorExpr()
             : DefaultValue(value.Type, value.Syntax.GetLocation()),
         IDeclarationExpressionOperation declaration => LowerExpr(declaration.Expression),
+        IDelegateCreationOperation creation => LowerDelegateCreation(creation),
+        IConditionalAccessOperation access => LowerConditionalAccess(access),
+        IConditionalAccessInstanceOperation => _accessReceivers.Peek()(),
         _ => UnsupportedExpr(operation)
     };
 
@@ -840,11 +844,6 @@ sealed partial class RoslynLowering
     private BoundExpr LowerInvocation(IInvocationOperation call)
     {
         var target = call.TargetMethod;
-        if (target.MethodKind == MethodKind.DelegateInvoke)
-        {
-            return LowerLambdaInvocation(call);
-        }
-
         if (IsConsole(target))
         {
             return LowerConsole(call);
@@ -1274,18 +1273,15 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerBinary(IBinaryOperation binary)
     {
-        if (binary.Type?.TypeKind == RoslynKind.Delegate
-            || (binary.LeftOperand.Type?.TypeKind == RoslynKind.Delegate
-                || binary.RightOperand.Type?.TypeKind == RoslynKind.Delegate)
-                && binary.LeftOperand.ConstantValue is not { HasValue: true, Value: null }
-                && binary.RightOperand.ConstantValue is not { HasValue: true, Value: null })
-        {
-            return UnsupportedExpr(binary);
-        }
-
         if (binary.IsLifted || IsNullableSymbol(binary.LeftOperand.Type) || IsNullableSymbol(binary.RightOperand.Type))
         {
             return LowerLiftedBinary(binary);
+        }
+
+        if (binary.OperatorMethod == null
+            && (IsDelegateType(binary.LeftOperand.Type) || IsDelegateType(binary.RightOperand.Type)))
+        {
+            return LowerDelegateBinary(binary);
         }
 
         // Roslyn gives the built-in decimal operators no method of their own.
@@ -1439,6 +1435,11 @@ sealed partial class RoslynLowering
             var lifted = (IsNullableSymbol(conversion.Type) && !IsNullableSymbol(method.ReturnType))
                 || (IsNullableSymbol(conversion.Operand.Type) && !IsNullableSymbol(method.Parameters[0].Type));
             return lifted ? LowerLiftedConversion(conversion, method) : LowerOperator(conversion, method, conversion.Operand);
+        }
+
+        if (conversion.Operand is IMethodReferenceOperation reference)
+        {
+            return NewDelegate(MapType(conversion.Type, conversion.Syntax.GetLocation()), reference, conversion.Syntax);
         }
 
         if (conversion.IsTryCast)
@@ -1707,11 +1708,6 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerCompound(ICompoundAssignmentOperation assignment)
     {
-        if (assignment.Type?.TypeKind == RoslynKind.Delegate)
-        {
-            return UnsupportedExpr(assignment);
-        }
-
         var target = LowerUpdateTarget(assignment.Target);
         if (target == null)
         {
@@ -1741,6 +1737,11 @@ sealed partial class RoslynLowering
         {
             return LowerOperatorUpdate(assignment, target, method, LowerExpr(assignment.Value), false,
                 assignment.IsChecked, assignment.InConversion, assignment.OutConversion);
+        }
+
+        if (target.Type.IsDelegate && assignment.OperatorKind is BinaryOperatorKind.Add or BinaryOperatorKind.Subtract)
+        {
+            return LowerDelegateCompound(assignment, target);
         }
 
         if (target.Type == _string && assignment.OperatorKind == BinaryOperatorKind.Add)
