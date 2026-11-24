@@ -459,8 +459,7 @@ Two lists. The first is inherent in the memory model. The second is inside the
   queue.   `GC.Collect` and `GC.WaitForPendingFinalizers` are no-ops that report info
   `ARC3200`. `GC.ReRegisterForFinalize` is rejected. User finalisers are
   accepted. See [Deterministic finalisers](features/finalisers.md).
-- **`async`/`await` and delegates.** Both are in the [compatibility target](roadmap.md#compatibility-target). A capture or a suspended local is an ARC-managed object. Strong captures stay strong. They wait until the lifetime pass and finalisers exist, because each one creates a lifetime the current emitter does not have.
-- **Closures / lambda capture.** Captured variables become heap closure objects. Capturing `this` can form a cycle, which `ARC3100` warns about and which remains legal. Closures are the lowering for delegates, and they wait with the rest of that target.
+- **Lambda captures.** Shared capture cells and lambda implementations are ordinary ARC objects. A source delegate is represented by an abstract type with an `Invoke` slot. The generated implementation owns its capture cells and any captured receiver. The cycle graph follows delegate fields to their generated implementations. See [Lambdas and captures](features/lambdas.md).
 
 - **Interior references.** Calls pin the heap owner of a managed reference for
   the duration of the call. Ref locals, ref returns, and heap-backed spans
@@ -472,7 +471,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 
 - **Remaining generic gaps.** Types nested in generic types, generic interface methods on structs, and generic `static abstract` methods are `ARC3001`. Virtual, abstract and interface generic methods dispatch through one selector for each closed instantiation, and static abstract members resolve to the concrete type at compile time. Closed types stay specialised. See [generic dispatch](features/generic-dispatch.md).
 - **Reflection, `dynamic`, and `unsafe`.** Limited, as that table says. Reflection is emitted metadata. `dynamic` binds only to members this compiler can lower. A pointer must not outlive the proved lifetime of the object it addresses.
-- **Delegates, events, LINQ, and `Span<T>`.** Specified in the target table. None of them is accepted yet.
+- **Multicast delegates, events, LINQ, and `Span<T>`.** These are still pending in the compatibility target.
 - **Struct forms still rejected.** Using a struct resource and self-containing structs are `ARC3001`. They belong to the full struct row.
 - **Record gaps.** Record structs, generic records, and records with a struct or array member are `ARC3001`. Record classes, `with`, deconstruction and object initialisers on classes are built. See [records](features/records.md).
 - **Nullable and `decimal` gaps.** Boxing a nullable primitive and `??=` are `ARC3001`. `decimal` has no parsing, rounding methods or format strings. See [nullable values](features/nullable-values.md) and [decimal](features/decimal.md).
@@ -495,6 +494,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Binder: classes, inheritance, fields, methods, statics | Implemented                           |
 | Type checking (core)                                   | Implemented (lightweight)             |
 | Base interface lists and explicit implementations       | Transitive interface slots with inherited virtual overrides |
+| Lambdas | Shared ARC-managed captures and single-cast invocation |
 | Virtual / override dispatch (vtables)                  | Implemented                           |
 | ARC: retain/release/deinit, statement & scope cleanup  | Implemented                           |
 | `WeakReference<T>` fields, locals, and generic arguments | Implemented |
@@ -515,7 +515,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Roslyn and ArcSharp diagnostics with codes and severities | Implemented                        |
 | `ARC3001` unsupported-construct diagnostics            | Implemented (compiler and analyser)   |
 | `ARC3100` possible strong-cycle warning                 | Implemented (compiler and analyser)   |
-| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (74 xUnit cases)          |
+| Roslyn analyser + unit tests (`analyzers/`)            | Implemented (78 xUnit cases)          |
 | Multi-file compilation (merged type declarations)      | Implemented                           |
 | Definite-assignment analysis (conservative, warns)     | Implemented                           |
 | Field initialisers                                     | Implemented for instance and static fields |

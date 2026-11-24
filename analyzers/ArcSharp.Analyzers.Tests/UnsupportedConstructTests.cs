@@ -14,7 +14,7 @@ public sealed class UnsupportedConstructTests
         { "exception filter", "class C { static void Main() { try { } catch (System.Exception e) when (e != null) { } } }" },
         { "throw expression", "class C { static int Main() { int x = 1; return x > 0 ? x : throw new System.Exception(); } }" },
         { "lock", "class C { static void Main() { object o = new object(); lock (o) { } } }" },
-        { "lambda", "class C { static void Main() { System.Func<int, int> f = x => x + 1; } }" },
+        { "anonymous method", "class C { static void Main() { System.Func<int, int> f = delegate(int x) { return x + 1; }; } }" },
         { "query", "class C { static void Main() { int[] xs = new int[1]; var q = from x in xs select x; } }" },
         { "list pattern", "class C { public int Length => 1; public int this[int i] => i; static bool Test(C value) => value is [1]; }" },
         { "list switch expression", "class C { public int Length => 1; public int this[int i] => i; static int Test(C value) => value switch { [1] => 2, _ => 3 }; }" },
@@ -25,7 +25,9 @@ public sealed class UnsupportedConstructTests
         { "struct object initializer", "struct S { public int X; } class C { static void Main() { S s = new S { X = 1 }; } }" },
         { "collection initializer", "class B : System.Collections.IEnumerable { public void Add(int x) { } public System.Collections.IEnumerator GetEnumerator() { return null; } } class C { static void Main() { B b = new B { 1 }; } }" },
         { "attribute", "[System.Obsolete] class C { }" },
-        { "delegate", "delegate void D(); class C { }" },
+        { "generic delegate", "delegate void D<T>(T value); class C { }" },
+        { "method group delegate", "delegate void D(); class C { static void M() { D d = M; } }" },
+        { "framework lambda", "class C { static void M() { System.Func<int> f = () => 1; } }" },
         { "record struct", "record struct R(int X); class C { }" },
         { "generic record", "record R<T>(T X); class C { }" },
         { "local function", "class C { static void Main() { void F() { } F(); } }" },
@@ -47,6 +49,7 @@ public sealed class UnsupportedConstructTests
 
     public static TheoryData<string, string> SupportedSources => new()
     {
+        { "lambda capture", "delegate int D(); class C { static int M(int x) { D d = () => ++x; return d(); } }" },
         { "generic class", "class Box<T> where T : class { public T Value; }" },
         { "generic method", "class C { static T Identity<T>(T value) { return value; } }" },
         { "generic interface and struct", "interface IValue<T> { T Get(); } struct Pair<T> { public T Item; public int Tag; }" },

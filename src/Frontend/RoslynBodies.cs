@@ -26,6 +26,7 @@ sealed partial class RoslynLowering
         _currentMethod = method;
         _methodLocals = [];
         _locals.Clear();
+        _captureCells.Clear();
         _localId = 0;
         var saved = new Dictionary<ITypeSymbol, TypeSymbol>(_substitution, SymbolEqualityComparer.Default);
         _substitution.Clear();
@@ -42,6 +43,11 @@ sealed partial class RoslynLowering
 
         var block = new BoundBlock();
         var syntax = roslyn.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+        if (syntax != null)
+        {
+            PrepareCaptures(syntax, block);
+        }
+
         var synthesised = TryLowerRecordBody(method, roslyn, block);
         if (!synthesised && (roslyn.MethodKind == MethodKind.StaticConstructor
             || (method.IsConstructor && syntax is not ConstructorDeclarationSyntax { Initializer.ThisOrBaseKeyword.RawKind: (int)SyntaxKind.ThisKeyword })))
@@ -339,6 +345,11 @@ sealed partial class RoslynLowering
     private BoundLocalDecl LowerDeclarator(IVariableDeclaratorOperation declarator)
     {
         var initialiser = declarator.Initializer == null ? null : LowerExpr(declarator.Initializer.Value);
+        if (!_inLambda && _captureCells.TryGetValue(declarator.Symbol, out var cell) && initialiser != null)
+        {
+            return InitialiseCapture(cell, initialiser);
+        }
+
         var local = Local(declarator.Symbol);
         return new BoundLocalDecl { Symbol = local, Initializer = initialiser };
     }
@@ -598,10 +609,11 @@ sealed partial class RoslynLowering
         ILocalReferenceOperation local => LocalRef(local.Local),
         IParameterReferenceOperation parameter => ParameterRef(parameter.Parameter),
         IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ImplicitReceiver } => _initialiserTargets.Peek(),
-        IInstanceReferenceOperation => new BoundThis { Type = _currentType },
+        IInstanceReferenceOperation => SourceReceiver(),
         IFieldReferenceOperation field => LowerField(field),
         IPropertyReferenceOperation property => LowerProperty(property),
         IInvocationOperation invocation => LowerInvocation(invocation),
+        IDelegateCreationOperation creation => LowerLambda(creation),
         IObjectCreationOperation creation => LowerCreation(creation),
         IWithOperation with => LowerWith(with),
         ITypeParameterObjectCreationOperation { Initializer: not null } creation => UnsupportedExpr(creation),
@@ -717,6 +729,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr LocalRef(ILocalSymbol symbol)
     {
+        if (CaptureReference(symbol) is { } capture)
+        {
+            return capture;
+        }
+
         var local = Local(symbol);
         return new BoundLocal { Symbol = local, Type = local.Type };
     }
@@ -739,8 +756,13 @@ sealed partial class RoslynLowering
         return created;
     }
 
-    private BoundExpr ParameterRef(IParameterSymbol parameter)
+    private BoundExpr ParameterRef(IParameterSymbol parameter, bool useCapture = true)
     {
+        if (useCapture && CaptureReference(parameter) is { } capture)
+        {
+            return capture;
+        }
+
         var symbol = _currentMethod.Parameters.FirstOrDefault(candidate => candidate.Index == parameter.Ordinal)
             ?? _currentMethod.Parameters.FirstOrDefault(candidate => candidate.Name == parameter.Name);
         if (symbol == null)
@@ -770,7 +792,7 @@ sealed partial class RoslynLowering
         if (!field.IsStatic)
         {
             receiver = operation.Instance == null
-                ? new BoundThis { Type = _currentType }
+                ? SourceReceiver()
                 : LowerExpr(operation.Instance);
         }
 
@@ -809,7 +831,7 @@ sealed partial class RoslynLowering
         BoundExpr? instance = null;
         if (!getter.IsStatic)
         {
-            instance = operation.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(operation.Instance);
+            instance = operation.Instance == null ? SourceReceiver() : LowerExpr(operation.Instance);
         }
 
         return BindMemberCall(instance, getter, LowerArguments(operation.Arguments, getter));
@@ -818,6 +840,11 @@ sealed partial class RoslynLowering
     private BoundExpr LowerInvocation(IInvocationOperation call)
     {
         var target = call.TargetMethod;
+        if (target.MethodKind == MethodKind.DelegateInvoke)
+        {
+            return LowerLambdaInvocation(call);
+        }
+
         if (IsConsole(target))
         {
             return LowerConsole(call);
@@ -862,7 +889,7 @@ sealed partial class RoslynLowering
         BoundExpr? receiver = null;
         if (!method.IsStatic)
         {
-            receiver = call.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(call.Instance);
+            receiver = call.Instance == null ? SourceReceiver() : LowerExpr(call.Instance);
         }
 
         return BindMemberCall(receiver, method, LowerArguments(call.Arguments, method));
@@ -1247,6 +1274,15 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerBinary(IBinaryOperation binary)
     {
+        if (binary.Type?.TypeKind == RoslynKind.Delegate
+            || (binary.LeftOperand.Type?.TypeKind == RoslynKind.Delegate
+                || binary.RightOperand.Type?.TypeKind == RoslynKind.Delegate)
+                && binary.LeftOperand.ConstantValue is not { HasValue: true, Value: null }
+                && binary.RightOperand.ConstantValue is not { HasValue: true, Value: null })
+        {
+            return UnsupportedExpr(binary);
+        }
+
         if (binary.IsLifted || IsNullableSymbol(binary.LeftOperand.Type) || IsNullableSymbol(binary.RightOperand.Type))
         {
             return LowerLiftedBinary(binary);
@@ -1552,7 +1588,7 @@ sealed partial class RoslynLowering
             Type = field.Type,
             Field = field,
             Receiver = field.IsStatic ? null : property.Instance == null
-                ? new BoundThis { Type = _currentType }
+                ? SourceReceiver()
                 : LowerExpr(property.Instance)
         };
     }
@@ -1587,7 +1623,7 @@ sealed partial class RoslynLowering
         if (!getter.IsStatic)
         {
             receiver = Hold(property.Instance == null
-                ? new BoundThis { Type = _currentType }
+                ? SourceReceiver()
                 : LowerExpr(property.Instance));
         }
 
@@ -1671,6 +1707,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerCompound(ICompoundAssignmentOperation assignment)
     {
+        if (assignment.Type?.TypeKind == RoslynKind.Delegate)
+        {
+            return UnsupportedExpr(assignment);
+        }
+
         var target = LowerUpdateTarget(assignment.Target);
         if (target == null)
         {
@@ -1876,7 +1917,7 @@ sealed partial class RoslynLowering
         BoundExpr? receiver = null;
         if (!setter.IsStatic)
         {
-            receiver = property.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(property.Instance);
+            receiver = property.Instance == null ? SourceReceiver() : LowerExpr(property.Instance);
         }
 
         var arguments = LowerArguments(property.Arguments, setter);

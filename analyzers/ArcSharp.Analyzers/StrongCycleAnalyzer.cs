@@ -1,9 +1,12 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using ArcSharp.Diagnostics;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace ArcSharp.Analyzers;
 
@@ -29,10 +32,17 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
     {
         context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
         context.EnableConcurrentExecution();
-        context.RegisterCompilationAction(Analyze);
+        context.RegisterCompilationStartAction(start =>
+        {
+            var captures = new ConcurrentBag<(INamedTypeSymbol Delegate, ITypeSymbol Capture)>();
+            start.RegisterOperationAction(operation => CollectCaptures(operation, captures), OperationKind.DelegateCreation);
+            start.RegisterCompilationEndAction(end => Analyze(end, captures));
+        });
     }
 
-    private static void Analyze(CompilationAnalysisContext context)
+    private static void Analyze(
+        CompilationAnalysisContext context,
+        ConcurrentBag<(INamedTypeSymbol Delegate, ITypeSymbol Capture)> captures)
     {
         var classes = new List<INamedTypeSymbol>();
         Collect(context.Compilation.Assembly.GlobalNamespace, classes);
@@ -42,6 +52,14 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
         foreach (var c in classes)
         {
             bySymbol[c] = StrongTargets(c, known);
+        }
+
+        foreach (var (type, capture) in captures)
+        {
+            if (bySymbol.TryGetValue(type, out var targets))
+            {
+                AddTarget(capture, known, targets, new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default));
+            }
         }
 
         foreach (var scc in StronglyConnected(classes, bySymbol))
@@ -93,12 +111,46 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
             }
             else if (member is INamedTypeSymbol type)
             {
-                if (type.TypeKind == TypeKind.Class && !type.IsImplicitlyDeclared)
+                if (type.TypeKind is TypeKind.Class or TypeKind.Delegate && !type.IsImplicitlyDeclared)
                 {
                     into.Add(type);
                 }
 
                 Collect(type, into);
+            }
+        }
+    }
+
+    private static void CollectCaptures(
+        OperationAnalysisContext context,
+        ConcurrentBag<(INamedTypeSymbol Delegate, ITypeSymbol Capture)> captures)
+    {
+        if (context.Operation is not IDelegateCreationOperation
+            {
+                Type: INamedTypeSymbol type,
+                Target: IAnonymousFunctionOperation { Syntax: LambdaExpressionSyntax syntax } lambda
+            }
+            || lambda.Symbol.IsAsync || syntax.Ancestors().Any(node => node is LambdaExpressionSyntax)
+            || !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, context.Compilation.Assembly))
+        {
+            return;
+        }
+
+        foreach (var operation in lambda.Body.DescendantsAndSelf())
+        {
+            var capturedType = operation switch
+            {
+                ILocalReferenceOperation local when !local.Local.IsConst
+                    && !SymbolEqualityComparer.Default.Equals(local.Local.ContainingSymbol, lambda.Symbol) => local.Type,
+                IParameterReferenceOperation parameter
+                    when !SymbolEqualityComparer.Default.Equals(parameter.Parameter.ContainingSymbol, lambda.Symbol) => parameter.Type,
+                IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance } =>
+                    lambda.Symbol.ContainingType,
+                _ => null
+            };
+            if (capturedType != null)
+            {
+                captures.Add((type, capturedType));
             }
         }
     }
@@ -128,41 +180,35 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
                 continue;
             }
 
-            var target = field.Type;
-            if (target is IArrayTypeSymbol array)
-            {
-                target = array.ElementType;
-            }
+            AddTarget(field.Type, known, into, visitedStructs);
+        }
+    }
 
-            if (target is not INamedTypeSymbol named)
-            {
-                continue;
-            }
+    private static void AddTarget(
+        ITypeSymbol target,
+        HashSet<INamedTypeSymbol> known,
+        List<INamedTypeSymbol> into,
+        HashSet<INamedTypeSymbol> visitedStructs)
+    {
+        if (target is IArrayTypeSymbol array)
+        {
+            target = array.ElementType;
+        }
 
-            if (named.TypeKind == TypeKind.Struct)
-            {
-                if (visitedStructs.Add(named))
-                {
-                    CollectTargets(named, known, into, visitedStructs);
-                }
+        if (target is not INamedTypeSymbol named)
+        {
+            return;
+        }
 
-                continue;
-            }
+        if (named.TypeKind == TypeKind.Struct && visitedStructs.Add(named))
+        {
+            CollectTargets(named, known, into, visitedStructs);
+        }
 
-            if (named.TypeKind != TypeKind.Class)
-            {
-                continue;
-            }
-
-            if (IsWeakReference(named) || !known.Contains(named))
-            {
-                continue;
-            }
-
-            if (!into.Contains(named, SymbolEqualityComparer.Default))
-            {
-                into.Add(named);
-            }
+        if (known.Contains(named) && !IsWeakReference(named)
+            && !into.Contains(named, SymbolEqualityComparer.Default))
+        {
+            into.Add(named);
         }
     }
 

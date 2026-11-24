@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace ArcSharp.Analyzers;
 
@@ -34,6 +35,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             SyntaxKind.CasePatternSwitchLabel, SyntaxKind.SwitchExpressionArm);
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterOperationAction(AnalyzeBoxingConversion, OperationKind.Conversion);
+        context.RegisterOperationAction(AnalyzeDelegateCreation, OperationKind.DelegateCreation);
+        context.RegisterSyntaxNodeAction(AnalyzeDelegateDeclaration, SyntaxKind.DelegateDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
         context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration, SyntaxKind.IndexerDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeArrayType, SyntaxKind.ArrayType);
@@ -56,8 +59,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.FixedStatement,
         SyntaxKind.StackAllocArrayCreationExpression,
         SyntaxKind.ImplicitStackAllocArrayCreationExpression,
-        SyntaxKind.SimpleLambdaExpression,
-        SyntaxKind.ParenthesizedLambdaExpression,
         SyntaxKind.AnonymousMethodExpression,
         SyntaxKind.BaseExpression,
         SyntaxKind.QueryExpression,
@@ -76,7 +77,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleType,
         SyntaxKind.GlobalStatement,
         SyntaxKind.AttributeList,
-        SyntaxKind.DelegateDeclaration,
         SyntaxKind.EventDeclaration,
         SyntaxKind.EventFieldDeclaration,
         SyntaxKind.RecordStructDeclaration,
@@ -155,6 +155,35 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
+    private static void AnalyzeDelegateCreation(OperationAnalysisContext context)
+    {
+        var creation = (IDelegateCreationOperation)context.Operation;
+        if (creation.Target is not IAnonymousFunctionOperation { Syntax: LambdaExpressionSyntax } lambda
+            || lambda.Symbol.IsAsync || lambda.Syntax.Ancestors().Any(node => node is LambdaExpressionSyntax)
+            || creation.Type is not INamedTypeSymbol type
+            || !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, context.Compilation.Assembly)
+            || !SupportsDelegateSignature(type))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, creation.Syntax.GetLocation(),
+                "only non-nested synchronous lambdas targeting non-generic source delegates with by-value signatures are supported"));
+        }
+    }
+
+    private static void AnalyzeDelegateDeclaration(SyntaxNodeAnalysisContext context)
+    {
+        if (context.SemanticModel.GetDeclaredSymbol((DelegateDeclarationSyntax)context.Node) is INamedTypeSymbol type
+            && !SupportsDelegateSignature(type))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, context.Node.GetLocation(),
+                "lambda delegates require a non-generic source declaration and a by-value signature"));
+        }
+    }
+
+    private static bool SupportsDelegateSignature(INamedTypeSymbol type) =>
+        !type.IsGenericType && type.ContainingType?.IsGenericType != true
+        && type.DelegateInvokeMethod is { ReturnsByRef: false, ReturnsByRefReadonly: false } invoke
+        && invoke.Parameters.All(parameter => parameter.RefKind == RefKind.None);
+
     private static void AnalyzeBoxingConversion(OperationAnalysisContext context)
     {
         var operation = (Microsoft.CodeAnalysis.Operations.IConversionOperation)context.Operation;
@@ -213,8 +242,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.FixedStatement => "'fixed' is not supported",
         SyntaxKind.StackAllocArrayCreationExpression or SyntaxKind.ImplicitStackAllocArrayCreationExpression =>
             "'stackalloc' is not supported",
-        SyntaxKind.SimpleLambdaExpression or SyntaxKind.ParenthesizedLambdaExpression or SyntaxKind.AnonymousMethodExpression =>
-            "lambdas ('=>') are not supported",
+        SyntaxKind.AnonymousMethodExpression => "anonymous methods are not supported",
         SyntaxKind.BaseExpression =>
             "'base' member access is not supported: inherited members are called by name",
         SyntaxKind.QueryExpression => "LINQ is not supported",
@@ -235,7 +263,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleExpression or SyntaxKind.TupleType => "tuples are not supported",
         SyntaxKind.GlobalStatement => "top-level statements are not supported: declare a class with 'static void Main()'",
         SyntaxKind.AttributeList => "attributes are not supported",
-        SyntaxKind.DelegateDeclaration => "delegates are not supported",
         SyntaxKind.EventDeclaration or SyntaxKind.EventFieldDeclaration => "events are not supported",
         SyntaxKind.RecordStructDeclaration => "record structs are not supported: declare a record class",
         SyntaxKind.LocalFunctionStatement => "local functions are not supported",

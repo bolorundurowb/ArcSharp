@@ -77,8 +77,11 @@ namespace System
     {
     }
 
-    // Roslyn asks for these predefined types while binding operators such as
-    // char equality. They are not a supported language feature.
+    // Roslyn needs these predefined types to bind source delegates.
+    public struct IntPtr
+    {
+    }
+
     public abstract class Delegate
     {
     }

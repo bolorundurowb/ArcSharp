@@ -160,7 +160,7 @@ tests.
 ## Next steps
 
 - Read the [Language reference](language-reference.md) to see which C# features
-  you can use. Many common ones, such as `foreach`, `++`, and lambdas, are not
+  you can use. Several constructs, including events and local functions, are not
   supported yet.
 - Read the [Memory model](memory-model.md) before you write classes that refer
   to each other.
