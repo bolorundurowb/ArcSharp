@@ -512,8 +512,16 @@ The `??` operator can select a fallback for a nullable value or a reference.
 A nullable value also accepts compound assignment, `++` and `--`, user-defined lifted operators, and boxing when it is a nullable struct. A nullable primitive still cannot be boxed.
 `decimal` supports the arithmetic, comparison, increment and conversion operators, including on `decimal?`.
 Not supported: `??=`, `?.`, `typeof`, `sizeof`,
-`nameof`, lambdas, anonymous types, tuples, tuple and indexer patterns, collection initialisers, object initialisers on structs, and
+`nameof`, anonymous types, tuples, tuple and indexer patterns, collection initialisers, object initialisers on structs, and
 interpolated strings (`$"..."`).
+
+### Lambdas
+
+Expression and block lambdas can target non-generic, source-declared delegates
+with by-value parameters and results. A lambda can capture an initialised
+ordinary local, a by-value parameter, or a class receiver. Captured variables
+are shared and remain available after the method returns. See
+[Lambdas and captures](features/lambdas.md) for the current restrictions.
 
 ### Conversions
 
@@ -587,7 +595,7 @@ items that target marks as full and items it marks as limited.
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
 - Delegates and events. Record structs, generic records, and records with a struct or array member are also rejected.
-- Lambdas, closures, local functions, `async`, `await`, and iterators.
+- Nested and async lambdas, anonymous methods, local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
   counts are not atomic.

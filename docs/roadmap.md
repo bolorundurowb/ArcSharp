@@ -70,7 +70,7 @@ and threads are not targets.
 | Classes, structs, records | Full | Classes, structs, and record classes. Record structs and generic records are rejected. | [Shipped](#where-we-are) | Ordinary C# semantics, including the member forms, statements, and operators that come with them. |
 | Interfaces, inheritance | Full | Single inheritance, transitive base interfaces, virtual tables, and interface tables. | [Shipped](#where-we-are) | Native dispatch tables. |
 | Generics | Full | Monomorphisation, inference, virtual and interface generic methods, static abstract members, variance, and constraints. | [Shipped](#where-we-are) | Each closed type is specialised ahead of time. A single shared representation for all type arguments is not the plan. |
-| Delegates, events | Full | Rejected (`ARC3001`). | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
+| Delegates, events | Full | Single-cast invocation for source-declared lambda delegates. Other delegate creation and events are pending. | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
 | LINQ | Full | Rejected. | [M8](#m8--core-library-iterators-and-linq) | A library written against delegates, generics, iterators, and the core collections. Query syntax lowers to those methods. |
 | `async` / `await` | Full | Rejected. | [M9](#m9--async-and-await) | A state machine whose suspended locals follow the ARC rules. Continuations run on one thread. |
 | Exceptions | Full | `try`, `catch`, `finally`, `throw`, and a small `System` exception library. Exception filters and throw expressions are rejected. | [Shipped](#where-we-are) | Every unwind path releases live references. Finalisation and `using` both run on that path. |
@@ -447,10 +447,11 @@ ordinary ARC objects.
 
 **Steps.**
 
-1. Lower a lambda or local function to a closure object that owns its captured
-   variables. Strong captures stay strong, including `this`.
-2. Add single and multicast delegates that hold a target reference and a
-   function pointer.
+1. [Lambda lowering](features/lambdas.md) now uses shared ARC capture cells
+   and owns captured receivers. Nested lambdas and local functions are pending.
+2. Single-cast lambda invocation uses an existing virtual slot. Method-group
+   delegates and multicast invocation are pending. Caching non-capturing
+   lambda instances is a later optimisation.
 3. Add events as delegate fields with `add` and `remove` accessors.
 4. Teach the lifetime pass that a capture is an escape unless it is proved not
    to outlive the frame.

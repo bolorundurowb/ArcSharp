@@ -59,6 +59,16 @@ public sealed class StrongCycleTests
     }
 
     [Fact]
+    public async Task Lambda_capture_can_close_a_cycle()
+    {
+        var d = await SingleWarning(
+            "delegate int Reader(); class Source { Reader read; int value; void Subscribe() { read = () => value; } }");
+
+        Assert.Contains("Source", d.GetMessage());
+        Assert.Contains("Reader", d.GetMessage());
+    }
+
+    [Fact]
     public async Task Weak_reference_breaks_a_cycle()
     {
         var diagnostics = await Analyze(

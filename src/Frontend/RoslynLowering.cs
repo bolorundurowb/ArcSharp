@@ -148,6 +148,8 @@ sealed partial class RoslynLowering
         program.Types.AddRange(_generic.Values);
         program.Types.AddRange(_structBoxes.Values.Select(field => field.Owner));
         program.Types.AddRange(_nullableTypes.Values);
+        program.Types.AddRange(_lambdaDelegates.Values);
+        program.Types.AddRange(_lambdaTypes);
         if (_decimal != null)
         {
             program.Types.Add(_decimal);
@@ -243,6 +245,11 @@ sealed partial class RoslynLowering
         if (named.TypeKind == RoslynKind.Error)
         {
             return _error;
+        }
+
+        if (named.TypeKind == RoslynKind.Delegate)
+        {
+            return MapLambdaDelegate(named, location);
         }
 
         if (named.SpecialType == SpecialType.System_Decimal)

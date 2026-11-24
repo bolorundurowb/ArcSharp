@@ -268,6 +268,8 @@ try {
     Invoke-Sample cycle_weakref "alloc=4 dead=4 freed=4 live=0" "done (WeakReference cycle)" @("cycle_weakref")
     Invoke-Sample weakref_get   "alloc=4 dead=4 freed=4 live=0" "PASS under ARC"             @("weakref_get")
     Invoke-Sample cycle_strong  "alloc=3 dead=1 freed=1 live=2" "done (strong cycle)"        @("cycle_strong")   # intentional leak without weak
+    Invoke-Sample lambdas       "alloc=10 dead=10 freed=10 live=0" "lambdas PASS"           @("lambdas")
+    Invoke-Sample lambda_cycle  "alloc=3 dead=1 freed=1 live=2" "lambda capture cycle"     @("lambda_cycle")
     Invoke-Sample cycle_struct  "alloc=3 dead=1 freed=1 live=2" "done (struct cycle)"        @("cycle_struct")   # strong cycle through an inline struct field
     Invoke-Sample multifile     "alloc=4 dead=4 freed=4 live=0" "twice=42"                   @("mf_main", "mf_lib")   # two source files compiled together
     Invoke-Sample numerics      "alloc=4 dead=4 freed=4 live=0" "18446744073709551615"                        @("numerics")             # byte/sbyte/short/ushort/uint/ulong
@@ -439,6 +441,8 @@ try {
 
     Write-Host "--- cycle analysis (ARC3100) ---"
     Invoke-Warns cycle_strong  "ARC3100" $true  @("cycle_strong")
+    Invoke-Warns lambda_cycle  "ARC3100" $true  @("lambda_cycle")
+    Invoke-Warns lambdas       "ARC3100" $false @("lambdas")
     Invoke-Warns cycle_struct  "ARC3100" $true  @("cycle_struct")
     Invoke-Warns cycle_weak    "ARC3100" $false @("cycle_weak")
     Invoke-Warns cycle_weakref "ARC3100" $false @("cycle_weakref")

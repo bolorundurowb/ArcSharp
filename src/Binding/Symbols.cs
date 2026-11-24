@@ -39,6 +39,7 @@ public sealed class TypeSymbol
     public bool LayoutDone;
     public bool LayoutInProgress;
     public bool IsAbstract;
+    public bool IsLambdaDelegate;
     public int DeclarationLine;
     public string SourceFile = "";
     public string? GenericDefinition;

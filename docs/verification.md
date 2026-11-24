@@ -28,15 +28,15 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (79 samples, Windows x64, 23 November 2026)
+## Results (81 samples, Windows x64, 24 November 2026)
 
-`tools\verify.ps1` reported **152 passed, 0 failed** with the .NET 11.0.100 SDK:
-79 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 55 must-fail
-diagnostics, 2 run-time abort checks, 3 command-line checks, 5 cycle checks,
+`tools\verify.ps1` reported **156 passed, 0 failed** with the .NET 11.0.100 SDK:
+81 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 55 must-fail
+diagnostics, 2 run-time abort checks, 3 command-line checks, 7 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests, and one
 reference-surface check. `live=0` means every object was reclaimed.
 `byref` allocates nothing because it uses only value types, and `numerics` allocates only the strings of one concatenation check.
-`cycle_strong`, `cycle_struct` and `finaliser_cycle` are the leaks the harness
+`cycle_strong`, `cycle_struct`, `finaliser_cycle` and `lambda_cycle` are the leaks the harness
 asserts on purpose.
 
 | Sample | Exercises | ARC accounting | Output |
@@ -52,6 +52,8 @@ asserts on purpose.
 | `cycle_weakref` | the same cycle, also broken with `WeakReference<T>` | alloc=4 dead=4 freed=4 **live=0** | `done (WeakReference cycle)` |
 | `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 freed=4 **live=0** | `false (PASS under ARC)` |
 | `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 freed=1 **live=2** | `done (strong cycle)` |
+| `lambdas` | Shared local and parameter capture, escaping receiver, static lambda and catchable null invocation | alloc=10 dead=10 freed=10 **live=0** | `lambdas PASS` |
+| `lambda_cycle` | A delegate field holds a lambda that captures the same receiver. `ARC3100` warns about the intentional leak | alloc=3 dead=1 freed=1 **live=2** | `lambda capture cycle` |
 | `cycle_struct` | a **strong** cycle that runs through an inline struct field | alloc=3 dead=1 freed=1 **live=2** | `done (struct cycle)` |
 | `multifile` | `mf_main.cs` and `mf_lib.cs` compiled together; `Greeter` is declared in one file and used from the other | alloc=4 dead=4 freed=4 **live=0** | `twice=42` |
 | `numerics` | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong`, unsigned arithmetic, casts, and the largest `ulong` printed by concatenation and by `Console.WriteLine` | alloc=4 dead=4 freed=4 **live=0** | `18446744073709551615` |

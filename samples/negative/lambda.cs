@@ -1,7 +1,10 @@
-// Expected: ARC3001 lambdas ('=>') are not supported.
-class Program {
-    static void Main() {
-        int x = 1;
-        System.Func<int, int> g = x => x + 1;
+// Expected: ARC3001 for an anonymous method.
+delegate int Handler(int value);
+class Program
+{
+    static void Main()
+    {
+        Handler handler = delegate(int value) { return value + 1; };
+        Console.WriteLine(handler(1));
     }
 }

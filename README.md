@@ -94,6 +94,8 @@ reclaimed.
 - `try`, `catch`, `finally`, and `throw`, with a small `System` exception
   library. Every unwind path releases the references it owns, and the runtime
   checks (null reference, index, cast, division) raise catchable exceptions.
+- Synchronous lambdas targeting source-declared delegates, with ARC-managed
+  captures and single-cast invocation.
 - Cycle breaking with the standard `System.WeakReference<T>`.
 - Finalisers (`~T()`) that run at the last strong release, derived class
   before base, with `GC.SuppressFinalize`. Resurrection is rejected.
@@ -104,7 +106,7 @@ reclaimed.
 - A Roslyn analyser in `analyzers/ArcSharp.Analyzers` that reports the same
   `ARC3001`, `ARC3100` and `ARC3200` rules inside an ordinary `dotnet build`.
 
-Exception filters, switch expressions, lambdas, and the .NET class
+Exception filters, events, multicast delegates, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
 has the full list, the differences from .NET, and the known issues. The
 [compatibility target](docs/roadmap.md#compatibility-target) is the language
