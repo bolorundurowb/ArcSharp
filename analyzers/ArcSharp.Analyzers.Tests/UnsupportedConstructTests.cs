@@ -1,5 +1,6 @@
 using ArcSharp.Diagnostics;
 using Microsoft.CodeAnalysis;
+using OmniAssert;
 using Xunit;
 
 namespace ArcSharp.Analyzers.Tests;
@@ -175,8 +176,8 @@ public sealed class UnsupportedConstructTests
         var reported = diagnostics
             .Where(d => d.Id == DiagnosticCatalog.UnsupportedConstructId)
             .ToList();
-        Assert.True(reported.Count >= 1, $"{name} reported no ARC3001 diagnostics");
-        Assert.Equal(DiagnosticSeverity.Error, reported[0].Severity);
+        Ensure.Must<Diagnostic>(reported).HaveCountGreaterThan(0, $"{name} reported no ARC3001 diagnostics");
+        Ensure.Must(reported[0].Severity).Be(DiagnosticSeverity.Error);
     }
 
     [Theory]
@@ -189,7 +190,7 @@ public sealed class UnsupportedConstructTests
             .Where(d => d.Id == DiagnosticCatalog.UnsupportedConstructId)
             .Select(d => d.GetMessage())
             .ToList();
-        Assert.True(reported.Count == 0, $"{name} reported: {string.Join("; ", reported)}");
+        Ensure.Must<string>(reported).HaveCount(0, $"{name} reported: {string.Join("; ", reported)}");
     }
 
     [Theory]
@@ -200,9 +201,10 @@ public sealed class UnsupportedConstructTests
         var diagnostics = await AnalyzerTestHost.AnalyzeAsync(
             new UnsupportedConstructAnalyzer(), $"class C {{ static void Main() {{ {call} }} }}");
 
-        var reported = Assert.Single(diagnostics, d => d.Id == DiagnosticCatalog.ArcClrDisagreementId);
-        Assert.Equal(DiagnosticSeverity.Info, reported.Severity);
-        Assert.Equal(message, reported.GetMessage());
+        var reported = diagnostics.Where(d => d.Id == DiagnosticCatalog.ArcClrDisagreementId).ToList();
+        Ensure.Must<Diagnostic>(reported).HaveCount(1);
+        Ensure.Must(reported[0].Severity).Be(DiagnosticSeverity.Info);
+        Ensure.Must(reported[0].GetMessage()).Be(message);
     }
 
     [Fact]
@@ -212,6 +214,6 @@ public sealed class UnsupportedConstructTests
             new UnsupportedConstructAnalyzer(),
             "class C { static void Main() { System.GC.SuppressFinalize(new C()); } }");
 
-        Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticCatalog.ArcClrDisagreementId);
+        Ensure.Must<Diagnostic>(diagnostics).NotContain(d => d.Id == DiagnosticCatalog.ArcClrDisagreementId);
     }
 }

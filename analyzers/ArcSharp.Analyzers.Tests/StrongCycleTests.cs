@@ -1,5 +1,6 @@
 using ArcSharp.Diagnostics;
 using Microsoft.CodeAnalysis;
+using OmniAssert;
 using Xunit;
 
 namespace ArcSharp.Analyzers.Tests;
@@ -12,10 +13,10 @@ public sealed class StrongCycleTests
     private static async Task<Diagnostic> SingleWarning(string source)
     {
         var diagnostics = await Analyze(source);
-        var reported = Assert.Single(
-            diagnostics.Where(d => d.Id == DiagnosticCatalog.PossibleStrongCycleId));
-        Assert.Equal(DiagnosticSeverity.Warning, reported.Severity);
-        return reported;
+        var reported = diagnostics.Where(d => d.Id == DiagnosticCatalog.PossibleStrongCycleId).ToList();
+        Ensure.Must<Diagnostic>(reported).HaveCount(1);
+        Ensure.Must(reported[0].Severity).Be(DiagnosticSeverity.Warning);
+        return reported[0];
     }
 
     [Fact]
@@ -24,8 +25,8 @@ public sealed class StrongCycleTests
         var d = await SingleWarning(
             "class A { public B b; } class B { public A a; } class Program { static void Main() { } }");
 
-        Assert.Contains("A", d.GetMessage());
-        Assert.Contains("B", d.GetMessage());
+        Ensure.Must(d.GetMessage()).Contain("A");
+        Ensure.Must(d.GetMessage()).Contain("B");
     }
 
     [Fact]
@@ -34,7 +35,7 @@ public sealed class StrongCycleTests
         var d = await SingleWarning(
             "class Node { public Node next; } class Program { static void Main() { } }");
 
-        Assert.Contains("Node", d.GetMessage());
+        Ensure.Must(d.GetMessage()).Contain("Node");
     }
 
     [Fact]
@@ -64,7 +65,7 @@ public sealed class StrongCycleTests
         var diagnostics = await Analyze(
             "class Node { public System.WeakReference<Node> next; } class Program { static void Main() { } }");
 
-        Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
+        Ensure.Must<Diagnostic>(diagnostics).NotContain(d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
     }
 
     [Fact]
@@ -73,7 +74,7 @@ public sealed class StrongCycleTests
         var diagnostics = await Analyze(
             "struct Link { public System.WeakReference<A> owner; } class A { public Link link; } class Program { static void Main() { } }");
 
-        Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
+        Ensure.Must<Diagnostic>(diagnostics).NotContain(d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
     }
 
     [Fact]
@@ -82,7 +83,7 @@ public sealed class StrongCycleTests
         var diagnostics = await Analyze(
             "class A { public B b; } class B { public int x; } class Program { static void Main() { } }");
 
-        Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
+        Ensure.Must<Diagnostic>(diagnostics).NotContain(d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
     }
 
     [Fact]
@@ -91,6 +92,6 @@ public sealed class StrongCycleTests
         var diagnostics = await Analyze(
             "struct Pair { public int a; public int b; } class Holder { public Pair p; } class Program { static void Main() { } }");
 
-        Assert.DoesNotContain(diagnostics, d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
+        Ensure.Must<Diagnostic>(diagnostics).NotContain(d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
     }
 }
