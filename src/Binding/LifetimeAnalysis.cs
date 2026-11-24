@@ -198,6 +198,7 @@ public sealed class LifetimeAnalysis
         var addressTargets = nodes.OfType<BoundAssign>().Select(assignment => assignment.Target).ToHashSet();
         addressTargets.UnionWith(nodes.OfType<BoundByRefArg>().Select(argument => argument.Lvalue));
         addressTargets.UnionWith(nodes.OfType<BoundWeakRefTryGet>().Select(get => get.OutTarget));
+        addressTargets.UnionWith(nodes.OfType<BoundDelegateCompound>().Select(compound => compound.Target));
 
         var reads = nodes.Select(node => node switch
         {
@@ -294,6 +295,7 @@ public sealed class LifetimeAnalysis
         BoundOperatorUpdate update => [update.Target, update.Result],
         BoundNumericCompound compound => [compound.Target, compound.Right],
         BoundStringCompound compound => [compound.Target, compound.Right],
+        BoundDelegateCompound compound => [compound.Target, compound.Right],
         BoundConversion conversion => [conversion.Operand],
         BoundIs test => [test.Operand],
         BoundUnbox unbox => [unbox.Operand],
@@ -308,7 +310,7 @@ public sealed class LifetimeAnalysis
         BoundLength length => [length.Receiver],
         BoundConsoleCall call => [call.Argument],
         BoundGcCall call => [call.Argument],
-        BoundLiteral or BoundLocal or BoundParam or BoundThis => [],
+        BoundLiteral or BoundLocal or BoundParam or BoundThis or BoundFunctionAddress => [],
         _ => throw new InvalidOperationException($"Missing lifetime traversal for {node.GetType().Name}")
     };
 }

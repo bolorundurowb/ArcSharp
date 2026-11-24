@@ -181,10 +181,6 @@ sealed partial class RoslynLowering
                 case SyntaxKind.RecordDeclaration when node is RecordDeclarationSyntax { TypeParameterList: not null }:
                     Reject(node, "generic records are not supported");
                     break;
-                case SyntaxKind.DelegateDeclaration when node is DelegateDeclarationSyntax declaration
-                    && _model.GetDeclaredSymbol(declaration) is INamedTypeSymbol symbol:
-                    _lowering.MapLambdaDelegate(symbol, node.GetLocation());
-                    break;
                 case SyntaxKind.EventDeclaration:
                 case SyntaxKind.EventFieldDeclaration:
                     Reject(node, "events are not supported");

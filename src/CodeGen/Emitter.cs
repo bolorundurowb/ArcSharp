@@ -185,6 +185,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             "declare i32 @arc_is_instance(i8*, %TypeInfo*)",
             "declare i32 @arc_has_interface(i8*, i64)",
             "declare void @arc_suppress_finalize(i8*)",
+            "declare i8* @arc_delegate_combine(i8*, i8*)",
+            "declare i8* @arc_delegate_remove(i8*, i8*)",
+            "declare i32 @arc_delegate_equal(i8*, i8*)",
             "declare void @arc_set_roots(i8***, i64)",
             "declare void @arc_report()",
             "declare void @arc_set_exception_types(%TypeInfo**, i64)",
@@ -639,9 +642,17 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         return $"%fp{n}";
     }
 
-    private static string FnPtrType(MethodSymbol m)
+    // The type of a pointer to the method's definition. An instance method
+    // takes its receiver first; a static method, such as a delegate thunk,
+    // already lists everything it takes.
+    private static string FnPtrType(MethodSymbol m, bool receiver = true)
     {
-        var ps = new List<string> { "i8*" };
+        var ps = new List<string>();
+        if (receiver)
+        {
+            ps.Add("i8*");
+        }
+
         foreach (var p in m.Parameters)
         {
             ps.Add(ParameterAbiType(p));
@@ -1658,6 +1669,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundOperatorUpdate update: return EmitOperatorUpdate(update);
             case BoundNumericCompound compound: return EmitNumericCompound(compound);
             case BoundStringCompound compound: return EmitStringCompound(compound);
+            case BoundDelegateCompound compound: return EmitDelegateCompound(compound);
+            case BoundFunctionAddress address:
+                return $"ptrtoint ({FnPtrType(address.Method, receiver: false)} @{address.Method.MangledName} to i64)";
             case BoundConversion cv: return EmitConversion(cv);
             case BoundIs i: return EmitIs(i);
             case BoundUnbox unbox: return EmitUnbox(unbox);
@@ -2017,19 +2031,36 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         string result;
 
-        if (c.Virtual || c.Interface)
+        if (c.ThroughDelegate || c.Virtual || c.Interface)
         {
-            var tip = Inst($"getelementptr i8, i8* {recv}, i64 16");
-            var tipp = Inst($"bitcast i8* {tip} to %TypeInfo**");
-            var ti = Inst($"load %TypeInfo*, %TypeInfo** {tipp}");
-            var tableField = c.Interface ? 5 : 3;
-            var slot = c.Interface ? c.Selector : m.VtableSlot;
-            var tabp = Inst($"getelementptr %TypeInfo, %TypeInfo* {ti}, i32 0, i32 {tableField}");
-            var tab = Inst($"load i8**, i8*** {tabp}");
-            var fpp = Inst($"getelementptr i8*, i8** {tab}, i64 {slot}");
-            var fp = Inst($"load i8*, i8** {fpp}");
-            var fn = Inst($"bitcast i8* {fp} to {FnPtrType(m)}");
-            var callArgs = string.Join(", ", new[] { $"i8* {recv}" }.Concat(argVals));
+            string fn;
+            var receiverArgument = recv;
+            if (c.ThroughDelegate)
+            {
+                // The node's target is the first argument of its function. The
+                // node keeps both alive for the whole call, so neither is retained.
+                var delegateType = c.Receiver!.Type;
+                var targetSlot = FieldAddr(recv!, delegateType, delegateType.DelegateTarget!);
+                receiverArgument = Inst($"load i8*, i8** {targetSlot}");
+                var functionSlot = FieldAddr(recv!, delegateType, delegateType.DelegateFunction!);
+                var function = Inst($"load i64, i64* {functionSlot}");
+                fn = Inst($"inttoptr i64 {function} to {FnPtrType(m)}");
+            }
+            else
+            {
+                var tip = Inst($"getelementptr i8, i8* {recv}, i64 16");
+                var tipp = Inst($"bitcast i8* {tip} to %TypeInfo**");
+                var ti = Inst($"load %TypeInfo*, %TypeInfo** {tipp}");
+                var tableField = c.Interface ? 5 : 3;
+                var slot = c.Interface ? c.Selector : m.VtableSlot;
+                var tabp = Inst($"getelementptr %TypeInfo, %TypeInfo* {ti}, i32 0, i32 {tableField}");
+                var tab = Inst($"load i8**, i8*** {tabp}");
+                var fpp = Inst($"getelementptr i8*, i8** {tab}, i64 {slot}");
+                var fp = Inst($"load i8*, i8** {fpp}");
+                fn = Inst($"bitcast i8* {fp} to {FnPtrType(m)}");
+            }
+
+            var callArgs = string.Join(", ", new[] { $"i8* {receiverArgument}" }.Concat(argVals));
             if (isVoid)
             {
                 Do($"call void {fn}({callArgs})");
@@ -2408,6 +2439,23 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
                 return Inst($"icmp {(b.Op == TokenKind.EqualsEquals ? "eq" : "ne")} i8* {l}, {r}");
             }
+            case BinKind.DelegateCombine:
+            case BinKind.DelegateRemove:
+            case BinKind.DelegateEq:
+            {
+                var l = EmitR(b.Left);
+                TrackReferenceTemp(b.Left, l);
+                var r = EmitR(b.Right);
+                TrackReferenceTemp(b.Right, r);
+                if (b.Kind == BinKind.DelegateEq)
+                {
+                    var equal = Inst($"call i32 @arc_delegate_equal(i8* {l}, i8* {r})");
+                    return Inst($"icmp {(b.Op == TokenKind.EqualsEquals ? "ne" : "eq")} i32 {equal}, 0");
+                }
+
+                var name = b.Kind == BinKind.DelegateCombine ? "arc_delegate_combine" : "arc_delegate_remove";
+                return Inst($"call i8* @{name}(i8* {l}, i8* {r})");
+            }
             case BinKind.BoolLogic: return EmitLogic(b);
             case BinKind.StrConcat: return EmitConcat(b);
             default: return "0";
@@ -2718,6 +2766,22 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var right = EmitStringOperand(compound.Right);
         _stmtTemps.Add(right);
         var result = Inst($"call i8* @arc_str_concat(i8* {left}, i8* {right})");
+        Do($"call void @arc_assign_take(i8** {address}, i8* {result})");
+        Do($"call void @arc_retain(i8* {result})");
+        EndPins(pins);
+        return result;
+    }
+
+    private string EmitDelegateCompound(BoundDelegateCompound compound)
+    {
+        var pins = BeginPins();
+        var address = EmitManagedAddress(compound.Target, pins);
+        var left = EmitLoadSlot(address, compound.Type);
+        _stmtTemps.Add(left);
+        var right = EmitR(compound.Right);
+        TrackReferenceTemp(compound.Right, right);
+        var name = compound.IsRemove ? "arc_delegate_remove" : "arc_delegate_combine";
+        var result = Inst($"call i8* @{name}(i8* {left}, i8* {right})");
         Do($"call void @arc_assign_take(i8** {address}, i8* {result})");
         Do($"call void @arc_retain(i8* {result})");
         EndPins(pins);

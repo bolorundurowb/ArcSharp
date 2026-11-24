@@ -55,6 +55,17 @@ public sealed class BoundCall : BoundExpr
     public bool Interface;
     public bool ReturnsAssignedValue; // interface dispatch
     public int Selector = -1; // global interface selector when Interface
+
+    // Receiver is one node of a delegate's invocation list, and Method is the
+    // delegate type's Invoke. The callee is the node's function, and its first
+    // argument is the node's target.
+    public bool ThroughDelegate;
+}
+
+// The address of a method, as the 64-bit function value a delegate node holds.
+public sealed class BoundFunctionAddress : BoundExpr
+{
+    public required MethodSymbol Method;
 }
 
 public sealed class BoundNewObject : BoundExpr
@@ -126,7 +137,10 @@ public enum BinKind
     BoolArith,
     BoolCmp,
     StrConcat,
-    StrEq
+    StrEq,
+    DelegateCombine,
+    DelegateRemove,
+    DelegateEq
 }
 
 public sealed class BoundBinary : BoundExpr
@@ -165,6 +179,15 @@ public sealed class BoundStringCompound : BoundExpr
 {
     public required BoundExpr Target;
     public required BoundExpr Right;
+}
+
+// 'target += handler' or 'target -= handler' on a delegate. The target is
+// addressed once, and its slot takes the new list.
+public sealed class BoundDelegateCompound : BoundExpr
+{
+    public required BoundExpr Target;
+    public required BoundExpr Right;
+    public bool IsRemove;
 }
 
 public sealed class BoundNumericCompound : BoundExpr

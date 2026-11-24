@@ -377,6 +377,11 @@ public static class DefiniteAssignment
                     VisitExpr(compound.Right, assigned);
                     break;
 
+                case BoundDelegateCompound compound:
+                    VisitExpr(compound.Target, assigned);
+                    VisitExpr(compound.Right, assigned);
+                    break;
+
                 case BoundOperatorUpdate update:
                     VisitExpr(update.Target, assigned);
                     VisitExpr(update.Result, assigned);

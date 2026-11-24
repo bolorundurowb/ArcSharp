@@ -108,6 +108,22 @@ static SurfaceCase[] Cases() =>
             static T Make<T>() where T : IZero<T> => T.Zero();
         }
         """),
+    new("delegate declaration and invocation", """
+        delegate int Operation(int left, int right);
+
+        class P
+        {
+            static int Add(int left, int right) => left + right;
+
+            static int Call()
+            {
+                Operation operation = Add;
+                operation += Add;
+                operation -= Add;
+                return operation?.Invoke(1, 2) ?? operation(3, 4);
+            }
+        }
+        """),
     new("extension method", """
         static class Extensions
         {

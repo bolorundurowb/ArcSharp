@@ -65,8 +65,8 @@ public sealed class StrongCycleTests
         var d = await SingleWarning(
             "delegate int Reader(); class Source { Reader read; int value; void Subscribe() { read = () => value; } }");
 
-        Assert.Contains("Source", d.GetMessage());
-        Assert.Contains("Reader", d.GetMessage());
+        Ensure.Must(d.GetMessage()).Contain("Source");
+        Ensure.Must(d.GetMessage()).Contain("Reader");
     }
 
     [Fact]

@@ -7,9 +7,12 @@ using BoundKind = ArcSharp.Binding.TypeKind;
 
 namespace ArcSharp.Frontend;
 
+// A lambda is a closure object that owns its captured variables and receiver,
+// plus a body method on that closure. The delegate it creates holds the closure
+// as its target and a thunk as its function, so it is invoked, combined and
+// compared exactly like a method-group delegate.
 sealed partial class RoslynLowering
 {
-    private readonly Dictionary<INamedTypeSymbol, TypeSymbol> _lambdaDelegates = new(SymbolEqualityComparer.Default);
     private readonly List<TypeSymbol> _lambdaTypes = [];
     private Dictionary<ISymbol, CaptureCell> _captureCells = new(SymbolEqualityComparer.Default);
     private Dictionary<ISymbol, (FieldSymbol Cell, FieldSymbol Value)> _lambdaCaptures = new(SymbolEqualityComparer.Default);
@@ -17,47 +20,6 @@ sealed partial class RoslynLowering
     private bool _inLambda;
 
     private sealed record CaptureCell(LocalSymbol Local, FieldSymbol Value, MethodSymbol Constructor);
-
-    private TypeSymbol MapLambdaDelegate(INamedTypeSymbol symbol, Location? location)
-    {
-        if (!SymbolEqualityComparer.Default.Equals(symbol.ContainingAssembly, _compilation.Assembly)
-            || symbol.IsGenericType || symbol.ContainingType?.IsGenericType == true
-            || symbol.DelegateInvokeMethod is not { ReturnsByRef: false, ReturnsByRefReadonly: false } invoke
-            || invoke.Parameters.Any(p => p.RefKind != Microsoft.CodeAnalysis.RefKind.None))
-        {
-            Report(location, "lambda delegates require a non-generic source declaration and a by-value signature",
-                DiagnosticCatalog.UnsupportedConstructId);
-            return _error;
-        }
-
-        if (_lambdaDelegates.TryGetValue(symbol, out var type))
-        {
-            return type;
-        }
-
-        type = new TypeSymbol
-        {
-            Name = "$delegate$" + _lambdaDelegates.Count,
-            Kind = BoundKind.Class,
-            IsAbstract = true,
-            IsLambdaDelegate = true,
-            DeclarationLine = location?.GetLineSpan().StartLinePosition.Line + 1 ?? 0,
-            SourceFile = location?.SourceTree?.FilePath ?? ""
-        };
-        _lambdaDelegates.Add(symbol, type);
-
-        var method = new MethodSymbol
-        {
-            Name = "Invoke",
-            Owner = type,
-            IsAbstract = true,
-            IsVirtual = true,
-            ReturnType = MapType(invoke.ReturnType, location),
-            Parameters = LambdaParameters(invoke, location)
-        };
-        Layout(type, [], [method]);
-        return type;
-    }
 
     private List<ParamSymbol> LambdaParameters(IMethodSymbol method, Location? location) =>
         method.Parameters.Select(p => new ParamSymbol
@@ -115,7 +77,7 @@ sealed partial class RoslynLowering
 
     private CaptureCell AddCaptureCell(ISymbol variable, TypeSymbol valueType)
     {
-        var owner = NewLambdaType("capture", null, variable.Locations.FirstOrDefault());
+        var owner = NewLambdaType("capture", variable.Locations.FirstOrDefault());
         var value = new FieldSymbol { Owner = owner, Type = valueType, Name = "value" };
         var constructor = AddLambdaConstructor(owner, [value]);
         Layout(owner, [value], [constructor]);
@@ -157,13 +119,12 @@ sealed partial class RoslynLowering
         ? CaptureField(new BoundThis { Type = _currentType }, field)
         : new BoundThis { Type = _currentType };
 
-    private TypeSymbol NewLambdaType(string kind, TypeSymbol? baseType, Location? location)
+    private TypeSymbol NewLambdaType(string kind, Location? location)
     {
         var type = new TypeSymbol
         {
             Name = "$" + kind + "$" + _lambdaTypes.Count,
             Kind = BoundKind.Class,
-            BaseType = baseType,
             DeclarationLine = location?.GetLineSpan().StartLinePosition.Line + 1 ?? 0,
             SourceFile = location?.SourceTree?.FilePath ?? ""
         };
@@ -203,13 +164,21 @@ sealed partial class RoslynLowering
         }
 
         var location = creation.Syntax.GetLocation();
-        var type = MapLambdaDelegate(delegateType, location);
-        if (type == _error)
+        if (!HasByValueSignature(delegateType))
+        {
+            Report(location, "lambdas require a delegate with by-value parameters and a by-value result",
+                DiagnosticCatalog.UnsupportedConstructId);
+            return ErrorExpr();
+        }
+
+        var type = MapType(delegateType, location);
+        if (type == _error || type.DelegateInvoke is not { } invoke)
         {
             return ErrorExpr();
         }
 
-        var closure = NewLambdaType("lambda", type, location);
+        var closure = NewLambdaType("lambda", location);
+        closure.LambdaDelegate = type;
         var fields = new List<FieldSymbol>();
         var arguments = new List<BoundExpr>();
         var captures = new Dictionary<ISymbol, (FieldSymbol Cell, FieldSymbol Value)>(SymbolEqualityComparer.Default);
@@ -248,10 +217,9 @@ sealed partial class RoslynLowering
         var constructor = AddLambdaConstructor(closure, fields);
         var method = new MethodSymbol
         {
-            Name = "Invoke",
+            Name = "Body",
             Owner = closure,
-            IsOverride = true,
-            ReturnType = type.Methods[0].ReturnType,
+            ReturnType = invoke.ReturnType,
             Parameters = LambdaParameters(lambda.Symbol, location),
             DeclarationLine = closure.DeclarationLine
         };
@@ -279,11 +247,11 @@ sealed partial class RoslynLowering
             _locals.Add(pair.Key, pair.Value);
         }
 
-        return new BoundConversion
+        var closureObject = new BoundNewObject
         {
-            Operand = new BoundNewObject { Type = closure, Site = Site(creation.Syntax), Ctor = constructor, Arguments = arguments },
-            Type = type
+            Type = closure, Site = Site(creation.Syntax), Ctor = constructor, Arguments = arguments
         };
+        return NewDelegateObject(type, method, closureObject, creation.Syntax);
 
         FieldSymbol AddField(BoundExpr value)
         {
@@ -294,15 +262,9 @@ sealed partial class RoslynLowering
         }
     }
 
-    private BoundExpr LowerLambdaInvocation(IInvocationOperation call)
-    {
-        var type = MapLambdaDelegate(call.TargetMethod.ContainingType, call.Syntax.GetLocation());
-        if (type == _error || call.Instance == null)
-        {
-            return ErrorExpr();
-        }
-
-        var method = type.Methods[0];
-        return BindMemberCall(LowerExpr(call.Instance), method, LowerArguments(call.Arguments, method));
-    }
+    // Lambda bodies take their parameters by value, so a by-reference parameter
+    // or result would need a managed reference to outlive the call.
+    private static bool HasByValueSignature(INamedTypeSymbol delegateType) =>
+        delegateType.DelegateInvokeMethod is { ReturnsByRef: false, ReturnsByRefReadonly: false } invoke
+        && invoke.Parameters.All(parameter => parameter.RefKind == Microsoft.CodeAnalysis.RefKind.None);
 }

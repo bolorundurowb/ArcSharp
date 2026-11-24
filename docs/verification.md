@@ -28,11 +28,13 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (81 samples, Windows x64, 24 November 2026)
+## Results (86 samples, Windows x64, 24 November 2026)
 
-`tools\verify.ps1` reported **156 passed, 0 failed** with the .NET 11.0.100 SDK:
-81 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 55 must-fail
+`tools\verify.ps1` reported **164 passed, 0 failed** with the .NET 11.0.100 SDK:
+86 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 58 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 7 cycle checks,
+2 `ARC3200` checks, one run of the analyser unit tests (84 xUnit tests), and one
+reference-surface check. `live=0` means every object was reclaimed.
 2 `ARC3200` checks, one run of the analyser unit tests, and one
 reference-surface check. `live=0` means every object was reclaimed.
 `byref` allocates nothing because it uses only value types, and `numerics` allocates only the strings of one concatenation check.
@@ -52,8 +54,8 @@ asserts on purpose.
 | `cycle_weakref` | the same cycle, also broken with `WeakReference<T>` | alloc=4 dead=4 freed=4 **live=0** | `done (WeakReference cycle)` |
 | `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 freed=4 **live=0** | `false (PASS under ARC)` |
 | `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 freed=1 **live=2** | `done (strong cycle)` |
-| `lambdas` | Shared local and parameter capture, escaping receiver, static lambda and catchable null invocation | alloc=10 dead=10 freed=10 **live=0** | `lambdas PASS` |
-| `lambda_cycle` | A delegate field holds a lambda that captures the same receiver. `ARC3100` warns about the intentional leak | alloc=3 dead=1 freed=1 **live=2** | `lambda capture cycle` |
+| `lambdas` | Shared local and parameter capture, escaping receiver, static lambda and catchable null invocation | alloc=14 dead=14 freed=14 **live=0** | `lambdas PASS` |
+| `lambda_cycle` | A delegate field holds a lambda that captures the same receiver. `ARC3100` warns about the intentional leak | alloc=4 dead=1 freed=1 **live=3** | `lambda capture cycle` |
 | `cycle_struct` | a **strong** cycle that runs through an inline struct field | alloc=3 dead=1 freed=1 **live=2** | `done (struct cycle)` |
 | `multifile` | `mf_main.cs` and `mf_lib.cs` compiled together; `Greeter` is declared in one file and used from the other | alloc=4 dead=4 freed=4 **live=0** | `twice=42` |
 | `numerics` | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong`, unsigned arithmetic, casts, and the largest `ulong` printed by concatenation and by `Console.WriteLine` | alloc=4 dead=4 freed=4 **live=0** | `18446744073709551615` |
@@ -110,6 +112,11 @@ asserts on purpose.
 | `decimals` | `decimal` scale and rounding, remainder, limits and overflow, comparisons, conversions to and from integers, `double` and `float`, updates, class and struct members, arrays and `decimal?` | alloc=292 dead=292 freed=292 **live=0** | `decimals PASS` |
 | `object_initialisers` | Member initialisers, nested initialisers and evaluation order | alloc=24 dead=24 freed=24 **live=0** | `object initialisers PASS` |
 | `records` | Record classes: positional members, equality, hashing, formatting, `with`, deconstruction and inheritance | alloc=197 dead=197 freed=197 **live=0** | `records PASS` |
+| `delegates_basic` | Delegate declarations, method groups and `new D(...)`, static and instance targets | alloc=17 dead=17 freed=17 **live=0** | `delegates basic PASS` |
+| `delegates_multicast` | Combine and remove (the last occurrence, an absent handler, and removing every handler), equality, the value of the last handler, `?.Invoke`, and a null call that raises `NullReferenceException` | alloc=127 dead=127 freed=127 **live=0** | `delegates multicast PASS` |
+| `delegates_targets` | Virtual and interface targets, `ref` and `out` parameters, struct arguments, generic methods taking `Func`, and `Action` | alloc=72 dead=72 freed=72 **live=0** | `delegates targets PASS` |
+| `delegates_lifetime` | A delegate that owns its target, a handler that throws, delegate fields and arrays, and finalisation at the delegate's last release | alloc=94 dead=94 freed=94 **live=0** | `after=finalised kept;` |
+| `delegates_lambdas` | Lambdas with captures, `this` captured by a lambda returned from a method, a lambda and a method group in one multicast delegate, removal by equality, two separate lambdas that are unequal, and a null call | alloc=70 dead=70 freed=70 **live=0** | `delegates lambdas PASS` |
 | `arguments` | Named evaluation order for methods and constructors, defaults, parameter arrays and cleanup when an array element throws | alloc=9 dead=9 freed=9 **live=0** | `arguments PASS` |
 | `operators_members` | Direct operator overloads, conversion symbols, expression bodies, constants, readonly fields and nested names | alloc=4 dead=4 freed=4 **live=0** | `operators and members PASS` |
 | `array_foreach` | Single evaluation, numeric conversion and reference iteration with early exits | alloc=5 dead=5 freed=5 **live=0** | `array foreach PASS` |
