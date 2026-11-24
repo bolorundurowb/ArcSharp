@@ -35,13 +35,13 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             SyntaxKind.CasePatternSwitchLabel, SyntaxKind.SwitchExpressionArm);
         context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
         context.RegisterOperationAction(AnalyzeBoxingConversion, OperationKind.Conversion);
-        context.RegisterOperationAction(AnalyzeDelegateCreation, OperationKind.DelegateCreation);
-        context.RegisterSyntaxNodeAction(AnalyzeDelegateDeclaration, SyntaxKind.DelegateDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
         context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration, SyntaxKind.IndexerDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeArrayType, SyntaxKind.ArrayType);
         context.RegisterSyntaxNodeAction(AnalyzeObjectCreation, SyntaxKind.ObjectCreationExpression);
         context.RegisterSyntaxNodeAction(AnalyzeInvocation, SyntaxKind.InvocationExpression);
+        context.RegisterOperationAction(AnalyzeDelegateCreation, OperationKind.DelegateCreation);
+        context.RegisterOperationAction(AnalyzeConditionalAccess, OperationKind.ConditionalAccess);
     }
 
     private static readonly SyntaxKind[] UnsupportedKinds =
@@ -63,7 +63,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.BaseExpression,
         SyntaxKind.QueryExpression,
         SyntaxKind.AwaitExpression,
-        SyntaxKind.ConditionalAccessExpression,
         SyntaxKind.CoalesceAssignmentExpression,
         SyntaxKind.RangeExpression,
         SyntaxKind.ImplicitObjectCreationExpression,
@@ -155,33 +154,46 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
+    // A lambda must be synchronous, not nested in another lambda, and have a
+    // by-value signature. A delegate can bind to a method declared in the program.
+    // A library method has no body to call, and a struct instance method would
+    // need the struct boxed.
     private static void AnalyzeDelegateCreation(OperationAnalysisContext context)
     {
         var creation = (IDelegateCreationOperation)context.Operation;
-        if (creation.Target is not IAnonymousFunctionOperation { Syntax: LambdaExpressionSyntax } lambda
-            || lambda.Symbol.IsAsync || lambda.Syntax.Ancestors().Any(node => node is LambdaExpressionSyntax)
-            || creation.Type is not INamedTypeSymbol type
-            || !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, context.Compilation.Assembly)
-            || !SupportsDelegateSignature(type))
+        if (creation.Target is IAnonymousFunctionOperation { Syntax: LambdaExpressionSyntax } lambda)
         {
-            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, creation.Syntax.GetLocation(),
-                "only non-nested synchronous lambdas targeting non-generic source delegates with by-value signatures are supported"));
+            if (lambda.Symbol.IsAsync || lambda.Syntax.Ancestors().Any(node => node is LambdaExpressionSyntax)
+                || creation.Type is not INamedTypeSymbol type || !HasByValueSignature(type))
+            {
+                context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, creation.Syntax.GetLocation(),
+                    "only non-nested synchronous lambdas with by-value delegate signatures are supported"));
+            }
+
+            return;
+        }
+
+        if (creation.Target is not IMethodReferenceOperation reference)
+        {
+            return;
+        }
+
+        var method = reference.Method;
+        if (!method.Locations.Any(location => location.IsInSource))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                creation.Syntax.GetLocation(), "a delegate cannot bind to a library method"));
+        }
+        else if (!method.IsStatic && method.ContainingType.TypeKind == TypeKind.Struct)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                creation.Syntax.GetLocation(),
+                "a delegate to an instance method of a struct is not supported: the struct would have to be boxed"));
         }
     }
 
-    private static void AnalyzeDelegateDeclaration(SyntaxNodeAnalysisContext context)
-    {
-        if (context.SemanticModel.GetDeclaredSymbol((DelegateDeclarationSyntax)context.Node) is INamedTypeSymbol type
-            && !SupportsDelegateSignature(type))
-        {
-            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, context.Node.GetLocation(),
-                "lambda delegates require a non-generic source declaration and a by-value signature"));
-        }
-    }
-
-    private static bool SupportsDelegateSignature(INamedTypeSymbol type) =>
-        !type.IsGenericType && type.ContainingType?.IsGenericType != true
-        && type.DelegateInvokeMethod is { ReturnsByRef: false, ReturnsByRefReadonly: false } invoke
+    private static bool HasByValueSignature(INamedTypeSymbol type) =>
+        type.DelegateInvokeMethod is { ReturnsByRef: false, ReturnsByRefReadonly: false } invoke
         && invoke.Parameters.All(parameter => parameter.RefKind == RefKind.None);
 
     private static void AnalyzeBoxingConversion(OperationAnalysisContext context)
@@ -247,7 +259,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             "'base' member access is not supported: inherited members are called by name",
         SyntaxKind.QueryExpression => "LINQ is not supported",
         SyntaxKind.AwaitExpression => "'await' is not supported: there is no async support",
-        SyntaxKind.ConditionalAccessExpression => "the null-conditional operator ('?.') is not supported",
         SyntaxKind.CoalesceAssignmentExpression =>
             "the null-coalescing assignment ('??=') is not supported",
         SyntaxKind.RangeExpression => "ranges ('..') are not supported",
@@ -431,6 +442,29 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
                 context.ReportDiagnostic(Diagnostic.Create(
                     Descriptors.ArcClrDisagreement, invocation.GetLocation(), DiagnosticCatalog.GcWaitMessage));
                 break;
+        }
+    }
+
+    // '?.' is accepted on a reference receiver, either as a statement or with a
+    // reference result. A value result would have to become nullable.
+    private static void AnalyzeConditionalAccess(OperationAnalysisContext context)
+    {
+        var operation = (Microsoft.CodeAnalysis.Operations.IConditionalAccessOperation)context.Operation;
+        var outermost = operation;
+        while (outermost.Parent is Microsoft.CodeAnalysis.Operations.IConditionalAccessOperation parent
+            && parent.WhenNotNull == outermost)
+        {
+            outermost = parent;
+        }
+
+        var asStatement = outermost.Parent is Microsoft.CodeAnalysis.Operations.IExpressionStatementOperation;
+        var supported = operation.Operation.Type?.IsReferenceType == true
+            && (asStatement || operation.Type?.IsReferenceType == true);
+        if (!supported)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                operation.Syntax.GetLocation(),
+                "the null-conditional operator ('?.') needs a reference receiver and a reference result, or a statement"));
         }
     }
 

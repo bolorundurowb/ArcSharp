@@ -18,16 +18,17 @@ public sealed class UnsupportedConstructTests
         { "query", "class C { static void Main() { int[] xs = new int[1]; var q = from x in xs select x; } }" },
         { "list pattern", "class C { public int Length => 1; public int this[int i] => i; static bool Test(C value) => value is [1]; }" },
         { "list switch expression", "class C { public int Length => 1; public int this[int i] => i; static int Test(C value) => value switch { [1] => 2, _ => 3 }; }" },
-        { "conditional access", "class C { static void Main() { string s = null; int n = s?.Length ?? 0; } }" },
+        { "conditional access with a value result", "class C { static void Main() { string s = null; int n = s?.Length ?? 0; } }" },
+        { "conditional access on a value receiver", "struct S { public string Name; } class C { static void Main() { S? s = null; string n = s?.Name; } }" },
         { "coalescing assignment", "class C { static void Main() { string s = null; s ??= \"x\"; } }" },
         { "interpolated string", "class C { static void Main() { System.Console.WriteLine($\"x\"); } }" },
         { "target-typed new", "class C { static void Main() { C c = new(); } }" },
         { "struct object initializer", "struct S { public int X; } class C { static void Main() { S s = new S { X = 1 }; } }" },
         { "collection initializer", "class B : System.Collections.IEnumerable { public void Add(int x) { } public System.Collections.IEnumerator GetEnumerator() { return null; } } class C { static void Main() { B b = new B { 1 }; } }" },
         { "attribute", "[System.Obsolete] class C { }" },
-        { "generic delegate", "delegate void D<T>(T value); class C { }" },
-        { "method group delegate", "delegate void D(); class C { static void M() { D d = M; } }" },
-        { "framework lambda", "class C { static void M() { System.Func<int> f = () => 1; } }" },
+        { "delegate to a library method", "delegate void D(string text); class C { static void Main() { D d = System.Console.WriteLine; } }" },
+        { "delegate to a struct method", "delegate int D(); struct S { public int Read() { return 1; } } class C { static void Main() { S s = new S(); D d = s.Read; } }" },
+        { "lambda with a by-ref parameter", "delegate void R(ref int x); class C { static void Main() { R r = (ref int x) => { }; } }" },
         { "record struct", "record struct R(int X); class C { }" },
         { "generic record", "record R<T>(T X); class C { }" },
         { "local function", "class C { static void Main() { void F() { } F(); } }" },
@@ -50,6 +51,10 @@ public sealed class UnsupportedConstructTests
     public static TheoryData<string, string> SupportedSources => new()
     {
         { "lambda capture", "delegate int D(); class C { static int M(int x) { D d = () => ++x; return d(); } }" },
+        { "generic delegate", "delegate void D<T>(T value); class C { static void M(D<int> d) { d(1); } }" },
+        { "method group delegate", "delegate void D(); class C { static void M() { D d = M; } }" },
+        { "framework delegate lambda", "class C { static void M() { System.Func<int> f = () => 1; } }" },
+        { "lambda and multicast", "delegate int D(); class C { static int M(int x) { D d = () => x; d += () => x + 1; return d(); } }" },
         { "generic class", "class Box<T> where T : class { public T Value; }" },
         { "generic method", "class C { static T Identity<T>(T value) { return value; } }" },
         { "generic interface and struct", "interface IValue<T> { T Get(); } struct Pair<T> { public T Item; public int Tag; }" },
@@ -162,6 +167,13 @@ public sealed class UnsupportedConstructTests
         {
             "nullable struct boxing",
             "struct S { public int V; } class C { static void Main() { S? s = new S(); object o = s; S? back = o as S?; } }"
+        },
+        {
+            "delegates, multicast and null-conditional invoke",
+            "delegate int D(int x); class T { public int Twice(int x) { return x * 2; } public static int Same(int x) { return x; } } " +
+            "class Holder { public D Changed; public string Name; } " +
+            "class C { static void Main() { T t = new T(); D d = t.Twice; d += T.Same; d -= T.Same; Holder h = new Holder(); " +
+            "h.Changed += t.Twice; h.Changed?.Invoke(1); string n = h?.Name; bool same = d == h.Changed; int r = d(2); } }"
         },
         {
             "byref primitives",
