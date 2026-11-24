@@ -29,13 +29,13 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeDeclaration, DeclarationKinds);
         context.RegisterSyntaxNodeAction(AnalyzeMember, MemberKinds);
         context.RegisterSyntaxNodeAction(AnalyzeUsing, SyntaxKind.UsingStatement);
+        context.RegisterSyntaxNodeAction(AnalyzeForEach, SyntaxKind.ForEachStatement);
+        context.RegisterSyntaxNodeAction(AnalyzePattern, SyntaxKind.IsPatternExpression,
+            SyntaxKind.CasePatternSwitchLabel, SyntaxKind.SwitchExpressionArm);
+        context.RegisterOperationAction(AnalyzeIncrement, OperationKind.Increment, OperationKind.Decrement);
+        context.RegisterOperationAction(AnalyzeBoxingConversion, OperationKind.Conversion);
         context.RegisterSyntaxNodeAction(AnalyzeLocalDeclaration, SyntaxKind.LocalDeclarationStatement);
-        context.RegisterSyntaxNodeAction(AnalyzeParameter, SyntaxKind.Parameter);
-        context.RegisterSyntaxNodeAction(AnalyzeArgument, SyntaxKind.Argument);
-        context.RegisterSyntaxNodeAction(AnalyzeBinary, BinaryKinds);
-        context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration);
-        context.RegisterSyntaxNodeAction(AnalyzeAccessor, AccessorKinds);
-        context.RegisterSyntaxNodeAction(AnalyzeStruct, SyntaxKind.StructDeclaration);
+        context.RegisterSyntaxNodeAction(AnalyzeProperty, SyntaxKind.PropertyDeclaration, SyntaxKind.IndexerDeclaration);
         context.RegisterSyntaxNodeAction(AnalyzeArrayType, SyntaxKind.ArrayType);
         context.RegisterSyntaxNodeAction(AnalyzeObjectCreation, SyntaxKind.ObjectCreationExpression);
         context.RegisterSyntaxNodeAction(AnalyzeInvocation, SyntaxKind.InvocationExpression);
@@ -43,20 +43,15 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
 
     private static readonly SyntaxKind[] UnsupportedKinds =
     {
-        SyntaxKind.BreakStatement,
-        SyntaxKind.ContinueStatement,
         SyntaxKind.GotoStatement,
-        SyntaxKind.DoStatement,
-        SyntaxKind.ForEachStatement,
+        SyntaxKind.GotoCaseStatement,
+        SyntaxKind.GotoDefaultStatement,
         SyntaxKind.ForEachVariableStatement,
-        SyntaxKind.SwitchStatement,
         SyntaxKind.ThrowExpression,
         SyntaxKind.CatchFilterClause,
         SyntaxKind.LockStatement,
         SyntaxKind.YieldReturnStatement,
         SyntaxKind.YieldBreakStatement,
-        SyntaxKind.CheckedStatement,
-        SyntaxKind.CheckedExpression,
         SyntaxKind.UnsafeStatement,
         SyntaxKind.FixedStatement,
         SyntaxKind.StackAllocArrayCreationExpression,
@@ -66,20 +61,14 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.AnonymousMethodExpression,
         SyntaxKind.BaseExpression,
         SyntaxKind.QueryExpression,
-        SyntaxKind.IsPatternExpression,
-        SyntaxKind.SwitchExpression,
-        SyntaxKind.WithExpression,
         SyntaxKind.AwaitExpression,
         SyntaxKind.ConditionalAccessExpression,
-        SyntaxKind.CoalesceExpression,
         SyntaxKind.CoalesceAssignmentExpression,
         SyntaxKind.RangeExpression,
         SyntaxKind.ImplicitObjectCreationExpression,
         SyntaxKind.AnonymousObjectCreationExpression,
         SyntaxKind.InterpolatedStringExpression,
         SyntaxKind.RefExpression,
-        SyntaxKind.DefaultExpression,
-        SyntaxKind.DefaultLiteralExpression,
         SyntaxKind.RefType,
         SyntaxKind.PointerType,
         SyntaxKind.FunctionPointerType,
@@ -87,14 +76,9 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleType,
         SyntaxKind.GlobalStatement,
         SyntaxKind.AttributeList,
-        SyntaxKind.OperatorDeclaration,
-        SyntaxKind.ConversionOperatorDeclaration,
-        SyntaxKind.IndexerDeclaration,
-        SyntaxKind.EnumDeclaration,
         SyntaxKind.DelegateDeclaration,
         SyntaxKind.EventDeclaration,
         SyntaxKind.EventFieldDeclaration,
-        SyntaxKind.RecordDeclaration,
         SyntaxKind.RecordStructDeclaration,
         SyntaxKind.LocalFunctionStatement,
         SyntaxKind.ArrowExpressionClause,
@@ -106,7 +90,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     {
         SyntaxKind.ClassDeclaration,
         SyntaxKind.StructDeclaration,
-        SyntaxKind.InterfaceDeclaration
+        SyntaxKind.InterfaceDeclaration,
+        SyntaxKind.RecordDeclaration
     };
 
     private static readonly SyntaxKind[] MemberKinds =
@@ -120,59 +105,110 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.ConversionOperatorDeclaration
     };
 
-    private static readonly SyntaxKind[] BinaryKinds =
-    {
-        SyntaxKind.LeftShiftExpression,
-        SyntaxKind.RightShiftExpression,
-        SyntaxKind.UnsignedRightShiftExpression,
-        SyntaxKind.LeftShiftAssignmentExpression,
-        SyntaxKind.RightShiftAssignmentExpression,
-        SyntaxKind.UnsignedRightShiftAssignmentExpression
-    };
-
-    private static readonly SyntaxKind[] AccessorKinds =
-    {
-        SyntaxKind.GetAccessorDeclaration,
-        SyntaxKind.SetAccessorDeclaration,
-        SyntaxKind.InitAccessorDeclaration,
-        SyntaxKind.AddAccessorDeclaration,
-        SyntaxKind.RemoveAccessorDeclaration
-    };
-
     private static void AnalyzeNode(SyntaxNodeAnalysisContext context)
     {
         var message = Describe(context.Node);
-        if (message != null)
+        if (message != null && !IsDeconstructionTarget(context.Node))
         {
             context.ReportDiagnostic(Diagnostic.Create(
                 Descriptors.UnsupportedConstruct, context.Node.GetLocation(), message));
         }
     }
 
+    // `(a, b) = value;` deconstructs into existing variables. The tuple syntax is
+    // only the shape of the targets, so it is not a tuple value.
+    private static bool IsDeconstructionTarget(SyntaxNode node)
+    {
+        if (node is not TupleExpressionSyntax)
+        {
+            return false;
+        }
+
+        var current = node;
+        while (current.Parent is ArgumentSyntax { Parent: TupleExpressionSyntax outer })
+        {
+            current = outer;
+        }
+
+        return current.Parent is AssignmentExpressionSyntax assignment
+            && assignment.IsKind(SyntaxKind.SimpleAssignmentExpression)
+            && assignment.Left == current;
+    }
+
+    private static void AnalyzePattern(SyntaxNodeAnalysisContext context)
+    {
+        var pattern = context.Node switch
+        {
+            IsPatternExpressionSyntax expression => expression.Pattern,
+            CasePatternSwitchLabelSyntax label => label.Pattern,
+            SwitchExpressionArmSyntax arm => arm.Pattern,
+            _ => throw new System.InvalidOperationException("unexpected pattern syntax")
+        };
+        foreach (var list in pattern.DescendantNodesAndSelf().OfType<ListPatternSyntax>())
+        {
+            if (context.SemanticModel.GetOperation(list, context.CancellationToken)
+                is Microsoft.CodeAnalysis.Operations.IListPatternOperation { InputType: not IArrayTypeSymbol })
+            {
+                context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                    list.GetLocation(), "list patterns require a single-dimensional array"));
+            }
+        }
+    }
+
+    private static void AnalyzeBoxingConversion(OperationAnalysisContext context)
+    {
+        var operation = (Microsoft.CodeAnalysis.Operations.IConversionOperation)context.Operation;
+        // Only a nullable struct declared in the program has a box. Primitives and
+        // enums have none, with or without the nullable wrapper.
+        static bool UnsupportedValue(ITypeSymbol? type) =>
+            type?.TypeKind == TypeKind.Enum
+            || (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable
+                && (nullable.TypeArguments[0].TypeKind != TypeKind.Struct
+                    || nullable.TypeArguments[0].SpecialType != SpecialType.None));
+
+        if ((UnsupportedValue(operation.Operand.Type) && operation.Type?.IsReferenceType == true)
+            || (UnsupportedValue(operation.Type) && operation.Operand.Type?.IsReferenceType == true))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                operation.Syntax.GetLocation(), "boxing and unboxing enum values, or nullable values of a built-in type, are not supported"));
+        }
+    }
+
+    private static void AnalyzeIncrement(OperationAnalysisContext context)
+    {
+        var operation = (Microsoft.CodeAnalysis.Operations.IIncrementOrDecrementOperation)context.Operation;
+        if (operation.Target.Kind is not (OperationKind.LocalReference or OperationKind.ParameterReference
+                or OperationKind.FieldReference or OperationKind.ArrayElementReference or OperationKind.PropertyReference))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                operation.Syntax.GetLocation(), "'++' and '--' require supported numeric storage"));
+        }
+    }
+
+    private static void AnalyzeForEach(SyntaxNodeAnalysisContext context)
+    {
+        var loop = (ForEachStatementSyntax)context.Node;
+        var model = context.SemanticModel;
+        var type = model.GetTypeInfo(loop.Expression, context.CancellationToken).Type;
+        var conversion = model.GetForEachStatementInfo(loop).ElementConversion;
+        if (type is not IArrayTypeSymbol { IsSZArray: true } || loop.Type is RefTypeSyntax
+            || conversion.IsUserDefined || conversion.IsBoxing || conversion.IsUnboxing)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                loop.GetLocation(), "'foreach' requires a single-dimensional array and a supported element conversion"));
+        }
+    }
+
     private static string? Describe(SyntaxNode node) => node.Kind() switch
     {
-        SyntaxKind.BreakStatement =>
-            "'break' is not supported: end a loop by making its condition false",
-        SyntaxKind.ContinueStatement =>
-            "'continue' is not supported: restructure the loop with an 'if'",
-        SyntaxKind.GotoStatement => "'goto' is not supported",
-        SyntaxKind.DoStatement => "'do'/'while' loops are not supported: use 'while'",
-        SyntaxKind.ForEachStatement or SyntaxKind.ForEachVariableStatement =>
-            "'foreach' is not supported: use a 'for' loop with an index",
-        SyntaxKind.SwitchStatement => "'switch' is not supported: use 'if'/'else'",
+        SyntaxKind.GotoStatement or SyntaxKind.GotoCaseStatement or SyntaxKind.GotoDefaultStatement =>
+            "'goto' is not supported",
+        SyntaxKind.ForEachVariableStatement => "deconstructing 'foreach' is not supported",
         SyntaxKind.ThrowExpression => "throw expressions are not supported: use a 'throw' statement",
         SyntaxKind.CatchFilterClause => "exception filters are not supported",
         SyntaxKind.LockStatement => "'lock' is not supported: there are no threads",
         SyntaxKind.YieldReturnStatement or SyntaxKind.YieldBreakStatement =>
             "'yield' is not supported: iterators are not implemented",
-        SyntaxKind.CheckedStatement =>
-            ((CheckedStatementSyntax)node).Keyword.IsKind(SyntaxKind.CheckedKeyword)
-                ? "'checked' is not supported: arithmetic is always unchecked"
-                : "'unchecked' is not supported: arithmetic is always unchecked",
-        SyntaxKind.CheckedExpression =>
-            ((CheckedExpressionSyntax)node).Keyword.IsKind(SyntaxKind.CheckedKeyword)
-                ? "'checked' is not supported: arithmetic is always unchecked"
-                : "'unchecked' is not supported: arithmetic is always unchecked",
         SyntaxKind.UnsafeStatement => "'unsafe' is not supported",
         SyntaxKind.FixedStatement => "'fixed' is not supported",
         SyntaxKind.StackAllocArrayCreationExpression or SyntaxKind.ImplicitStackAllocArrayCreationExpression =>
@@ -182,21 +218,16 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.BaseExpression =>
             "'base' member access is not supported: inherited members are called by name",
         SyntaxKind.QueryExpression => "LINQ is not supported",
-        SyntaxKind.IsPatternExpression => "pattern matching is not supported: use 'is Type' and 'as'",
-        SyntaxKind.SwitchExpression => "switch expressions are not supported: use 'if'/'else'",
-        SyntaxKind.WithExpression => "'with' expressions are not supported",
         SyntaxKind.AwaitExpression => "'await' is not supported: there is no async support",
         SyntaxKind.ConditionalAccessExpression => "the null-conditional operator ('?.') is not supported",
-        SyntaxKind.CoalesceExpression or SyntaxKind.CoalesceAssignmentExpression =>
-            "the null-coalescing operator ('??') is not supported",
+        SyntaxKind.CoalesceAssignmentExpression =>
+            "the null-coalescing assignment ('??=') is not supported",
         SyntaxKind.RangeExpression => "ranges ('..') are not supported",
         SyntaxKind.ImplicitObjectCreationExpression => "target-typed 'new()' is not supported: name the type",
         SyntaxKind.AnonymousObjectCreationExpression => "anonymous types are not supported",
         SyntaxKind.InterpolatedStringExpression => "interpolated strings are not supported: use concatenation",
         SyntaxKind.RefExpression =>
             "ref locals and ref returns are not supported: a managed reference must not outlive the call",
-        SyntaxKind.DefaultExpression or SyntaxKind.DefaultLiteralExpression =>
-            "'default' is not supported: assign an explicit value",
         SyntaxKind.RefType =>
             "ref locals and ref returns are not supported: a managed reference must not outlive the call",
         SyntaxKind.PointerType => "pointers are not supported",
@@ -204,15 +235,14 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleExpression or SyntaxKind.TupleType => "tuples are not supported",
         SyntaxKind.GlobalStatement => "top-level statements are not supported: declare a class with 'static void Main()'",
         SyntaxKind.AttributeList => "attributes are not supported",
-        SyntaxKind.OperatorDeclaration or SyntaxKind.ConversionOperatorDeclaration =>
-            "operator overloading is not supported",
-        SyntaxKind.IndexerDeclaration => "indexers are not supported",
-        SyntaxKind.EnumDeclaration => "enums are not supported: use named constants or plain 'int' fields",
         SyntaxKind.DelegateDeclaration => "delegates are not supported",
         SyntaxKind.EventDeclaration or SyntaxKind.EventFieldDeclaration => "events are not supported",
-        SyntaxKind.RecordDeclaration or SyntaxKind.RecordStructDeclaration => "records are not supported",
+        SyntaxKind.RecordStructDeclaration => "record structs are not supported: declare a record class",
         SyntaxKind.LocalFunctionStatement => "local functions are not supported",
-        SyntaxKind.ArrowExpressionClause => "expression-bodied members are not supported: use a block body",
+        SyntaxKind.ArrowExpressionClause when node.Parent is not
+            (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
+                or ConversionOperatorDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
+                or AccessorDeclarationSyntax) => "this expression-bodied member is not supported",
         SyntaxKind.CollectionExpression => "collection expressions ('[...]') are not supported",
         SyntaxKind.ImplicitArrayCreationExpression => "array initialisers are not supported: use 'new T[n]'",
         _ => null
@@ -221,8 +251,15 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeDeclaration(SyntaxNodeAnalysisContext context)
     {
         var decl = (TypeDeclarationSyntax)context.Node;
-        var message = ModifierMessage(decl.Modifiers) ??
-                      (decl is ClassDeclarationSyntax && decl.ParameterList != null
+        var message = ModifierMessage(decl.Modifiers);
+        if (context.SemanticModel.GetDeclaredSymbol(decl, context.CancellationToken) is INamedTypeSymbol
+            { ContainingType.IsGenericType: true })
+        {
+            message ??= "types nested in generic types are not supported";
+        }
+
+        message ??= decl is RecordDeclarationSyntax { TypeParameterList: not null } ? "generic records are not supported" : null;
+        message ??= (decl is ClassDeclarationSyntax && decl.ParameterList != null
                           ? "primary constructors are not supported"
                           : null);
         if (message != null)
@@ -235,14 +272,21 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeMember(SyntaxNodeAnalysisContext context)
     {
         var decl = (MemberDeclarationSyntax)context.Node;
-        var message = ModifierMessage(decl.Modifiers);
-        if (decl is MethodDeclarationSyntax { TypeParameterList: not null } method
-            && (method.Parent is InterfaceDeclarationSyntax
-                || method.Modifiers.Any(SyntaxKind.VirtualKeyword)
-                || method.Modifiers.Any(SyntaxKind.OverrideKeyword)
-                || method.Modifiers.Any(SyntaxKind.AbstractKeyword)))
+        var message = ModifierMessage(decl.Modifiers, decl is FieldDeclarationSyntax);
+        if (decl is MethodDeclarationSyntax { TypeParameterList: not null, Parent: InterfaceDeclarationSyntax } generic
+            && generic.Modifiers.Any(SyntaxKind.StaticKeyword)
+            && (generic.Modifiers.Any(SyntaxKind.AbstractKeyword) || generic.Modifiers.Any(SyntaxKind.VirtualKeyword)))
         {
-            message = "virtual and interface generic methods are not supported yet";
+            message = "generic static abstract and static virtual methods are not supported";
+        }
+        else if (decl is MethodDeclarationSyntax { TypeParameterList: not null, Parent: StructDeclarationSyntax } method
+            && context.SemanticModel.GetDeclaredSymbol(method, context.CancellationToken) is { } symbol
+            && symbol.ContainingType.AllInterfaces
+                .SelectMany(iface => iface.GetMembers().OfType<IMethodSymbol>())
+                .Any(member => member.IsGenericMethod
+                    && SymbolEqualityComparer.Default.Equals(symbol.ContainingType.FindImplementationForInterfaceMember(member), symbol)))
+        {
+            message = "generic interface methods are not supported on structs";
         }
         if (message != null)
         {
@@ -251,7 +295,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static string? ModifierMessage(SyntaxTokenList modifiers)
+    private static string? ModifierMessage(SyntaxTokenList modifiers, bool field = false)
     {
         foreach (var m in modifiers)
         {
@@ -259,12 +303,8 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             {
                 case SyntaxKind.SealedKeyword:
                     return "'sealed' is not supported";
-                case SyntaxKind.PartialKeyword:
-                    return "'partial' is not supported";
-                case SyntaxKind.ReadOnlyKeyword:
-                    return "'readonly' is not supported";
-                case SyntaxKind.ConstKeyword:
-                    return "constants are not supported: use a 'static' field";
+                case SyntaxKind.ReadOnlyKeyword when !field:
+                    return "'readonly' is not supported on this declaration";
                 case SyntaxKind.ExternKeyword:
                     return "'extern' is not supported";
                 case SyntaxKind.AsyncKeyword:
@@ -309,74 +349,20 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static void AnalyzeParameter(SyntaxNodeAnalysisContext context)
-    {
-        var p = (ParameterSyntax)context.Node;
-        if (p.Default != null)
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, p.GetLocation(),
-                "optional parameters are not supported"));
-        }
-        else if (p.Modifiers.Any(t => t.IsKind(SyntaxKind.ParamsKeyword)))
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, p.GetLocation(),
-                "parameter arrays are not supported"));
-        }
-    }
-
-    private static void AnalyzeArgument(SyntaxNodeAnalysisContext context)
-    {
-        var a = (ArgumentSyntax)context.Node;
-        if (a.NameColon != null)
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, a.GetLocation(),
-                "named arguments are not supported"));
-        }
-    }
-
-    private static void AnalyzeBinary(SyntaxNodeAnalysisContext context)
-    {
-        var b = (BinaryExpressionSyntax)context.Node;
-        context.ReportDiagnostic(Diagnostic.Create(
-            Descriptors.UnsupportedConstruct, b.OperatorToken.GetLocation(),
-            "shift operators ('<<', '>>', '>>>') are not supported"));
-    }
-
     private static void AnalyzeProperty(SyntaxNodeAnalysisContext context)
     {
-        var p = (PropertyDeclarationSyntax)context.Node;
-        var hasSetter = p.AccessorList?.Accessors.Any(a =>
-            a.IsKind(SyntaxKind.SetAccessorDeclaration) || a.IsKind(SyntaxKind.InitAccessorDeclaration)) == true;
-        if (!hasSetter)
+        var property = (BasePropertyDeclarationSyntax)context.Node;
+        var expression = property switch
         {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, p.Identifier.GetLocation(),
-                "get-only auto-properties are not supported: declare 'get; set;'"));
-        }
-    }
-
-    private static void AnalyzeAccessor(SyntaxNodeAnalysisContext context)
-    {
-        var a = (AccessorDeclarationSyntax)context.Node;
-        if (a.Body != null || a.ExpressionBody != null)
+            PropertyDeclarationSyntax declaration => declaration.ExpressionBody,
+            IndexerDeclarationSyntax declaration => declaration.ExpressionBody,
+            _ => null
+        };
+        if (property.Parent is InterfaceDeclarationSyntax && (expression != null
+            || property.AccessorList?.Accessors.Any(accessor => accessor.Body != null || accessor.ExpressionBody != null) == true))
         {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, a.GetLocation(),
-                "properties with accessor bodies are not supported: use an auto-property"));
-        }
-    }
-
-    private static void AnalyzeStruct(SyntaxNodeAnalysisContext context)
-    {
-        var s = (StructDeclarationSyntax)context.Node;
-        if (s.BaseList != null)
-        {
-            context.ReportDiagnostic(Diagnostic.Create(
-                Descriptors.UnsupportedConstruct, s.BaseList.GetLocation(),
-                "interfaces are not supported on structs"));
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
+                property.GetLocation(), "default interface accessors are not supported"));
         }
     }
 
@@ -424,11 +410,30 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
     private static void AnalyzeObjectCreation(SyntaxNodeAnalysisContext context)
     {
         var o = (ObjectCreationExpressionSyntax)context.Node;
-        if (o.Initializer != null)
+        if (o.ArgumentList?.Arguments.Count > 1
+            && context.SemanticModel.GetTypeInfo(o, context.CancellationToken).Type?.SpecialType == SpecialType.System_Decimal)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                Descriptors.UnsupportedConstruct, o.GetLocation(),
+                "'new decimal' with several arguments is not supported: build the value from an integer and divide"));
+        }
+
+        if (o.Initializer == null)
+        {
+            return;
+        }
+
+        if (o.Initializer.IsKind(SyntaxKind.CollectionInitializerExpression))
         {
             context.ReportDiagnostic(Diagnostic.Create(
                 Descriptors.UnsupportedConstruct, o.Initializer.GetLocation(),
-                "object initialisers are not supported: assign the fields after 'new'"));
+                "collection initialisers are not supported: call 'Add' after 'new'"));
+        }
+        else if (context.SemanticModel.GetTypeInfo(o, context.CancellationToken).Type is { IsValueType: true })
+        {
+            context.ReportDiagnostic(Diagnostic.Create(
+                Descriptors.UnsupportedConstruct, o.Initializer.GetLocation(),
+                "object initialisers on structs are not supported: assign the fields after 'new'"));
         }
     }
 }

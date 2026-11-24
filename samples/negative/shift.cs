@@ -1,6 +1,7 @@
-// Expected: ARC3001 shift operators are not supported.
-class Program {
-    static void Main() {
-        int x = 1 << 2;
+static class Program
+{
+    static void Main()
+    {
+        Console.WriteLine(1 << "text");
     }
 }

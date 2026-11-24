@@ -11,7 +11,7 @@
  *   offset 16 : TypeInfo* type         type descriptor
  *   offset 24 : first field / array length / string length / WeakReference slot
  *   offset 32 : string bytes, or the element TypeInfo* of an array
- *   offset 40 : array elements (8-byte slots)
+ *   offset 40 : array elements (one or more 8-byte slots per element)
  */
 /* getenv is the portable way to read runtime options. The MSVC headers mark it
    deprecated in favour of _dupenv_s, which is not portable. */
@@ -374,6 +374,12 @@ void arc_cast_check(void* obj, TypeInfo* target) {
     arc_raise(ARC_EXC_INVALID_CAST, message);
 }
 
+void arc_overflow_check(int overflowed) {
+    if (overflowed) {
+        arc_raise(ARC_EXC_OVERFLOW, "Arithmetic operation resulted in an overflow.");
+    }
+}
+
 /* Integer division and remainder. bits is 0 for an unsigned operation, which
    can only fail on a zero divisor, and 32 or 64 for a signed one, which can
    also overflow. The operands arrive widened to 64 bits. */
@@ -383,6 +389,541 @@ void arc_div_check(long long a, long long b, int bits) {
     } else if (b == -1 && ((bits == 32 && a == INT32_MIN) || (bits == 64 && a == INT64_MIN))) {
         arc_raise(ARC_EXC_OVERFLOW, "Arithmetic operation resulted in an overflow.");
     }
+}
+
+/* ---- decimal ---------------------------------------------------------- */
+/* A decimal is two 8-byte slots, the layout of a struct with two long fields.
+   Slot 0 holds the low 64 bits of the 96-bit mantissa. Slot 1 holds the high
+   32 bits of the mantissa in bits 0-31, the scale (0 to 28, a power of ten to
+   divide by) in bits 32-39, and the sign in bit 63. The arithmetic follows
+   System.Decimal: mantissas are widened to 256 bits, and a result is rounded
+   half to even until it fits 96 bits and a scale of 28. */
+#define DEC_MAX_SCALE 28
+#define BIG_LIMBS 8
+
+typedef struct { uint32_t w[BIG_LIMBS]; } DecBig;
+typedef struct { uint32_t m[3]; int scale; int neg; } DecValue;
+
+static void big_set_u64(DecBig* a, uint64_t v) {
+    memset(a, 0, sizeof *a);
+    a->w[0] = (uint32_t)v;
+    a->w[1] = (uint32_t)(v >> 32);
+}
+
+static void big_from_mantissa(DecBig* a, const DecValue* d) {
+    memset(a, 0, sizeof *a);
+    a->w[0] = d->m[0];
+    a->w[1] = d->m[1];
+    a->w[2] = d->m[2];
+}
+
+static int big_is_zero(const DecBig* a) {
+    int i;
+    for (i = 0; i < BIG_LIMBS; i++) {
+        if (a->w[i]) return 0;
+    }
+    return 1;
+}
+
+static int big_cmp(const DecBig* a, const DecBig* b) {
+    int i;
+    for (i = BIG_LIMBS - 1; i >= 0; i--) {
+        if (a->w[i] != b->w[i]) return a->w[i] > b->w[i] ? 1 : -1;
+    }
+    return 0;
+}
+
+static void big_mul_u32(DecBig* a, uint32_t m) {
+    uint64_t carry = 0;
+    int i;
+    for (i = 0; i < BIG_LIMBS; i++) {
+        uint64_t t = (uint64_t)a->w[i] * m + carry;
+        a->w[i] = (uint32_t)t;
+        carry = t >> 32;
+    }
+}
+
+static uint32_t big_div_u32(DecBig* a, uint32_t d) {
+    uint64_t rem = 0;
+    int i;
+    for (i = BIG_LIMBS - 1; i >= 0; i--) {
+        uint64_t cur = (rem << 32) | a->w[i];
+        a->w[i] = (uint32_t)(cur / d);
+        rem = cur % d;
+    }
+    return (uint32_t)rem;
+}
+
+static void big_add(DecBig* a, const DecBig* b) {
+    uint64_t carry = 0;
+    int i;
+    for (i = 0; i < BIG_LIMBS; i++) {
+        uint64_t t = (uint64_t)a->w[i] + b->w[i] + carry;
+        a->w[i] = (uint32_t)t;
+        carry = t >> 32;
+    }
+}
+
+/* a must not be smaller than b. */
+static void big_sub(DecBig* a, const DecBig* b) {
+    int64_t borrow = 0;
+    int i;
+    for (i = 0; i < BIG_LIMBS; i++) {
+        int64_t t = (int64_t)a->w[i] - b->w[i] - borrow;
+        borrow = t < 0;
+        a->w[i] = (uint32_t)t;
+    }
+}
+
+static void big_shl1(DecBig* a) {
+    uint32_t carry = 0;
+    int i;
+    for (i = 0; i < BIG_LIMBS; i++) {
+        uint32_t next = a->w[i] >> 31;
+        a->w[i] = (a->w[i] << 1) | carry;
+        carry = next;
+    }
+}
+
+static int big_bit_length(const DecBig* a) {
+    int i;
+    for (i = BIG_LIMBS - 1; i >= 0; i--) {
+        if (a->w[i]) {
+            int bits = 32;
+            uint32_t top = a->w[i];
+            while (!(top & 0x80000000u)) {
+                top <<= 1;
+                bits--;
+            }
+            return i * 32 + bits;
+        }
+    }
+    return 0;
+}
+
+/* Binary long division. The operands are at most 256 bits, so this is slow
+   but small and exact. */
+static void big_divmod(const DecBig* n, const DecBig* d, DecBig* q, DecBig* r) {
+    int bit;
+    memset(q, 0, sizeof *q);
+    memset(r, 0, sizeof *r);
+    for (bit = big_bit_length(n) - 1; bit >= 0; bit--) {
+        big_shl1(r);
+        r->w[0] |= (n->w[bit / 32] >> (bit % 32)) & 1u;
+        if (big_cmp(r, d) >= 0) {
+            big_sub(r, d);
+            q->w[bit / 32] |= 1u << (bit % 32);
+        }
+    }
+}
+
+static void big_pow10(DecBig* out, int n) {
+    big_set_u64(out, 1);
+    while (n-- > 0) big_mul_u32(out, 10);
+}
+
+static int big_fits_96(const DecBig* a) {
+    int i;
+    for (i = 3; i < BIG_LIMBS; i++) {
+        if (a->w[i]) return 0;
+    }
+    return 1;
+}
+
+/* a * b where the product is known to fit 256 bits. */
+static void big_mul(const DecBig* a, const DecBig* b, DecBig* out) {
+    int i, j;
+    memset(out, 0, sizeof *out);
+    for (i = 0; i < BIG_LIMBS; i++) {
+        uint64_t carry = 0;
+        for (j = 0; i + j < BIG_LIMBS; j++) {
+            uint64_t t = (uint64_t)a->w[i] * b->w[j] + out->w[i + j] + carry;
+            out->w[i + j] = (uint32_t)t;
+            carry = t >> 32;
+        }
+    }
+}
+
+static void dec_load(const void* p, DecValue* d) {
+    const uint64_t* slots = (const uint64_t*)p;
+    d->m[0] = (uint32_t)slots[0];
+    d->m[1] = (uint32_t)(slots[0] >> 32);
+    d->m[2] = (uint32_t)slots[1];
+    d->scale = (int)((slots[1] >> 32) & 0xFF);
+    d->neg = (int)(slots[1] >> 63);
+}
+
+static void dec_store(void* p, const DecValue* d) {
+    uint64_t* slots = (uint64_t*)p;
+    slots[0] = (uint64_t)d->m[0] | ((uint64_t)d->m[1] << 32);
+    slots[1] = (uint64_t)d->m[2] | ((uint64_t)d->scale << 32) | ((uint64_t)(d->neg ? 1 : 0) << 63);
+}
+
+static int dec_is_zero(const DecValue* d) {
+    return !d->m[0] && !d->m[1] && !d->m[2];
+}
+
+static void dec_overflow(void* out) {
+    DecValue zero;
+    memset(&zero, 0, sizeof zero);
+    if (out) dec_store(out, &zero);
+    arc_raise(ARC_EXC_OVERFLOW, "Value was either too large or too small for a Decimal.");
+}
+
+/* Rounds value / 10^scale down to a 96-bit mantissa and a scale of at most 28,
+   half to even, and stores it. Returns 0, or 1 when the value does not fit. */
+static int dec_pack(const DecBig* value, int scale, int neg, void* out) {
+    DecBig cur;
+    DecValue result;
+    int n = scale > DEC_MAX_SCALE ? scale - DEC_MAX_SCALE : 0;
+    for (;;) {
+        if (n > scale) return 1;
+        if (n == 0) {
+            cur = *value;
+        } else {
+            DecBig p, q, r, twice, one;
+            int c;
+            big_pow10(&p, n);
+            big_divmod(value, &p, &q, &r);
+            twice = r;
+            big_shl1(&twice);
+            c = big_cmp(&twice, &p);
+            if (c > 0 || (c == 0 && (q.w[0] & 1u))) {
+                big_set_u64(&one, 1);
+                big_add(&q, &one);
+            }
+            cur = q;
+        }
+        if (big_fits_96(&cur)) break;
+        n++;
+    }
+    result.m[0] = cur.w[0];
+    result.m[1] = cur.w[1];
+    result.m[2] = cur.w[2];
+    result.scale = scale - n;
+    result.neg = big_is_zero(&cur) ? 0 : neg;
+    dec_store(out, &result);
+    return 0;
+}
+
+/* Multiplies a mantissa by 10^k, widening it to the common scale. */
+static void dec_align(const DecValue* d, int k, DecBig* out) {
+    DecBig p;
+    DecBig base;
+    big_from_mantissa(&base, d);
+    big_pow10(&p, k);
+    big_mul(&base, &p, out);
+}
+
+static void dec_add_signed(void* a, void* b, void* out, int negate_b) {
+    DecValue x, y;
+    DecBig left, right;
+    int scale, left_neg, right_neg;
+    dec_load(a, &x);
+    dec_load(b, &y);
+    scale = x.scale > y.scale ? x.scale : y.scale;
+    dec_align(&x, scale - x.scale, &left);
+    dec_align(&y, scale - y.scale, &right);
+    left_neg = x.neg;
+    right_neg = negate_b ? !y.neg : y.neg;
+    if (left_neg == right_neg) {
+        big_add(&left, &right);
+        if (dec_pack(&left, scale, left_neg, out)) dec_overflow(out);
+    } else if (big_cmp(&left, &right) >= 0) {
+        big_sub(&left, &right);
+        if (dec_pack(&left, scale, left_neg, out)) dec_overflow(out);
+    } else {
+        big_sub(&right, &left);
+        if (dec_pack(&right, scale, right_neg, out)) dec_overflow(out);
+    }
+}
+
+void arc_dec_set(void* out, int64_t low, int64_t high) {
+    int64_t* slots = (int64_t*)out;
+    slots[0] = low;
+    slots[1] = high;
+}
+
+void arc_dec_add(void* a, void* b, void* out) { dec_add_signed(a, b, out, 0); }
+void arc_dec_sub(void* a, void* b, void* out) { dec_add_signed(a, b, out, 1); }
+
+void arc_dec_neg(void* a, void* out) {
+    DecValue x;
+    dec_load(a, &x);
+    x.neg = dec_is_zero(&x) ? 0 : !x.neg;
+    dec_store(out, &x);
+}
+
+void arc_dec_mul(void* a, void* b, void* out) {
+    DecValue x, y;
+    DecBig left, right, product;
+    dec_load(a, &x);
+    dec_load(b, &y);
+    big_from_mantissa(&left, &x);
+    big_from_mantissa(&right, &y);
+    big_mul(&left, &right, &product);
+    if (dec_pack(&product, x.scale + y.scale, x.neg != y.neg, out)) dec_overflow(out);
+}
+
+/* The quotient keeps as many decimal places as fit 96 bits and a scale of 28.
+   An exact quotient then drops trailing zeros, but never below the scale the
+   operands imply, so 6.0 / 2 is 3.0 and 1 / 4 is 0.25. */
+void arc_dec_div(void* a, void* b, void* out) {
+    DecValue x, y;
+    DecBig dividend, divisor, limit;
+    int preferred, scale;
+    dec_load(a, &x);
+    dec_load(b, &y);
+    if (dec_is_zero(&y)) {
+        DecValue zero;
+        memset(&zero, 0, sizeof zero);
+        dec_store(out, &zero);
+        arc_raise(ARC_EXC_DIVIDE_BY_ZERO, "Attempted to divide by zero.");
+        return;
+    }
+    big_from_mantissa(&divisor, &y);
+    memset(&limit, 0, sizeof limit);
+    limit.w[3] = 1;
+    preferred = x.scale > y.scale ? x.scale - y.scale : 0;
+    for (scale = DEC_MAX_SCALE; scale >= preferred; scale--) {
+        DecBig scaled, q, r, twice, one;
+        int exact, c;
+        dec_align(&x, scale + y.scale - x.scale, &scaled);
+        big_divmod(&scaled, &divisor, &q, &r);
+        exact = big_is_zero(&r);
+        twice = r;
+        big_shl1(&twice);
+        c = big_cmp(&twice, &divisor);
+        if (c > 0 || (c == 0 && (q.w[0] & 1u))) {
+            big_set_u64(&one, 1);
+            big_add(&q, &one);
+        }
+        if (big_cmp(&q, &limit) >= 0) continue;
+        if (exact) {
+            for (;;) {
+                DecBig shorter = q;
+                if (scale <= preferred || big_div_u32(&shorter, 10) != 0) break;
+                q = shorter;
+                scale--;
+            }
+        }
+        {
+            DecValue result;
+            result.m[0] = q.w[0];
+            result.m[1] = q.w[1];
+            result.m[2] = q.w[2];
+            result.scale = scale;
+            result.neg = (x.neg != y.neg) && !big_is_zero(&q);
+            dec_store(out, &result);
+        }
+        return;
+    }
+    dec_overflow(out);
+}
+
+void arc_dec_rem(void* a, void* b, void* out) {
+    DecValue x, y;
+    DecBig left, right, q, r;
+    int scale;
+    dec_load(a, &x);
+    dec_load(b, &y);
+    if (dec_is_zero(&y)) {
+        DecValue zero;
+        memset(&zero, 0, sizeof zero);
+        dec_store(out, &zero);
+        arc_raise(ARC_EXC_DIVIDE_BY_ZERO, "Attempted to divide by zero.");
+        return;
+    }
+    scale = x.scale > y.scale ? x.scale : y.scale;
+    dec_align(&x, scale - x.scale, &left);
+    dec_align(&y, scale - y.scale, &right);
+    big_divmod(&left, &right, &q, &r);
+    if (dec_pack(&r, scale, x.neg, out)) dec_overflow(out);
+}
+
+int arc_dec_cmp(void* a, void* b) {
+    DecValue x, y;
+    DecBig left, right;
+    int scale, c;
+    dec_load(a, &x);
+    dec_load(b, &y);
+    if (dec_is_zero(&x)) x.neg = 0;
+    if (dec_is_zero(&y)) y.neg = 0;
+    if (x.neg != y.neg) return x.neg ? -1 : 1;
+    scale = x.scale > y.scale ? x.scale : y.scale;
+    dec_align(&x, scale - x.scale, &left);
+    dec_align(&y, scale - y.scale, &right);
+    c = big_cmp(&left, &right);
+    return x.neg ? -c : c;
+}
+
+void arc_dec_from_i64(int64_t v, void* out) {
+    DecBig magnitude;
+    big_set_u64(&magnitude, v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v);
+    dec_pack(&magnitude, 0, v < 0, out);
+}
+
+void arc_dec_from_u64(int64_t v, void* out) {
+    DecBig magnitude;
+    big_set_u64(&magnitude, (uint64_t)v);
+    dec_pack(&magnitude, 0, 0, out);
+}
+
+/* Right shift by k bits, rounding half to even. */
+static void big_shr_round(const DecBig* a, int k, DecBig* out) {
+    int i;
+    int half = 0;
+    int sticky = 0;
+    memset(out, 0, sizeof *out);
+    for (i = 0; i < k && i < BIG_LIMBS * 32; i++) {
+        int bit = (int)((a->w[i / 32] >> (i % 32)) & 1u);
+        if (i == k - 1) half = bit;
+        else if (bit) sticky = 1;
+    }
+    if (k < BIG_LIMBS * 32) {
+        for (i = k; i < BIG_LIMBS * 32; i++) {
+            if ((a->w[i / 32] >> (i % 32)) & 1u) out->w[(i - k) / 32] |= 1u << ((i - k) % 32);
+        }
+    }
+    if (half && (sticky || (out->w[0] & 1u))) {
+        DecBig one;
+        big_set_u64(&one, 1);
+        big_add(out, &one);
+    }
+}
+
+/* Like System.Decimal in current .NET, the exact binary value is kept, with
+   the largest scale (at most 28) that still fits 96 bits, and trailing zeros
+   are dropped. The caller guarantees a finite value below 2^96. */
+void arc_dec_from_double(double v, void* out) {
+    DecBig magnitude;
+    DecBig factor;
+    DecBig scaled;
+    DecBig quotient;
+    uint64_t mantissa, bits;
+    int exponent, scale;
+    int neg = v < 0;
+    if (v != v || v >= 7.9228162514264337593543950336e28 || v <= -7.9228162514264337593543950336e28) {
+        dec_overflow(out);
+        return;
+    }
+    if (neg) v = -v;
+    memcpy(&bits, &v, sizeof bits);
+    exponent = (int)((bits >> 52) & 0x7ffu);
+    mantissa = bits & 0xfffffffffffffull;
+    if (exponent == 0) {
+        exponent = -1074;
+    } else {
+        mantissa |= 1ull << 52;
+        exponent -= 1075;
+    }
+    if (exponent >= 0) {
+        big_set_u64(&magnitude, mantissa);
+        while (exponent-- > 0) big_shl1(&magnitude);
+        if (dec_pack(&magnitude, 0, neg, out)) dec_overflow(out);
+        return;
+    }
+    for (scale = DEC_MAX_SCALE; scale >= 0; scale--) {
+        big_set_u64(&magnitude, mantissa);
+        big_pow10(&factor, scale);
+        big_mul(&magnitude, &factor, &scaled);
+        big_shr_round(&scaled, -exponent, &quotient);
+        if (big_fits_96(&quotient)) break;
+    }
+    while (scale > 0) {
+        DecBig shorter = quotient;
+        if (big_div_u32(&shorter, 10) != 0) break;
+        quotient = shorter;
+        scale--;
+    }
+    if (dec_pack(&quotient, scale, neg, out)) dec_overflow(out);
+}
+static void dec_truncate(const DecValue* d, DecBig* out) {
+    DecBig p;
+    big_from_mantissa(out, d);
+    if (d->scale > 0) {
+        DecBig r;
+        DecBig q;
+        big_pow10(&p, d->scale);
+        big_divmod(out, &p, &q, &r);
+        *out = q;
+    }
+}
+
+static const char* dec_integer_name(int64_t min, int64_t max) {
+    if (min == -128) return "an SByte";
+    if (min == 0 && max == 255) return "a Byte";
+    if (min == -32768) return "an Int16";
+    if (min == 0 && max == 65535) return "a UInt16";
+    if (min == INT32_MIN) return "an Int32";
+    if (min == 0 && max == (int64_t)UINT32_MAX) return "a UInt32";
+    return "an Int64";
+}
+
+/* Truncates toward zero. A value outside [min, max] raises OverflowException
+   whatever the checked context, as in .NET. */
+int64_t arc_dec_to_i64(void* a, int64_t min, int64_t max) {
+    DecValue x;
+    DecBig whole;
+    uint64_t magnitude;
+    char message[96];
+    dec_load(a, &x);
+    dec_truncate(&x, &whole);
+    magnitude = ((uint64_t)whole.w[1] << 32) | whole.w[0];
+    if (big_fits_96(&whole) && whole.w[2] == 0) {
+        if (!x.neg && magnitude <= (uint64_t)max) return (int64_t)magnitude;
+        if (x.neg && (magnitude == 0 || magnitude <= (uint64_t)0 - (uint64_t)min)) {
+            return (int64_t)((uint64_t)0 - magnitude);
+        }
+    }
+    snprintf(message, sizeof message, "Value was either too large or too small for %s.", dec_integer_name(min, max));
+    arc_raise(ARC_EXC_OVERFLOW, message);
+    return 0;
+}
+
+int64_t arc_dec_to_u64(void* a) {
+    DecValue x;
+    DecBig whole;
+    dec_load(a, &x);
+    dec_truncate(&x, &whole);
+    if (big_fits_96(&whole) && whole.w[2] == 0 && (!x.neg || big_is_zero(&whole))) {
+        return (int64_t)(((uint64_t)whole.w[1] << 32) | whole.w[0]);
+    }
+    arc_raise(ARC_EXC_OVERFLOW, "Value was either too large or too small for a UInt64.");
+    return 0;
+}
+
+double arc_dec_to_double(void* a) {
+    static const double powers[DEC_MAX_SCALE + 1] = {
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+        1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28
+    };
+    DecValue x;
+    double result;
+    dec_load(a, &x);
+    result = ((double)(((uint64_t)x.m[1] << 32) | x.m[0]) + (double)x.m[2] * 18446744073709551616.0)
+        / powers[x.scale > DEC_MAX_SCALE ? DEC_MAX_SCALE : x.scale];
+    return x.neg ? -result : result;
+}
+
+void* arc_dec_to_str(void* a) {
+    DecValue x;
+    DecBig magnitude;
+    char digits[40];
+    char text[48];
+    int count = 0, length = 0, i;
+    dec_load(a, &x);
+    big_from_mantissa(&magnitude, &x);
+    do {
+        digits[count++] = (char)('0' + big_div_u32(&magnitude, 10));
+    } while (!big_is_zero(&magnitude));
+    while (count <= x.scale) digits[count++] = '0';
+    if (x.neg && !dec_is_zero(&x)) text[length++] = '-';
+    for (i = count - 1; i >= 0; i--) {
+        text[length++] = digits[i];
+        if (i == x.scale && i > 0) text[length++] = '.';
+    }
+    return arc_str_new(text, length, "<runtime>");
 }
 
 /* ---- destruction ------------------------------------------------------ */
@@ -530,14 +1071,35 @@ static void arc_array_ref_deinit(void* p) {
 }
 static void arc_array_val_deinit(void* p) { (void)p; }
 
+static TypeInfo* arc_array_elem_type(void* p);
+
+static intptr_t arc_struct_stride(TypeInfo* elem) {
+    return elem->instanceSize > 8 ? elem->instanceSize : 8;
+}
+
+static void arc_array_struct_deinit(void* p) {
+    TypeInfo* elem = arc_array_elem_type(p);
+    intptr_t stride = arc_struct_stride(elem);
+    intptr_t length = *(intptr_t*)((char*)p + 24);
+    char* elements = (char*)p + 40;
+    for (intptr_t i = 0; i < length; i++) {
+        elem->deinit(elements + i * stride);
+    }
+}
+
 static TypeInfo arc_array_ref_ti = { "<ref[]>", 0, arc_array_ref_deinit, 0, 0, 0, 0 };
 static TypeInfo arc_array_val_ti = { "<val[]>", 0, arc_array_val_deinit, 0, 0, 0, 0 };
+static TypeInfo arc_array_struct_ti = { "<struct[]>", 0, arc_array_struct_deinit, 0, 0, 0, 0 };
 
-void* arc_array_new(intptr_t length, int isRef, TypeInfo* elemType, const char* site) {
-    intptr_t size = 40 + 8 * (length < 0 ? 0 : length);
+enum { ARC_ARRAY_VALUE, ARC_ARRAY_REFERENCE, ARC_ARRAY_STRUCT };
+
+void* arc_array_new(intptr_t length, int elementKind, TypeInfo* elemType, const char* site) {
+    intptr_t stride = elementKind == ARC_ARRAY_STRUCT ? arc_struct_stride(elemType) : 8;
+    intptr_t size = 40 + stride * (length < 0 ? 0 : length);
     ObjHeader* h = (ObjHeader*)calloc(1, (size_t)size);
     h->strong = 1; h->weak = 1;
-    h->type = isRef ? &arc_array_ref_ti : &arc_array_val_ti;
+    h->type = elementKind == ARC_ARRAY_STRUCT ? &arc_array_struct_ti
+        : elementKind == ARC_ARRAY_REFERENCE ? &arc_array_ref_ti : &arc_array_val_ti;
     *(intptr_t*)((char*)h + 24) = length;
     *(TypeInfo**)((char*)h + 32) = elemType;
     g_alloc++;
@@ -546,6 +1108,13 @@ void* arc_array_new(intptr_t length, int isRef, TypeInfo* elemType, const char* 
 }
 intptr_t arc_array_length(void* p) { return p ? *(intptr_t*)((char*)p + 24) : 0; }
 static TypeInfo* arc_array_elem_type(void* p) { return p ? *(TypeInfo**)((char*)p + 32) : 0; }
+
+void* arc_array_slice_new(void* source, intptr_t length, const char* site) {
+    TypeInfo* arrayType = ((ObjHeader*)source)->type;
+    int kind = arrayType == &arc_array_struct_ti ? ARC_ARRAY_STRUCT
+        : arrayType == &arc_array_ref_ti ? ARC_ARRAY_REFERENCE : ARC_ARRAY_VALUE;
+    return arc_array_new(length, kind, arc_array_elem_type(source), site);
+}
 
 /* Raises NullReferenceException or IndexOutOfRangeException and returns 0 when
    the access is not valid. The compiled code checks arc_exception afterwards. */
@@ -616,6 +1185,11 @@ void* arc_str_concat(void* a, void* b) {
 void* arc_str_from_int(intptr_t v) {
     char tmp[32];
     int n = snprintf(tmp, sizeof tmp, "%lld", (long long)v);
+    return arc_str_new(tmp, n, "<runtime>");
+}
+void* arc_str_from_uint(uint64_t v) {
+    char tmp[32];
+    int n = snprintf(tmp, sizeof tmp, "%llu", (unsigned long long)v);
     return arc_str_new(tmp, n, "<runtime>");
 }
 /* A C# char is one UTF-16 code unit. Encode a scalar in the BMP; a surrogate
@@ -690,6 +1264,11 @@ int arc_is_instance(void* obj, TypeInfo* target) {
     }
     return 0;
 }
+int arc_has_interface(void* obj, intptr_t slot) {
+    if (!obj || slot < 0) return 0;
+    TypeInfo* type = ((ObjHeader*)obj)->type;
+    return type && slot < type->itableLen && type->itable[slot] != NULL;
+}
 void arc_weakref_set(void* wr, void* target) {
     if (!wr) return;
     void** slot = (void**)((char*)wr + 24);
@@ -755,6 +1334,16 @@ static void leak_each(ObjHeader* h, void (*fn)(void*, void*), void* ctx) {
         intptr_t i;
         for (i = 0; i < len; i++) {
             if (elems[i]) fn(elems[i], ctx);
+        }
+        return;
+    }
+    if (t == &arc_array_struct_ti) {
+        TypeInfo* elem = arc_array_elem_type(h);
+        intptr_t stride = arc_struct_stride(elem);
+        intptr_t length = arc_array_length(h);
+        char* elements = (char*)h + 40;
+        for (intptr_t i = 0; i < length; i++) {
+            leak_slots(elements + i * stride, elem->slots, elem->slotCount, fn, ctx);
         }
         return;
     }
@@ -928,6 +1517,10 @@ void arc_console_write(void* s, int nl) {
 }
 void arc_console_write_int(long long v, int nl) {
     printf("%lld", v);
+    if (nl) putchar('\n');
+}
+void arc_console_write_uint(uint64_t v, int nl) {
+    printf("%llu", (unsigned long long)v);
     if (nl) putchar('\n');
 }
 void arc_console_write_char(int c, int nl) {

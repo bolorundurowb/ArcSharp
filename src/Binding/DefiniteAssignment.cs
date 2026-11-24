@@ -27,6 +27,15 @@ public static class DefiniteAssignment
         private readonly Action<int, string> _report;
         private readonly HashSet<int> _reported = new();   // one warning per local
 
+        private sealed class BranchPaths
+        {
+            public bool IsLoop { get; init; }
+            public List<HashSet<int>> Break { get; } = [];
+            public List<HashSet<int>> Continue { get; } = [];
+        }
+
+        private readonly Stack<BranchPaths> _branchTargets = [];
+
         public Analyzer(int line, Action<int, string> report) { _line = line; _report = report; }
 
         public void Run(BoundBlock body) => VisitStmt(body, new HashSet<int>());
@@ -84,8 +93,28 @@ public static class DefiniteAssignment
 
                 case BoundWhile w:
                     {
-                        VisitExpr(w.Condition, assigned);
-                        VisitStmt(w.Body, new HashSet<int>(assigned));   // body may run zero times
+                        if (w.ConditionIsTop)
+                        {
+                            VisitExpr(w.Condition, assigned);
+                            VisitLoopBody(w.Body, assigned);
+                            return true;
+                        }
+
+                        var paths = VisitLoopBody(w.Body, assigned);
+                        var conditionSet = MergePaths(paths.Continue);
+                        if (conditionSet != null)
+                        {
+                            VisitExpr(w.Condition, conditionSet);
+                            paths.Break.Add(conditionSet);
+                        }
+
+                        var exitSet = MergePaths(paths.Break);
+                        if (exitSet == null)
+                        {
+                            return false;
+                        }
+
+                        Replace(assigned, exitSet);
                         return true;
                     }
 
@@ -101,15 +130,24 @@ public static class DefiniteAssignment
                             VisitExpr(f.Condition, assigned);
                         }
 
-                        var bodySet = new HashSet<int>(assigned);
-                        VisitStmt(f.Body, bodySet);
-                        if (f.Update != null)
+                        var paths = VisitLoopBody(f.Body, assigned);
+                        if (f.Update != null && MergePaths(paths.Continue) is { } updateSet)
                         {
-                            VisitExpr(f.Update, bodySet);
+                            VisitExpr(f.Update, updateSet);
                         }
 
                         return true;
                     }
+
+                case BoundSwitch selection:
+                    return VisitSwitch(selection, assigned);
+
+                case BoundBranch branch:
+                    var target = branch.IsContinue
+                        ? _branchTargets.First(candidate => candidate.IsLoop)
+                        : _branchTargets.Peek();
+                    (branch.IsContinue ? target.Continue : target.Break).Add(new HashSet<int>(assigned));
+                    return false;
 
                 case BoundReturn r:
                     if (r.Value != null)
@@ -144,6 +182,84 @@ public static class DefiniteAssignment
             }
         }
 
+        private bool VisitSwitch(BoundSwitch selection, HashSet<int> assigned)
+        {
+            VisitExpr(selection.Value, assigned);
+            var paths = new BranchPaths();
+            _branchTargets.Push(paths);
+            foreach (var section in selection.Sections)
+            {
+                var sectionSet = new HashSet<int>(assigned);
+                foreach (var label in section.Tests)
+                {
+                    VisitExpr(label, sectionSet);
+                }
+
+                if (VisitStmt(section.Body, sectionSet))
+                {
+                    paths.Break.Add(sectionSet);
+                }
+            }
+
+            _branchTargets.Pop();
+            if (!selection.Sections.Any(section => section.IsDefault))
+            {
+                paths.Break.Add(assigned);
+            }
+
+            if (MergePaths(paths.Break) is not { } exitSet)
+            {
+                return false;
+            }
+
+            Replace(assigned, exitSet);
+            return true;
+        }
+
+        private BranchPaths VisitLoopBody(BoundStmt body, HashSet<int> assigned)
+        {
+            var paths = new BranchPaths { IsLoop = true };
+            var bodySet = new HashSet<int>(assigned);
+            _branchTargets.Push(paths);
+            if (VisitStmt(body, bodySet))
+            {
+                paths.Continue.Add(bodySet);
+            }
+
+            _branchTargets.Pop();
+            return paths;
+        }
+
+        private static void ApplyFinally(List<HashSet<int>> paths, int first, bool completes, HashSet<int> assigned)
+        {
+            if (!completes)
+            {
+                paths.RemoveRange(first, paths.Count - first);
+                return;
+            }
+
+            for (var i = first; i < paths.Count; i++)
+            {
+                paths[i].UnionWith(assigned);
+            }
+        }
+
+        private static HashSet<int>? MergePaths(List<HashSet<int>> paths)
+        {
+            if (paths.Count == 0)
+            {
+                return null;
+            }
+
+            var merged = new HashSet<int>(paths[0]);
+            foreach (var path in paths.Skip(1))
+            {
+                merged.IntersectWith(path);
+            }
+
+            return merged;
+        }
+
         // A catch clause can start after any part of the body has run, so it
         // sees only what was assigned before the try. What is assigned after the
         // statement is what every path that completes has in common, plus
@@ -152,6 +268,9 @@ public static class DefiniteAssignment
         {
             var before = new HashSet<int>(assigned);
             var paths = new List<HashSet<int>>();
+            var branches = t.Finally == null
+                ? []
+                : _branchTargets.Select(target => (Target: target, Break: target.Break.Count, Continue: target.Continue.Count)).ToArray();
 
             var bodySet = new HashSet<int>(before);
             if (VisitStmt(t.Body, bodySet))
@@ -182,7 +301,14 @@ public static class DefiniteAssignment
             if (t.Finally != null)
             {
                 var finallySet = new HashSet<int>(before);
-                if (!VisitStmt(t.Finally, finallySet))
+                var completes = VisitStmt(t.Finally, finallySet);
+                foreach (var (target, breakCount, continueCount) in branches)
+                {
+                    ApplyFinally(target.Break, breakCount, completes, finallySet);
+                    ApplyFinally(target.Continue, continueCount, completes, finallySet);
+                }
+
+                if (!completes)
                 {
                     return false;
                 }
@@ -208,6 +334,25 @@ public static class DefiniteAssignment
             }
         }
 
+        private void VisitArguments(List<BoundExpr> arguments, HashSet<int> assigned)
+        {
+            var outputs = new List<int>();
+            foreach (var argument in arguments)
+            {
+                var value = argument is BoundNamedArgument named ? named.Value : argument;
+                if (value is BoundByRefArg { Kind: ArcSharp.Syntax.RefKind.Out, Lvalue: BoundLocal local })
+                {
+                    outputs.Add(local.Symbol.Id);
+                }
+                else
+                {
+                    VisitExpr(value, assigned);
+                }
+            }
+
+            assigned.UnionWith(outputs);
+        }
+
         // Visits an expression in evaluation order. Local reads are checked here;
         // local writes (assignment targets, out-targets) mark the local assigned.
         private void VisitExpr(BoundExpr e, HashSet<int> assigned)
@@ -220,6 +365,34 @@ public static class DefiniteAssignment
                         _report(_line, $"local '{lo.Symbol.Name}' may be used before assignment");
                     }
 
+                    break;
+
+                case BoundStringCompound compound:
+                    VisitExpr(compound.Target, assigned);
+                    VisitExpr(compound.Right, assigned);
+                    break;
+
+                case BoundNumericCompound compound:
+                    VisitExpr(compound.Target, assigned);
+                    VisitExpr(compound.Right, assigned);
+                    break;
+
+                case BoundOperatorUpdate update:
+                    VisitExpr(update.Target, assigned);
+                    VisitExpr(update.Result, assigned);
+                    break;
+
+                case BoundIncrement increment:
+                    VisitExpr(increment.Target, assigned);
+                    break;
+
+                case BoundSequence sequence:
+                    foreach (var effect in sequence.Effects)
+                    {
+                        VisitExpr(effect, assigned);
+                    }
+
+                    VisitExpr(sequence.Value, assigned);
                     break;
 
                 case BoundAssign a:
@@ -269,27 +442,74 @@ public static class DefiniteAssignment
                         VisitExpr(c.Receiver, assigned);
                     }
 
-                    foreach (var arg in c.Arguments)
-                    {
-                        VisitExpr(arg, assigned);
-                    }
-
+                    VisitArguments(c.Arguments, assigned);
                     break;
 
                 case BoundNewObject n:
-                    foreach (var arg in n.Arguments)
+                    VisitArguments(n.Arguments, assigned);
+                    break;
+
+                case BoundByRefArg argument:
+                    VisitExpr(argument.Lvalue, assigned);
+                    break;
+
+                case BoundNamedArgument argument:
+                    VisitExpr(argument.Value, assigned);
+                    break;
+
+                case BoundNewArray na:
+                    VisitExpr(na.Size, assigned);
+                    foreach (var initializer in na.Initializers)
                     {
-                        VisitExpr(arg, assigned);
+                        VisitExpr(initializer, assigned);
                     }
 
                     break;
+                case BoundArraySlice slice:
+                    VisitExpr(slice.Receiver, assigned);
+                    VisitExpr(slice.Start, assigned);
+                    VisitExpr(slice.Length, assigned);
+                    break;
 
-                case BoundNewArray na: VisitExpr(na.Size, assigned); break;
                 case BoundIndex ix: VisitExpr(ix.Receiver, assigned); VisitExpr(ix.Index, assigned); break;
                 case BoundBinary b: VisitExpr(b.Left, assigned); VisitExpr(b.Right, assigned); break;
                 case BoundUnary u: VisitExpr(u.Operand, assigned); break;
                 case BoundConversion cv: VisitExpr(cv.Operand, assigned); break;
+                case BoundUnbox unbox: VisitExpr(unbox.Operand, assigned); break;
+                case BoundChoice choice:
+                    VisitExpr(choice.Condition, assigned);
+                    var whenTrue = new HashSet<int>(assigned);
+                    var whenFalse = new HashSet<int>(assigned);
+                    VisitExpr(choice.WhenTrue, whenTrue);
+                    VisitExpr(choice.WhenFalse, whenFalse);
+                    whenTrue.IntersectWith(whenFalse);
+                    Replace(assigned, whenTrue);
+                    break;
+
+                case BoundSwitchFailure failure:
+                    VisitExpr(failure.Exception, assigned);
+                    break;
+
+                case BoundPatternTest pattern:
+                    VisitExpr(pattern.Value, assigned);
+                    VisitExpr(pattern.Test, assigned);
+                    break;
+
+                case BoundPatternBinding binding:
+                    // Roslyn already validates the success-path scope of pattern locals.
+                    VisitExpr(binding.Test, assigned);
+                    VisitExpr(binding.Value, assigned);
+                    assigned.Add(binding.Local.Id);
+                    break;
                 case BoundLength len: VisitExpr(len.Receiver, assigned); break;
+                case BoundSameType same: VisitExpr(same.Left, assigned); VisitExpr(same.Right, assigned); break;
+                case BoundDecimalOp decimalOp:
+                    foreach (var argument in decimalOp.Arguments)
+                    {
+                        VisitExpr(argument, assigned);
+                    }
+
+                    break;
                 case BoundConsoleCall cc: if (cc.Argument != null) { VisitExpr(cc.Argument, assigned); } break;
                 case BoundGcCall gc: if (gc.Argument != null) { VisitExpr(gc.Argument, assigned); } break;
                 case BoundWeakRefNew wn: VisitExpr(wn.Target, assigned); break;

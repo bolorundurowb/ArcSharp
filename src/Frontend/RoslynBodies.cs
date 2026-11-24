@@ -42,31 +42,19 @@ sealed partial class RoslynLowering
 
         var block = new BoundBlock();
         var syntax = roslyn.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
-        if (roslyn.MethodKind == MethodKind.StaticConstructor
-            || (method.IsConstructor && syntax is not ConstructorDeclarationSyntax { Initializer.ThisOrBaseKeyword.RawKind: (int)SyntaxKind.ThisKeyword }))
+        var synthesised = TryLowerRecordBody(method, roslyn, block);
+        if (!synthesised && (roslyn.MethodKind == MethodKind.StaticConstructor
+            || (method.IsConstructor && syntax is not ConstructorDeclarationSyntax { Initializer.ThisOrBaseKeyword.RawKind: (int)SyntaxKind.ThisKeyword })))
         {
             AppendFieldInitialisers(block, method);
         }
 
-        if (method.IsConstructor && roslyn.IsImplicitlyDeclared && method.Owner.BaseType is { } baseType)
+        if (!synthesised && method.IsConstructor && roslyn.IsImplicitlyDeclared)
         {
-            var baseConstructor = baseType.Methods.Find(candidate => candidate.IsConstructor && candidate.Parameters.Count == 0);
-            if (baseConstructor != null)
-            {
-                block.Statements.Add(new BoundExprStmt
-                {
-                    Expression = new BoundCall
-                    {
-                        Receiver = new BoundThis { Type = method.Owner },
-                        Method = baseConstructor,
-                        Arguments = [],
-                        Type = _void
-                    }
-                });
-            }
+            AppendImplicitBaseConstructor(block, method);
         }
 
-        if (syntax != null)
+        if (syntax != null && !synthesised)
         {
             var model = _compilation.GetSemanticModel(syntax.SyntaxTree);
             var operation = model.GetOperation(syntax);
@@ -79,18 +67,20 @@ sealed partial class RoslynLowering
                         block.Statements.Add(new BoundExprStmt { Expression = initialiser });
                     }
 
-                    AppendBlock(block, constructor.BlockBody);
+                    AppendBlock(block, constructor.BlockBody ?? constructor.ExpressionBody);
                     break;
                 case IMethodBodyOperation body:
-                    AppendBlock(block, body.BlockBody);
-                    if (body.ExpressionBody != null)
-                    {
-                        Report(body.ExpressionBody.Syntax, "expression-bodied members are not supported", DiagnosticCatalog.UnsupportedConstructId);
-                    }
-
+                    AppendBlock(block, body.BlockBody ?? body.ExpressionBody);
                     break;
                 case IBlockOperation blockOperation:
                     AppendBlock(block, blockOperation);
+                    break;
+                default:
+                    if (roslyn.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet)
+                    {
+                        AppendAccessorBody(block, model, syntax);
+                    }
+
                     break;
             }
         }
@@ -101,6 +91,64 @@ sealed partial class RoslynLowering
         {
             _substitution[pair.Key] = pair.Value;
         }
+    }
+
+    private void AppendImplicitBaseConstructor(BoundBlock block, MethodSymbol method)
+    {
+        if (method.Owner.BaseType is not { } baseType)
+        {
+            return;
+        }
+
+        var baseConstructor = baseType.Methods.Find(candidate => candidate.IsConstructor && candidate.Parameters.Count == 0);
+        if (baseConstructor == null)
+        {
+            return;
+        }
+
+        block.Statements.Add(new BoundExprStmt
+        {
+            Expression = new BoundCall
+            {
+                Receiver = new BoundThis { Type = method.Owner },
+                Method = baseConstructor,
+                Arguments = [],
+                Type = _void
+            }
+        });
+    }
+
+    private void AppendAccessorBody(BoundBlock block, SemanticModel model, SyntaxNode syntax)
+    {
+        var body = syntax switch
+        {
+            AccessorDeclarationSyntax accessor => (SyntaxNode?)accessor.Body ?? accessor.ExpressionBody,
+            PropertyDeclarationSyntax property => property.ExpressionBody,
+            IndexerDeclarationSyntax indexer => indexer.ExpressionBody,
+            ArrowExpressionClauseSyntax arrow => arrow,
+            _ => null
+        };
+        if (body != null && model.GetOperation(body) is IBlockOperation statements)
+        {
+            AppendBlock(block, statements);
+            return;
+        }
+
+        if (body is ArrowExpressionClauseSyntax expression && model.GetOperation(expression.Expression) is { } operation)
+        {
+            while (operation.Parent is IConversionOperation conversion && conversion.IsImplicit)
+            {
+                operation = conversion;
+            }
+
+            var value = LowerExpr(operation);
+            block.Statements.Add(_currentMethod.ReturnType == _void
+                ? new BoundExprStmt { Expression = value }
+                : new BoundReturn { Value = value });
+            return;
+        }
+
+        Report(syntax, "could not lower the accessor body", "ARC2001");
     }
 
     private void AppendFieldInitialisers(BoundBlock block, MethodSymbol method)
@@ -118,7 +166,13 @@ sealed partial class RoslynLowering
             }
 
             var model = _compilation.GetSemanticModel(syntax.SyntaxTree);
-            if (model.GetOperation(syntax) is not IFieldInitializerOperation operation)
+            var value = model.GetOperation(syntax) switch
+            {
+                IFieldInitializerOperation fieldInitialiser => fieldInitialiser.Value,
+                IPropertyInitializerOperation propertyInitialiser => propertyInitialiser.Value,
+                _ => null
+            };
+            if (value == null)
             {
                 Report(syntax, $"could not lower initialiser for '{field.Name}'", "ARC2001");
                 continue;
@@ -132,7 +186,7 @@ sealed partial class RoslynLowering
             };
             block.Statements.Add(new BoundExprStmt
             {
-                Expression = new BoundAssign { Target = target, Value = LowerExpr(operation.Value), Type = field.Type }
+                Expression = new BoundAssign { Target = target, Value = LowerExpr(value), Type = field.Type }
             });
         }
     }
@@ -189,6 +243,8 @@ sealed partial class RoslynLowering
     {
         IBlockOperation block => LowerBlock(block),
         IVariableDeclarationGroupOperation group => LowerDeclarations(group),
+        IExpressionStatementOperation { Operation: IDeconstructionAssignmentOperation deconstruction } =>
+            new BoundExprStmt { Expression = LowerDeconstruction(deconstruction) },
         IExpressionStatementOperation statement => new BoundExprStmt { Expression = LowerExpr(statement.Operation) },
         IConditionalOperation ifOperation => new BoundIf
         {
@@ -201,9 +257,14 @@ sealed partial class RoslynLowering
             Condition = loop.Condition == null
                 ? new BoundLiteral { Type = _bool, LitKind = LiteralKind.Bool, BoolValue = true }
                 : LowerExpr(loop.Condition),
-            Body = LowerStmt(loop.Body)
+            Body = LowerStmt(loop.Body),
+            ConditionIsTop = loop.ConditionIsTop
         },
         IForLoopOperation loop => LowerFor(loop),
+        IForEachLoopOperation loop => LowerArrayForEach(loop),
+        ISwitchOperation selection => LowerSwitch(selection),
+        IBranchOperation { BranchKind: BranchKind.Break or BranchKind.Continue } branch =>
+            new BoundBranch { IsContinue = branch.BranchKind == BranchKind.Continue },
         IUsingOperation usingOperation => LowerUsing(usingOperation),
         ITryOperation tryOperation => LowerTry(tryOperation),
         IThrowOperation thrown => new BoundThrow
@@ -265,7 +326,10 @@ sealed partial class RoslynLowering
         {
             foreach (var declarator in declaration.Declarators)
             {
-                block.Statements.Add(LowerDeclarator(declarator));
+                if (!declarator.Symbol.IsConst)
+                {
+                    block.Statements.Add(LowerDeclarator(declarator));
+                }
             }
         }
 
@@ -313,6 +377,140 @@ sealed partial class RoslynLowering
             Condition = loop.Condition == null ? null : LowerExpr(loop.Condition),
             Update = update,
             Body = LowerStmt(loop.Body)
+        };
+    }
+
+    private BoundStmt LowerSwitch(ISwitchOperation operation)
+    {
+        var value = LowerExpr(operation.Value);
+        var input = new BoundPatternInput { Type = value.Type };
+        var result = new BoundSwitch { Value = value, Input = input };
+        foreach (var arm in operation.Cases)
+        {
+            var section = new BoundSwitchSection { Body = new BoundBlock() };
+            foreach (var clause in arm.Clauses)
+            {
+                switch (clause)
+                {
+                    case IDefaultCaseClauseOperation:
+                        section.IsDefault = true;
+                        break;
+                    case ISingleValueCaseClauseOperation label:
+                        section.Tests.Add(LowerPatternComparison(label, input, label.Value, TokenKind.EqualsEquals));
+                        break;
+                    case IPatternCaseClauseOperation pattern:
+                        section.Tests.Add(LowerGuardedPattern(pattern.Pattern, pattern.Guard, input));
+                        break;
+                    default:
+                        return UnsupportedStmt(clause);
+                }
+            }
+
+            section.Body.Statements.AddRange(arm.Body.Select(LowerStmt));
+            result.Sections.Add(section);
+        }
+
+        return result;
+    }
+
+    private BoundStmt LowerArrayForEach(IForEachLoopOperation loop)
+    {
+        if (loop.Syntax is not ForEachStatementSyntax syntax
+            || loop.IsAsynchronous
+            || loop.LoopControlVariable is not IVariableDeclaratorOperation { Symbol.RefKind: Microsoft.CodeAnalysis.RefKind.None } variable)
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var model = _compilation.GetSemanticModel(syntax.SyntaxTree);
+        if (model.GetTypeInfo(syntax.Expression).Type is not IArrayTypeSymbol { IsSZArray: true })
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var conversion = model.GetForEachStatementInfo(syntax).ElementConversion;
+        if (conversion.IsUserDefined || conversion.IsBoxing || conversion.IsUnboxing)
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var collection = loop.Collection is IConversionOperation { IsImplicit: true } implicitConversion
+            ? implicitConversion.Operand
+            : loop.Collection;
+        var receiver = LowerExpr(collection);
+        if (receiver.Type.ElementType is not { } elementType)
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var array = new LocalSymbol { Name = "#foreach_array", Type = receiver.Type, Id = _localId++ };
+        var index = new LocalSymbol { Name = "#foreach_index", Type = _int, Id = _localId++ };
+        _methodLocals.Add(array);
+        _methodLocals.Add(index);
+
+        BoundLocal Read(LocalSymbol local) => new() { Symbol = local, Type = local.Type };
+        BoundLiteral Number(int value) => new() { Type = _int, LitKind = LiteralKind.Int, IntValue = value };
+        BoundTry ReleaseAfter(LocalSymbol local, BoundBlock body) => new()
+        {
+            Body = body,
+            Finally = new BoundBlock
+            {
+                Statements = [new BoundExprStmt
+                {
+                    Expression = new BoundAssign
+                    {
+                        Target = Read(local), Value = DefaultValue(local.Type), Type = local.Type
+                    }
+                }]
+            }
+        };
+
+        var iteration = Local(variable.Symbol);
+        BoundExpr item = new BoundIndex { Receiver = Read(array), Index = Read(index), Type = elementType };
+        if (iteration.Type != elementType)
+        {
+            item = new BoundConversion
+            {
+                Operand = item,
+                Type = iteration.Type,
+                CastCheck = conversion is { IsReference: true, IsImplicit: false }
+                    && iteration.Type.Kind == BoundKind.Class && iteration.Type != _object
+            };
+        }
+
+        var body = new BoundBlock
+        {
+            Statements = [
+                new BoundLocalDecl { Symbol = iteration, Initializer = item },
+                LowerStmt(loop.Body)
+            ]
+        };
+        var lowered = new BoundFor
+        {
+            Init = new BoundLocalDecl { Symbol = index, Initializer = Number(0) },
+            Condition = new BoundBinary
+            {
+                Op = TokenKind.Less, Kind = BinKind.IntCmp, Left = Read(index), Type = _bool,
+                Right = new BoundLength { Receiver = Read(array), Type = _int }
+            },
+            Body = iteration.Type.IsReferenceType || iteration.Type.Kind == BoundKind.Struct
+                ? ReleaseAfter(iteration, body)
+                : body,
+            Update = new BoundAssign
+            {
+                Target = Read(index), Type = _int,
+                Value = new BoundBinary
+                {
+                    Op = TokenKind.Plus, Kind = BinKind.IntArith, Left = Read(index), Right = Number(1), Type = _int
+                }
+            }
+        };
+        return new BoundBlock
+        {
+            Statements = [
+                new BoundLocalDecl { Symbol = array, Initializer = receiver },
+                ReleaseAfter(array, new BoundBlock { Statements = [lowered] })
+            ]
         };
     }
 
@@ -395,27 +593,39 @@ sealed partial class RoslynLowering
     private BoundExpr LowerExpr(IOperation operation) => operation switch
     {
         ILiteralOperation literal => LowerLiteral(literal),
+        ILocalReferenceOperation { Local.HasConstantValue: true } local =>
+            LowerConstant(local.Local.ConstantValue, local.Type, local.Syntax),
         ILocalReferenceOperation local => LocalRef(local.Local),
         IParameterReferenceOperation parameter => ParameterRef(parameter.Parameter),
+        IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ImplicitReceiver } => _initialiserTargets.Peek(),
         IInstanceReferenceOperation => new BoundThis { Type = _currentType },
         IFieldReferenceOperation field => LowerField(field),
         IPropertyReferenceOperation property => LowerProperty(property),
         IInvocationOperation invocation => LowerInvocation(invocation),
         IObjectCreationOperation creation => LowerCreation(creation),
+        IWithOperation with => LowerWith(with),
+        ITypeParameterObjectCreationOperation { Initializer: not null } creation => UnsupportedExpr(creation),
         ITypeParameterObjectCreationOperation creation => LowerTypeParameterCreation(creation.Type, creation.Syntax),
         IArrayCreationOperation array => LowerArray(array),
         IArrayElementReferenceOperation element => LowerElement(element),
         IBinaryOperation binary => LowerBinary(binary),
         IUnaryOperation unary => LowerUnary(unary),
         IConversionOperation conversion => LowerConversion(conversion),
-        IIsTypeOperation test => new BoundIs
+        IIsTypeOperation { TypeOperand.TypeKind: RoslynKind.Enum } test => UnsupportedExpr(test),
+        IIsTypeOperation test => LowerTypeTest(test),
+        IIsPatternOperation pattern => LowerPatternTest(pattern),
+        ICoalesceOperation coalesce => LowerCoalesce(coalesce),
+        ISwitchExpressionOperation expression => LowerSwitchExpression(expression),
+        IConditionalOperation { IsRef: false, WhenFalse: { } otherwise } choice => new BoundChoice
         {
-            Operand = LowerExpr(test.ValueOperand),
-            TestType = MapType(test.TypeOperand, test.Syntax.GetLocation()),
-            Type = _bool
+            Condition = LowerExpr(choice.Condition),
+            WhenTrue = LowerExpr(choice.WhenTrue),
+            WhenFalse = LowerExpr(otherwise),
+            Type = MapType(choice.Type, choice.Syntax.GetLocation())
         },
         ISimpleAssignmentOperation assignment => LowerAssignment(assignment),
         ICompoundAssignmentOperation assignment => LowerCompound(assignment),
+        IIncrementOrDecrementOperation increment => LowerIncrement(increment),
         IDefaultValueOperation value => value.Type == null
             ? ErrorExpr()
             : DefaultValue(value.Type, value.Syntax.GetLocation()),
@@ -423,18 +633,62 @@ sealed partial class RoslynLowering
         _ => UnsupportedExpr(operation)
     };
 
-    private BoundExpr LowerLiteral(ILiteralOperation literal)
+    private BoundExpr LowerTypeTest(IIsTypeOperation test)
     {
-        if (literal.ConstantValue.HasValue == false || literal.ConstantValue.Value == null)
+        var operand = LowerExpr(test.ValueOperand);
+        var type = MapType(test.TypeOperand, test.Syntax.GetLocation());
+        if (operand.Type.NullableElementType is { } element)
         {
-            var nullType = literal.Type == null || literal.Type.TypeKind == RoslynKind.Error
+            var input = new BoundPatternInput { Type = operand.Type };
+            return Capture(operand, input, type == element || type == _object
+                ? HasNullableValue(input)
+                : PatternResult(false));
+        }
+
+        if (operand.Type.Kind == BoundKind.Struct)
+        {
+            operand = BoxValue(operand, test.Syntax);
+        }
+
+        if (type.Kind == BoundKind.Struct)
+        {
+            type = StructBox(type).Owner;
+        }
+
+        return new BoundIs { Operand = operand, TestType = type, Type = _bool };
+    }
+
+    private BoundExpr BoxValue(BoundExpr value, SyntaxNode syntax)
+    {
+        var box = StructBox(value.Type).Owner;
+        return new BoundNewObject
+        {
+            Type = box,
+            Ctor = box.Methods[0],
+            Arguments = [value],
+            Site = Site(syntax)
+        };
+    }
+
+    private BoundExpr LowerLiteral(ILiteralOperation literal) =>
+        LowerConstant(literal.ConstantValue.HasValue ? literal.ConstantValue.Value : null, literal.Type, literal.Syntax);
+
+    private BoundExpr LowerConstant(object? value, ITypeSymbol? roslynType, SyntaxNode syntax)
+    {
+        if (value == null)
+        {
+            var nullType = roslynType == null || roslynType.TypeKind == RoslynKind.Error
                 ? _null
-                : MapType(literal.Type, literal.Syntax.GetLocation());
+                : MapType(roslynType, syntax.GetLocation());
             return new BoundLiteral { Type = nullType == _error ? _null : nullType, LitKind = LiteralKind.Null };
         }
 
-        var value = literal.ConstantValue.Value;
-        var type = MapType(literal.Type, literal.Syntax.GetLocation());
+        var type = MapType(roslynType, syntax.GetLocation());
+        if (type == _error)
+        {
+            return ErrorExpr();
+        }
+
         return value switch
         {
             bool boolean => new BoundLiteral { Type = _bool, LitKind = LiteralKind.Bool, BoolValue = boolean },
@@ -444,16 +698,17 @@ sealed partial class RoslynLowering
                 Type = _string,
                 LitKind = LiteralKind.String,
                 StringValue = text,
-                Site = Site(literal.Syntax)
+                Site = Site(syntax)
             },
+            decimal number => DecimalConstant(number),
             float number => new BoundLiteral { Type = _float, LitKind = LiteralKind.Float, FloatValue = number },
             double number => new BoundLiteral { Type = _double, LitKind = LiteralKind.Double, FloatValue = number },
-            ulong number => new BoundLiteral { Type = _ulong, LitKind = LiteralKind.ULong, IntValue = unchecked((long)number) },
-            long number => new BoundLiteral { Type = _long, LitKind = LiteralKind.Long, IntValue = number },
-            uint number => new BoundLiteral { Type = _uint, LitKind = LiteralKind.UInt, IntValue = number },
+            ulong number => new BoundLiteral { Type = type, LitKind = LiteralKind.ULong, IntValue = unchecked((long)number) },
+            long number => new BoundLiteral { Type = type, LitKind = LiteralKind.Long, IntValue = number },
+            uint number => new BoundLiteral { Type = type, LitKind = LiteralKind.UInt, IntValue = number },
             _ => new BoundLiteral
             {
-                Type = type == _error ? _int : type,
+                Type = type,
                 LitKind = LiteralKind.Int,
                 IntValue = Convert.ToInt64(value)
             }
@@ -499,6 +754,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerField(IFieldReferenceOperation operation)
     {
+        if (operation.Field.HasConstantValue)
+        {
+            return LowerConstant(operation.Field.ConstantValue, operation.Type, operation.Syntax);
+        }
+
         var field = MapField(operation.Field, operation.Syntax.GetLocation());
         if (field == null)
         {
@@ -539,7 +799,7 @@ sealed partial class RoslynLowering
             return ErrorExpr();
         }
 
-        var getter = MapMethod(property.GetMethod, operation.Syntax.GetLocation());
+        var getter = MapMethod(property.GetMethod, operation.Syntax.GetLocation(), operation.ConstrainedToType);
         if (getter == null)
         {
             Report(operation.Syntax, $"'{operation.Instance?.Type?.ToDisplayString() ?? property.ContainingType.Name}' has no member '{property.Name}'", "ARC2002");
@@ -552,7 +812,7 @@ sealed partial class RoslynLowering
             instance = operation.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(operation.Instance);
         }
 
-        return new BoundCall { Receiver = instance, Method = getter, Arguments = [], Type = getter.ReturnType };
+        return BindMemberCall(instance, getter, LowerArguments(operation.Arguments, getter));
     }
 
     private BoundExpr LowerInvocation(IInvocationOperation call)
@@ -585,7 +845,14 @@ sealed partial class RoslynLowering
             return ErrorExpr();
         }
 
-        var method = MapMethod(target, call.Syntax.GetLocation());
+        if (call.ConstrainedToType != null && target is { IsStatic: true, IsGenericMethod: true, ContainingType.TypeKind: RoslynKind.Interface })
+        {
+            Report(call.Syntax, "generic static abstract and static virtual methods are not supported",
+                DiagnosticCatalog.UnsupportedConstructId);
+            return ErrorExpr();
+        }
+
+        var method = MapMethod(target, call.Syntax.GetLocation(), call.ConstrainedToType);
         if (method == null)
         {
             Report(call.Syntax, $"'{target.ContainingType.Name}' has no method '{target.Name}'", "ARC2002");
@@ -598,12 +865,22 @@ sealed partial class RoslynLowering
             receiver = call.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(call.Instance);
         }
 
+        return BindMemberCall(receiver, method, LowerArguments(call.Arguments, method));
+    }
+
+    private BoundCall BindMemberCall(BoundExpr? receiver, MethodSymbol method, List<BoundExpr> arguments)
+    {
         var interfaceCall = false;
         var selector = 0;
-        if (method.Owner.Kind == BoundKind.Interface)
+        if (_dispatchRoots.TryGetValue(method, out var dispatchRoot))
+        {
+            interfaceCall = true;
+            selector = _selectors[dispatchRoot];
+        }
+        else if (method.Owner.Kind == BoundKind.Interface && !method.IsStatic)
         {
             if (receiver != null
-                && receiver.Type.Kind == BoundKind.Class
+                && receiver.Type.Kind is BoundKind.Class or BoundKind.Struct
                 && _selectors.TryGetValue(method, out selector)
                 && receiver.Type.InterfaceImpl.TryGetValue(selector, out var implementation))
             {
@@ -618,18 +895,16 @@ sealed partial class RoslynLowering
             }
         }
 
-        var bound = new BoundCall
+        return new BoundCall
         {
             Receiver = receiver,
             Method = method,
-            Arguments = LowerArguments(call.Arguments, method),
+            Arguments = arguments,
             Type = method.ReturnType,
             Interface = interfaceCall,
             Selector = selector,
             Virtual = !interfaceCall && (method.IsVirtual || method.IsOverride)
         };
-
-        return bound;
     }
 
     private BoundExpr LowerConsole(IInvocationOperation call)
@@ -652,10 +927,26 @@ sealed partial class RoslynLowering
         }
 
         var argument = call.Arguments.Length > 0 ? LowerExpr(UnwrapBoxing(call.Arguments[0].Value)) : null;
-        if (argument != null && argument.Type.Kind == BoundKind.Struct)
+        if (argument?.Type.ToStringOverride is { } toString)
         {
-            Report(call.Syntax, "struct values cannot be printed: print their fields", DiagnosticCatalog.UnsupportedConstructId);
-            return ErrorExpr();
+            argument = new BoundCall { Receiver = argument, Method = toString, Type = _string };
+        }
+
+        if (argument is { Type: { Kind: BoundKind.Class } classType } && classType != _object && classType != _null
+            && argument is not BoundLiteral)
+        {
+            argument = ObjectText(argument);
+        }
+
+        if (argument?.Type is { } type && (type.Kind == BoundKind.Enum
+            || type.IsReferenceType && type != _string && argument is not BoundLiteral { LitKind: LiteralKind.Null }))
+        {
+            return UnsupportedExpr(call);
+        }
+
+        if (argument is BoundLiteral { LitKind: LiteralKind.Null } literal)
+        {
+            literal.Type = _string;
         }
 
         return new BoundConsoleCall { Which = which, Argument = argument, Type = _void };
@@ -670,12 +961,12 @@ sealed partial class RoslynLowering
             {
                 foreach (var element in array.Initializer.ElementValues)
                 {
-                    parts.Add(LowerExpr(UnwrapBoxing(element)));
+                    parts.Add(StringOperand(LowerExpr(UnwrapBoxing(element)), element.Syntax));
                 }
             }
             else
             {
-                parts.Add(LowerExpr(UnwrapBoxing(argument.Value)));
+                parts.Add(StringOperand(LowerExpr(UnwrapBoxing(argument.Value)), argument.Syntax));
             }
         }
 
@@ -768,7 +1059,7 @@ sealed partial class RoslynLowering
     private BoundExpr LowerTypeParameterCreation(ITypeSymbol? type, SyntaxNode syntax)
     {
         var concrete = MapType(type, syntax.GetLocation());
-        if (concrete.Kind == BoundKind.Primitive || concrete.Kind == BoundKind.String)
+        if (concrete.Kind is BoundKind.Primitive or BoundKind.Enum or BoundKind.String)
         {
             return DefaultValue(concrete);
         }
@@ -786,11 +1077,16 @@ sealed partial class RoslynLowering
     {
         if (creation.Type is ITypeParameterSymbol || creation.Constructor?.ContainingType.TypeKind == RoslynKind.TypeParameter)
         {
+            if (creation.Initializer != null)
+            {
+                return UnsupportedExpr(creation);
+            }
+
             return LowerTypeParameterCreation(creation.Type, creation.Syntax);
         }
 
         var type = MapType(creation.Type, creation.Syntax.GetLocation());
-        if (type.Kind == BoundKind.Primitive)
+        if (type.Kind is BoundKind.Primitive or BoundKind.Enum)
         {
             return DefaultValue(type);
         }
@@ -799,6 +1095,16 @@ sealed partial class RoslynLowering
         {
             var target = creation.Arguments.Length == 1 ? LowerExpr(creation.Arguments[0].Value) : ErrorExpr();
             return new BoundWeakRefNew { Target = target, Type = type, Site = Site(creation.Syntax) };
+        }
+
+        if (type == _decimal)
+        {
+            return creation.Arguments.Length switch
+            {
+                0 => DefaultValue(type),
+                1 => DecimalConversion(LowerExpr(creation.Arguments[0].Value), type) ?? UnsupportedExpr(creation),
+                _ => UnsupportedExpr(creation)
+            };
         }
 
         if (type.IsAbstract)
@@ -821,16 +1127,82 @@ sealed partial class RoslynLowering
             ctor = MapMethod(creation.Constructor, creation.Syntax.GetLocation());
         }
 
-        return new BoundNewObject
+        BoundExpr created = new BoundNewObject
         {
             Ctor = ctor,
             Arguments = ctor == null ? [] : LowerArguments(creation.Arguments, ctor),
             Type = type,
             Site = Site(creation.Syntax)
         };
+
+        if (creation.Initializer == null)
+        {
+            return created;
+        }
+
+        if (creation.Initializer.Syntax.IsKind(SyntaxKind.CollectionInitializerExpression))
+        {
+            Report(creation.Initializer.Syntax, "collection initialisers are not supported: call 'Add' after 'new'",
+                DiagnosticCatalog.UnsupportedConstructId);
+            return created;
+        }
+
+        if (type.Kind == BoundKind.Struct)
+        {
+            Report(creation.Initializer.Syntax, "object initialisers on structs are not supported: assign the fields after 'new'",
+                DiagnosticCatalog.UnsupportedConstructId);
+            return created;
+        }
+
+        return LowerInitialised(created, creation.Initializer);
     }
 
-    private BoundExpr LowerArray(IArrayCreationOperation array)
+    // The new object is held once, every member initialiser runs against it in
+    // source order, and the object is the value of the whole expression. An
+    // initialiser's implicit receiver is that held object.
+    private BoundExpr LowerInitialised(BoundExpr created, IObjectOrCollectionInitializerOperation initialiser)
+    {
+        var input = new BoundPatternInput { Type = created.Type };
+        var effects = new List<BoundExpr>();
+        _initialiserTargets.Push(input);
+        AppendMemberInitialisers(effects, initialiser);
+        _initialiserTargets.Pop();
+        return Capture(created, input, new BoundSequence { Effects = effects, Value = input, Type = created.Type });
+    }
+
+    private void AppendMemberInitialisers(List<BoundExpr> effects, IObjectOrCollectionInitializerOperation initialiser)
+    {
+        foreach (var item in initialiser.Initializers)
+        {
+            switch (item)
+            {
+                case ISimpleAssignmentOperation assignment:
+                    effects.Add(LowerExpr(assignment));
+                    break;
+                case IMemberInitializerOperation { Initializer: { } nested } member
+                    when member.InitializedMember.Type is { IsValueType: false }:
+                {
+                    var current = LowerExpr(member.InitializedMember);
+                    var inner = new BoundPatternInput { Type = current.Type };
+                    var nestedEffects = new List<BoundExpr>();
+                    _initialiserTargets.Push(inner);
+                    AppendMemberInitialisers(nestedEffects, nested);
+                    _initialiserTargets.Pop();
+                    effects.Add(Capture(current, inner,
+                        new BoundSequence { Effects = nestedEffects, Value = inner, Type = current.Type }));
+                    break;
+                }
+
+                default:
+                    effects.Add(UnsupportedExpr(item));
+                    break;
+            }
+        }
+    }
+
+    private BoundExpr LowerArray(IArrayCreationOperation array) => LowerArray(array, isParams: false);
+
+    private BoundExpr LowerArray(IArrayCreationOperation array, bool isParams)
     {
         if (array.DimensionSizes.Length != 1)
         {
@@ -838,7 +1210,7 @@ sealed partial class RoslynLowering
             return ErrorExpr();
         }
 
-        if (array.Initializer != null)
+        if (array.Initializer != null && !isParams)
         {
             Report(array.Syntax, "array initialisers are not supported", DiagnosticCatalog.UnsupportedConstructId);
             return ErrorExpr();
@@ -850,6 +1222,7 @@ sealed partial class RoslynLowering
         {
             ElementType = element,
             Size = LowerExpr(array.DimensionSizes[0]),
+            Initializers = array.Initializer?.ElementValues.Select(LowerExpr).ToList() ?? [],
             Type = type,
             Site = Site(array.Syntax)
         };
@@ -874,6 +1247,30 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerBinary(IBinaryOperation binary)
     {
+        if (binary.IsLifted || IsNullableSymbol(binary.LeftOperand.Type) || IsNullableSymbol(binary.RightOperand.Type))
+        {
+            return LowerLiftedBinary(binary);
+        }
+
+        // Roslyn gives the built-in decimal operators no method of their own.
+        if (binary.OperatorMethod == null && binary.LeftOperand.Type?.SpecialType == SpecialType.System_Decimal
+            && DecimalBinaryMethod(binary.OperatorKind) is { } decimalMethod)
+        {
+            return OperatorCall(decimalMethod, LowerExpr(binary.LeftOperand), LowerExpr(binary.RightOperand));
+        }
+
+        if (binary.OperatorMethod is { } method)
+        {
+            if (binary.IsLifted)
+            {
+                return UnsupportedExpr(binary);
+            }
+
+            return binary.OperatorKind is BinaryOperatorKind.ConditionalAnd or BinaryOperatorKind.ConditionalOr
+                ? LowerConditionalOperator(binary, method)
+                : LowerOperator(binary, method, binary.LeftOperand, binary.RightOperand);
+        }
+
         if (binary.OperatorKind is BinaryOperatorKind.ConditionalAnd or BinaryOperatorKind.ConditionalOr)
         {
             return new BoundBinary
@@ -886,12 +1283,6 @@ sealed partial class RoslynLowering
             };
         }
 
-        if (binary.OperatorKind is BinaryOperatorKind.And or BinaryOperatorKind.Or or BinaryOperatorKind.ExclusiveOr
-            or BinaryOperatorKind.LeftShift or BinaryOperatorKind.RightShift)
-        {
-            return UnsupportedExpr(binary);
-        }
-
         if (binary.OperatorKind is BinaryOperatorKind.Add or BinaryOperatorKind.Concatenate
             && (IsStringSide(binary.LeftOperand) || IsStringSide(binary.RightOperand)))
         {
@@ -899,8 +1290,8 @@ sealed partial class RoslynLowering
             {
                 Op = TokenKind.Plus,
                 Kind = BinKind.StrConcat,
-                Left = LowerExpr(UnwrapBoxing(binary.LeftOperand)),
-                Right = LowerExpr(UnwrapBoxing(binary.RightOperand)),
+                Left = StringOperand(LowerExpr(UnwrapBoxing(binary.LeftOperand)), binary.LeftOperand.Syntax),
+                Right = StringOperand(LowerExpr(UnwrapBoxing(binary.RightOperand)), binary.RightOperand.Syntax),
                 Type = _string
             };
         }
@@ -924,8 +1315,24 @@ sealed partial class RoslynLowering
         var operand = left.Type.Kind == BoundKind.Error ? right.Type : left.Type;
         var compare = op is TokenKind.Less or TokenKind.LessEquals or TokenKind.Greater
             or TokenKind.GreaterEquals or TokenKind.EqualsEquals or TokenKind.BangEquals;
+        var representation = left.Type.EnumUnderlyingType ?? right.Type.EnumUnderlyingType;
+        if (representation != null)
+        {
+            return new BoundBinary
+            {
+                Op = op,
+                Kind = compare ? BinKind.IntCmp : BinKind.IntArith,
+                IsUnsigned = representation.IsUnsignedInteger,
+                IsChecked = binary.IsChecked,
+                Left = left,
+                Right = right,
+                Type = MapType(binary.Type, binary.Syntax.GetLocation())
+            };
+        }
+
         var (kind, unsigned) = operand switch
         {
+            _ when operand == _bool => (compare ? BinKind.BoolCmp : BinKind.BoolArith, false),
             _ when operand == _double && compare => (BinKind.DoubleCmp, false),
             _ when operand == _float && compare => (BinKind.FloatCmp, false),
             _ when operand == _long || operand == _ulong => compare
@@ -940,6 +1347,7 @@ sealed partial class RoslynLowering
             Op = op,
             Kind = kind,
             IsUnsigned = unsigned,
+            IsChecked = binary.IsChecked,
             Left = left,
             Right = right,
             Type = compare ? _bool : operand
@@ -948,15 +1356,41 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerUnary(IUnaryOperation unary)
     {
+        if (unary.IsLifted)
+        {
+            return LowerLiftedUnary(unary);
+        }
+
+        if (unary.OperatorMethod == null && unary.OperatorKind == UnaryOperatorKind.Minus
+            && unary.Operand.Type?.SpecialType == SpecialType.System_Decimal)
+        {
+            return OperatorCall(FindDecimalMethod("op_UnaryNegation")!, LowerExpr(unary.Operand));
+        }
+
+        if (unary.OperatorMethod is { } method)
+        {
+            return unary.IsLifted ? UnsupportedExpr(unary) : LowerOperator(unary, method, unary.Operand);
+        }
+
         var operand = LowerExpr(unary.Operand);
+        if (unary.OperatorKind == UnaryOperatorKind.Plus)
+        {
+            return operand;
+        }
+
         if (unary.OperatorKind == UnaryOperatorKind.Not)
         {
             return new BoundUnary { Op = TokenKind.Bang, Operand = operand, Type = _bool };
         }
 
+        if (unary.OperatorKind == UnaryOperatorKind.BitwiseNegation)
+        {
+            return new BoundUnary { Op = TokenKind.Tilde, Operand = operand, Type = operand.Type };
+        }
+
         if (unary.OperatorKind == UnaryOperatorKind.Minus)
         {
-            return new BoundUnary { Op = TokenKind.Minus, Operand = operand, Type = operand.Type };
+            return new BoundUnary { Op = TokenKind.Minus, Operand = operand, Type = operand.Type, IsChecked = unary.IsChecked };
         }
 
         return UnsupportedExpr(unary);
@@ -964,14 +1398,34 @@ sealed partial class RoslynLowering
 
     private BoundExpr LowerConversion(IConversionOperation conversion)
     {
+        if (conversion.OperatorMethod is { } method)
+        {
+            var lifted = (IsNullableSymbol(conversion.Type) && !IsNullableSymbol(method.ReturnType))
+                || (IsNullableSymbol(conversion.Operand.Type) && !IsNullableSymbol(method.Parameters[0].Type));
+            return lifted ? LowerLiftedConversion(conversion, method) : LowerOperator(conversion, method, conversion.Operand);
+        }
+
         if (conversion.IsTryCast)
         {
             var operand = LowerExpr(conversion.Operand);
             var target = MapType(conversion.Type, conversion.Syntax.GetLocation());
-            return new BoundAs { Operand = operand, TestType = target, Type = target };
+            if (target.NullableElementType is { Kind: BoundKind.Struct } && operand.Type.IsReferenceType)
+            {
+                return LowerNullableUnboxing(operand, target, tryCast: true);
+            }
+
+            return target.NullableElementType != null
+                ? UnsupportedExpr(conversion)
+                : new BoundAs { Operand = operand, TestType = target, Type = target };
         }
 
-        if (IsBoxing(conversion) || conversion.Conversion.IsIdentity)
+        if ((conversion.Operand.Type?.TypeKind == RoslynKind.Enum && conversion.Type?.IsReferenceType == true)
+            || (conversion.Type?.TypeKind == RoslynKind.Enum && conversion.Operand.Type?.IsReferenceType == true))
+        {
+            return UnsupportedExpr(conversion);
+        }
+
+        if (conversion.Conversion.IsIdentity)
         {
             return LowerExpr(conversion.Operand);
         }
@@ -983,13 +1437,72 @@ sealed partial class RoslynLowering
             return value;
         }
 
+        if ((value.Type == _decimal && type.NullableElementType == null)
+            || (type == _decimal && value.Type.NullableElementType == null))
+        {
+            return DecimalConversion(value, type) ?? UnsupportedExpr(conversion);
+        }
+
+        if (value.Type.NullableElementType is { Kind: BoundKind.Struct } && type.IsReferenceType)
+        {
+            return LowerNullableBoxing(value, type, conversion.Syntax);
+        }
+
+        if (type.NullableElementType is { Kind: BoundKind.Struct } && value.Type.IsReferenceType)
+        {
+            return LowerNullableUnboxing(value, type, tryCast: false);
+        }
+
+        if (value.Type.NullableElementType != null || type.NullableElementType != null)
+        {
+            return LowerNullableConversion(conversion, value, type);
+        }
+
+        if (value.Type.Kind == BoundKind.Struct && type.IsReferenceType)
+        {
+            return new BoundConversion { Operand = BoxValue(value, conversion.Syntax), Type = type };
+        }
+
+        if (type.Kind == BoundKind.Struct && value.Type.IsReferenceType)
+        {
+            return new BoundUnbox { Operand = value, BoxedValue = StructBox(type), Type = type };
+        }
+
+        if (IsBoxing(conversion))
+        {
+            return UnsupportedExpr(conversion);
+        }
+
         // An explicit reference conversion can fail at run time. A cast to an
         // interface stays unchecked, because only classes have a type descriptor
         // the runtime can test against.
         var castCheck = conversion.Conversion is { IsReference: true, IsImplicit: false }
             && type.Kind == BoundKind.Class
             && type != _object;
-        return new BoundConversion { Operand = value, Type = type, CastCheck = castCheck };
+        return new BoundConversion { Operand = value, Type = type, CastCheck = castCheck, IsChecked = conversion.IsChecked };
+    }
+
+    private BoundExpr LowerOperator(IOperation operation, IMethodSymbol method, params IOperation[] operands)
+    {
+        var constrainedTo = operation switch
+        {
+            IBinaryOperation binary => binary.ConstrainedToType,
+            IUnaryOperation unary => unary.ConstrainedToType,
+            _ => null
+        };
+        var mapped = MapMethod(method, operation.Syntax.GetLocation(), constrainedTo);
+        if (mapped == null || mapped.IsAbstract || !mapped.IsStatic
+            || mapped.Parameters.Any(parameter => parameter.RefKind != RefKind.None))
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        return new BoundCall
+        {
+            Method = mapped,
+            Arguments = operands.Select(LowerExpr).ToList(),
+            Type = mapped.ReturnType
+        };
     }
 
     private BoundExpr LowerAssignment(ISimpleAssignmentOperation assignment)
@@ -1010,49 +1523,323 @@ sealed partial class RoslynLowering
         return new BoundAssign { Target = target, Value = value, Type = target.Type == _error ? value.Type : target.Type };
     }
 
+    private BoundExpr? LowerUpdateTarget(IOperation operation)
+    {
+        if (operation is ILocalReferenceOperation or IParameterReferenceOperation
+            or IFieldReferenceOperation or IArrayElementReferenceOperation)
+        {
+            return LowerExpr(operation);
+        }
+
+        if (operation is not IPropertyReferenceOperation property || property.Property.IsVirtual
+            || property.Property.IsOverride || property.Property.IsAbstract || property.Property.IsIndexer
+            || property.Property.GetMethod is not { } getter
+            || property.Property.SetMethod is not { } setter
+            || HasAccessorBody(getter) || HasAccessorBody(setter))
+        {
+            return null;
+        }
+
+        var method = MapMethod(getter, operation.Syntax.GetLocation());
+        var field = method?.Owner.Properties.Find(candidate => candidate.Getter == method)?.BackingField;
+        if (field == null)
+        {
+            return null;
+        }
+
+        return new BoundFieldAccess
+        {
+            Type = field.Type,
+            Field = field,
+            Receiver = field.IsStatic ? null : property.Instance == null
+                ? new BoundThis { Type = _currentType }
+                : LowerExpr(property.Instance)
+        };
+    }
+
+    // A property or indexer with accessor bodies, or a virtual one, has no
+    // address to update. The update reads into a hidden local, applies the
+    // ordinary update to that local, and calls the setter with the result.
+    // The receiver and the index arguments run once, in C# order.
+    private BoundExpr LowerAccessorUpdate(IOperation operation, IPropertyReferenceOperation property,
+        Func<BoundExpr, BoundExpr> update)
+    {
+        var symbol = property.Property;
+        if (symbol.GetMethod is not { } getterSymbol || symbol.SetMethod is not { } setterSymbol
+            || property.Instance?.Type is { IsValueType: true }
+            || MapMethod(getterSymbol, operation.Syntax.GetLocation()) is not { } getter
+            || MapMethod(setterSymbol, operation.Syntax.GetLocation()) is not { } setter
+            || getter.IsStatic != setter.IsStatic)
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        var effects = new List<BoundExpr>();
+        var captures = new List<(BoundExpr Value, BoundPatternInput Input)>();
+        BoundPatternInput Hold(BoundExpr value)
+        {
+            var input = new BoundPatternInput { Type = value.Type };
+            captures.Add((value, input));
+            return input;
+        }
+
+        BoundPatternInput? receiver = null;
+        if (!getter.IsStatic)
+        {
+            receiver = Hold(property.Instance == null
+                ? new BoundThis { Type = _currentType }
+                : LowerExpr(property.Instance));
+        }
+
+        var indexes = new List<BoundExpr>();
+        foreach (var argument in LowerArguments(property.Arguments, getter))
+        {
+            if (argument is BoundNamedArgument or BoundByRefArg)
+            {
+                return UnsupportedExpr(operation);
+            }
+
+            indexes.Add(Hold(argument));
+        }
+
+        var current = new LocalSymbol { Name = "#current", Id = _localId++, Type = getter.ReturnType };
+        var result = new LocalSymbol { Name = "#result", Id = _localId++, Type = getter.ReturnType };
+        _methodLocals.Add(current);
+        _methodLocals.Add(result);
+        BoundLocal Read(LocalSymbol local) => new() { Symbol = local, Type = local.Type };
+
+        var read = BindMemberCall(receiver, getter, [.. indexes]);
+        effects.Add(new BoundAssign { Target = Read(current), Value = read, Type = current.Type });
+        var updated = update(Read(current));
+        effects.Add(new BoundAssign { Target = Read(result), Value = updated, Type = result.Type });
+        effects.Add(BindMemberCall(receiver, setter, [.. indexes, Read(current)]));
+
+        BoundExpr body = new BoundSequence { Effects = effects, Value = Read(result), Type = result.Type };
+        for (var i = captures.Count - 1; i >= 0; i--)
+        {
+            body = Capture(captures[i].Value, captures[i].Input, body);
+        }
+
+        return body;
+    }
+
+    private BoundExpr LowerIncrement(IIncrementOrDecrementOperation operation)
+    {
+        var target = LowerUpdateTarget(operation.Target);
+        if (target == null)
+        {
+            return operation.Target is IPropertyReferenceOperation property
+                ? LowerAccessorUpdate(operation, property, local => LowerIncrementOn(operation, local))
+                : UnsupportedExpr(operation);
+        }
+
+        return LowerIncrementOn(operation, target);
+    }
+
+    private BoundExpr LowerIncrementOn(IIncrementOrDecrementOperation operation, BoundExpr target)
+    {
+        if (operation.IsLifted)
+        {
+            return LowerLiftedIncrement(operation, target);
+        }
+
+        if (target.Type == _decimal && operation.OperatorMethod == null)
+        {
+            var name = operation.Kind == OperationKind.Decrement ? "op_Decrement" : "op_Increment";
+            return LowerOperatorUpdate(operation, target, FindDecimalMethod(name), null, operation.IsPostfix, false);
+        }
+
+        if (operation.OperatorMethod is { } method)
+        {
+            return LowerOperatorUpdate(operation, target, method, null, operation.IsPostfix, operation.IsChecked);
+        }
+
+        if (!(target.Type.IsInteger || target.Type.IsFloat))
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        return new BoundIncrement
+        {
+            Target = target,
+            Type = target.Type,
+            IsDecrement = operation.Kind == OperationKind.Decrement,
+            IsPostfix = operation.IsPostfix,
+            IsChecked = operation.IsChecked
+        };
+    }
+
     private BoundExpr LowerCompound(ICompoundAssignmentOperation assignment)
     {
-        if (assignment.OperatorKind is not (BinaryOperatorKind.Add or BinaryOperatorKind.Subtract))
+        var target = LowerUpdateTarget(assignment.Target);
+        if (target == null)
+        {
+            return assignment.Target is IPropertyReferenceOperation property
+                ? LowerAccessorUpdate(assignment, property, local => LowerCompoundOn(assignment, local))
+                : UnsupportedExpr(assignment);
+        }
+
+        return LowerCompoundOn(assignment, target);
+    }
+
+    private BoundExpr LowerCompoundOn(ICompoundAssignmentOperation assignment, BoundExpr target)
+    {
+        if (assignment.IsLifted)
+        {
+            return LowerLiftedCompound(assignment, target);
+        }
+
+        // Roslyn gives the built-in decimal operators no method of their own.
+        if (target.Type == _decimal && assignment.OperatorMethod == null)
+        {
+            return LowerOperatorUpdate(assignment, target, DecimalBinaryMethod(assignment.OperatorKind),
+                LowerExpr(assignment.Value), false, false);
+        }
+
+        if (assignment.OperatorMethod is { } method)
+        {
+            return LowerOperatorUpdate(assignment, target, method, LowerExpr(assignment.Value), false,
+                assignment.IsChecked, assignment.InConversion, assignment.OutConversion);
+        }
+
+        if (target.Type == _string && assignment.OperatorKind == BinaryOperatorKind.Add)
+        {
+            if (target is BoundParam { Symbol.RefKind: RefKind.None })
+            {
+                Report(assignment.Syntax, "reassigning a reference-typed parameter is not supported", "ARC2001");
+                return ErrorExpr();
+            }
+
+            var value = LowerExpr(UnwrapBoxing(assignment.Value));
+            if (value.Type != _string && !(value.Type.IsInteger || value.Type.IsFloat || value.Type == _bool)
+                && value is not BoundLiteral { LitKind: LiteralKind.Null })
+            {
+                return UnsupportedExpr(assignment);
+            }
+
+            return new BoundStringCompound { Target = target, Right = value, Type = _string };
+        }
+
+        if (assignment.OperatorKind is not (BinaryOperatorKind.Add or BinaryOperatorKind.Subtract
+            or BinaryOperatorKind.Multiply or BinaryOperatorKind.Divide or BinaryOperatorKind.Remainder
+            or BinaryOperatorKind.And or BinaryOperatorKind.Or or BinaryOperatorKind.ExclusiveOr
+            or BinaryOperatorKind.LeftShift or BinaryOperatorKind.RightShift or BinaryOperatorKind.UnsignedRightShift))
         {
             return UnsupportedExpr(assignment);
         }
 
-        if (assignment.Target is IPropertyReferenceOperation property)
+        var operand = LowerExpr(assignment.Value);
+        if (!(target.Type.IsInteger || target.Type.IsFloat || target.Type == _bool)
+            || !(operand.Type.IsInteger || operand.Type.IsFloat || operand.Type == _bool))
         {
-            var read = LowerProperty(property);
-            var combined = new BoundBinary
-            {
-                Op = assignment.OperatorKind == BinaryOperatorKind.Add ? TokenKind.Plus : TokenKind.Minus,
-                Kind = read.Type == _string ? BinKind.StrConcat : read.Type == _long || read.Type == _ulong ? BinKind.LongArith : BinKind.IntArith,
-                IsUnsigned = read.Type.IsUnsignedInteger,
-                Left = read,
-                Right = LowerExpr(assignment.Value),
-                Type = read.Type == _string ? _string : read.Type
-            };
-            return AssignProperty(property, combined, assignment.Syntax);
+            return UnsupportedExpr(assignment);
         }
 
-        var target = LowerExpr(assignment.Target);
-        var op = assignment.OperatorKind == BinaryOperatorKind.Add ? TokenKind.Plus : TokenKind.Minus;
-        BoundExpr value = target.Type == _string && op == TokenKind.Plus
-            ? new BoundBinary
+        var isShift = assignment.OperatorKind is BinaryOperatorKind.LeftShift
+            or BinaryOperatorKind.RightShift or BinaryOperatorKind.UnsignedRightShift;
+        var operationType = isShift
+            ? (target.Type == _uint || target.Type == _long || target.Type == _ulong ? target.Type : _int)
+            : ArithmeticType(target.Type, operand.Type);
+        return new BoundNumericCompound
+        {
+            Target = target,
+            Right = operand,
+            Type = target.Type,
+            OperationType = operationType,
+            Op = BinaryToken(assignment.OperatorKind),
+            IsChecked = assignment.IsChecked
+        };
+    }
+
+    private BoundExpr LowerOperatorUpdate(IOperation operation, BoundExpr target, IMethodSymbol method,
+        BoundExpr? right, bool postfix, bool isChecked, CommonConversion incoming = default, CommonConversion outgoing = default) =>
+        LowerOperatorUpdate(operation, target, MapMethod(method, operation.Syntax.GetLocation()), right, postfix, isChecked,
+            incoming, outgoing);
+
+    private BoundExpr LowerOperatorUpdate(IOperation operation, BoundExpr target, MethodSymbol? mapped,
+        BoundExpr? right, bool postfix, bool isChecked, CommonConversion incoming = default, CommonConversion outgoing = default)
+    {
+        if (mapped == null || mapped.IsAbstract || mapped.Parameters.Any(parameter => parameter.RefKind != RefKind.None))
+        {
+            return UnsupportedExpr(operation);
+        }
+
+        if (target is BoundParam { Symbol: { RefKind: RefKind.None, Type.IsReferenceType: true } })
+        {
+            Report(operation.Syntax, "reassigning a reference-typed parameter is not supported", "ARC2001");
+            return ErrorExpr();
+        }
+
+        BoundExpr Convert(BoundExpr value, TypeSymbol type, CommonConversion conversion)
+        {
+            if (conversion.MethodSymbol is { } conversionMethod)
             {
-                Op = TokenKind.Plus,
-                Kind = BinKind.StrConcat,
-                Left = target,
-                Right = LowerExpr(assignment.Value),
-                Type = _string
+                var implementation = MapMethod(conversionMethod, operation.Syntax.GetLocation());
+                if (implementation == null)
+                {
+                    return UnsupportedExpr(operation);
+                }
+
+                value = new BoundCall { Type = implementation.ReturnType, Method = implementation, Arguments = [value] };
             }
-            : new BoundBinary
-            {
-                Op = op,
-                Kind = target.Type == _long || target.Type == _ulong ? BinKind.LongArith : BinKind.IntArith,
-                IsUnsigned = target.Type.IsUnsignedInteger,
-                Left = target,
-                Right = LowerExpr(assignment.Value),
-                Type = target.Type
-            };
-        return new BoundAssign { Target = target, Value = value, Type = target.Type };
+
+            return value.Type == type
+                ? value
+                : NumericConversion(value, type, isChecked);
+        }
+
+        var input = new BoundPatternInput { Type = target.Type };
+        var arguments = new List<BoundExpr> { Convert(input, mapped.Parameters[0].Type, incoming) };
+        if (right != null)
+        {
+            arguments.Add(Convert(right, mapped.Parameters[1].Type, default));
+        }
+
+        var call = new BoundCall { Type = mapped.ReturnType, Method = mapped, Arguments = arguments };
+        return new BoundOperatorUpdate
+        {
+            Target = target, Type = target.Type, Input = input, Result = Convert(call, target.Type, outgoing), IsPostfix = postfix
+        };
+    }
+
+    private TypeSymbol ArithmeticType(TypeSymbol left, TypeSymbol right)
+    {
+        if (left.EnumUnderlyingType != null)
+        {
+            return left.EnumUnderlyingType;
+        }
+
+        if (left == _bool)
+        {
+            return _bool;
+        }
+
+        if (left == _double || right == _double)
+        {
+            return _double;
+        }
+
+        if (left == _float || right == _float)
+        {
+            return _float;
+        }
+
+        if (left == _ulong || right == _ulong)
+        {
+            return _ulong;
+        }
+
+        if (left == _long || right == _long)
+        {
+            return _long;
+        }
+
+        if (left == _uint || right == _uint)
+        {
+            return left.IsUnsignedInteger && right.IsUnsignedInteger ? _uint : _long;
+        }
+
+        return _int;
     }
 
     private BoundExpr AssignProperty(IPropertyReferenceOperation property, BoundExpr value, SyntaxNode syntax)
@@ -1079,7 +1866,7 @@ sealed partial class RoslynLowering
             return ErrorExpr();
         }
 
-        var setter = MapMethod(property.Property.SetMethod, syntax.GetLocation());
+        var setter = MapMethod(property.Property.SetMethod, syntax.GetLocation(), property.ConstrainedToType);
         if (setter == null)
         {
             Report(syntax, $"'{property.Property.Name}' has no setter", "ARC2002");
@@ -1092,13 +1879,12 @@ sealed partial class RoslynLowering
             receiver = property.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(property.Instance);
         }
 
-        return new BoundCall
-        {
-            Receiver = receiver,
-            Method = setter,
-            Arguments = [value],
-            Type = _void
-        };
+        var arguments = LowerArguments(property.Arguments, setter);
+        arguments.Add(value);
+        var call = BindMemberCall(receiver, setter, arguments);
+        call.Type = setter.Parameters[^1].Type;
+        call.ReturnsAssignedValue = true;
+        return call;
     }
 
     private List<BoundExpr> LowerArguments(ImmutableArray<IArgumentOperation> arguments, MethodSymbol method)
@@ -1107,28 +1893,24 @@ sealed partial class RoslynLowering
         for (var i = 0; i < arguments.Length; i++)
         {
             var argument = arguments[i];
-            if (argument.ArgumentKind == ArgumentKind.DefaultValue || argument.Value is IOmittedArgumentOperation)
-            {
-                Report(argument.Syntax, "optional arguments are not supported", DiagnosticCatalog.UnsupportedConstructId);
-                bound.Add(ErrorExpr());
-                continue;
-            }
-
-            if (argument.Syntax is ArgumentSyntax { NameColon: not null })
-            {
-                Report(argument.Syntax, "named arguments are not supported", DiagnosticCatalog.UnsupportedConstructId);
-            }
-
-            var parameter = i < method.Parameters.Count ? method.Parameters[i] : null;
+            var ordinal = argument.Parameter?.Ordinal ?? i;
+            var parameter = ordinal < method.Parameters.Count ? method.Parameters[ordinal] : null;
+            BoundExpr value;
             if (parameter != null && parameter.RefKind != RefKind.None)
             {
-                var lvalue = LValue(argument.Value);
-                bound.Add(new BoundByRefArg { Lvalue = lvalue, Kind = parameter.RefKind, Type = lvalue.Type });
+                var lvalue = parameter.RefKind == RefKind.In
+                    ? LowerExpr(argument.Value)
+                    : LValue(argument.Value);
+                value = new BoundByRefArg { Lvalue = lvalue, Kind = parameter.RefKind, Type = lvalue.Type };
             }
             else
             {
-                bound.Add(LowerExpr(argument.Value));
+                value = argument is { ArgumentKind: ArgumentKind.ParamArray, Value: IArrayCreationOperation array }
+                    ? LowerArray(array, isParams: true)
+                    : LowerExpr(argument.Value);
             }
+
+            bound.Add(ordinal == i ? value : new BoundNamedArgument { Ordinal = ordinal, Value = value, Type = value.Type });
         }
 
         return bound;
@@ -1168,6 +1950,11 @@ sealed partial class RoslynLowering
 
     private BoundExpr DefaultValue(TypeSymbol type)
     {
+        if (type.Kind == BoundKind.Struct)
+        {
+            return new BoundNewObject { Type = type };
+        }
+
         if (type.IsReferenceType || type == _null)
         {
             return new BoundLiteral { Type = type == _null ? _null : type, LitKind = LiteralKind.Null };
@@ -1203,6 +1990,12 @@ sealed partial class RoslynLowering
         BinaryOperatorKind.Multiply => TokenKind.Star,
         BinaryOperatorKind.Divide => TokenKind.Slash,
         BinaryOperatorKind.Remainder => TokenKind.Percent,
+        BinaryOperatorKind.And => TokenKind.Amp,
+        BinaryOperatorKind.Or => TokenKind.Pipe,
+        BinaryOperatorKind.ExclusiveOr => TokenKind.Caret,
+        BinaryOperatorKind.LeftShift => TokenKind.LeftShift,
+        BinaryOperatorKind.RightShift => TokenKind.RightShift,
+        BinaryOperatorKind.UnsignedRightShift => TokenKind.UnsignedRightShift,
         BinaryOperatorKind.Equals => TokenKind.EqualsEquals,
         BinaryOperatorKind.NotEquals => TokenKind.BangEquals,
         BinaryOperatorKind.LessThan => TokenKind.Less,

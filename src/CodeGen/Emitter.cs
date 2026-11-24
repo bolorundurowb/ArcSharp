@@ -21,6 +21,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private readonly List<string> _stmtTemps = [];
     // Struct temporaries live in allocas and need __drop, not arc_release.
     private readonly List<(TypeSymbol Type, string Addr)> _stmtStructTemps = [];
+    private readonly Dictionary<BoundPatternInput, string> _patternInputs = [];
     private int _tmp, _lbl, _strId;
 
     // Exceptions. A thrown exception is the one reference stored in the global
@@ -39,6 +40,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         public Action? Cleanup;
     }
 
+    private readonly Stack<(string Break, string? Continue, int RegionDepth)> _branchTargets = [];
     private readonly List<Region> _regions = []; // open try and using statements, innermost last
     private readonly List<string> _hiddenSlots = []; // owned references released at func.exit
     private readonly List<string> _catchSlots = []; // the exception each enclosing catch block holds
@@ -158,6 +160,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                      "declare i8* @arc_weakref_try_get(i8*)",
                      "declare void @arc_weakref_set(i8*, i8*)",
             "declare i8* @arc_array_new(i64, i32, %TypeInfo*, i8*)",
+            "declare i8* @arc_array_slice_new(i8*, i64, i8*)",
             "declare i64 @arc_array_length(i8*)",
             "declare void @arc_bounds_check(i8*, i64)",
             "declare void @arc_array_store_check(i8*, i64, i8*)",
@@ -166,18 +169,21 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                      "declare i8* @arc_str_concat(i8*, i8*)",
                      "declare i32 @arc_str_equal(i8*, i8*)",
                      "declare i8* @arc_str_from_int(i64)",
+                     "declare i8* @arc_str_from_uint(i64)",
                      "declare i8* @arc_str_from_char(i32)",
                      "declare i8* @arc_str_from_bool(i32)",
                      "declare i8* @arc_str_from_float(float)",
                      "declare i8* @arc_str_from_double(double)",
                      "declare void @arc_console_write(i8*, i32)",
                      "declare void @arc_console_write_int(i64, i32)",
+                     "declare void @arc_console_write_uint(i64, i32)",
                      "declare void @arc_console_write_char(i32, i32)",
                      "declare void @arc_console_write_bool(i32, i32)",
                      "declare void @arc_console_write_float(float, i32)",
                      "declare void @arc_console_write_double(double, i32)",
             "declare void @arc_console_newline()",
             "declare i32 @arc_is_instance(i8*, %TypeInfo*)",
+            "declare i32 @arc_has_interface(i8*, i64)",
             "declare void @arc_suppress_finalize(i8*)",
             "declare void @arc_set_roots(i8***, i64)",
             "declare void @arc_report()",
@@ -188,6 +194,24 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             "declare void @arc_null_check(i8*)",
             "declare void @arc_cast_check(i8*, %TypeInfo*)",
             "declare void @arc_div_check(i64, i64, i32)",
+            "declare void @arc_overflow_check(i32)",
+            "declare void @arc_dec_set(i8*, i64, i64)",
+            "declare void @arc_dec_add(i8*, i8*, i8*)",
+            "declare void @arc_dec_sub(i8*, i8*, i8*)",
+            "declare void @arc_dec_mul(i8*, i8*, i8*)",
+            "declare void @arc_dec_div(i8*, i8*, i8*)",
+            "declare void @arc_dec_rem(i8*, i8*, i8*)",
+            "declare void @arc_dec_neg(i8*, i8*)",
+            "declare i32 @arc_dec_cmp(i8*, i8*)",
+            "declare void @arc_dec_from_i64(i64, i8*)",
+            "declare void @arc_dec_from_u64(i64, i8*)",
+            "declare void @arc_dec_from_double(double, i8*)",
+            "declare i64 @arc_dec_to_i64(i8*, i64, i64)",
+            "declare i64 @arc_dec_to_u64(i8*)",
+            "declare double @arc_dec_to_double(i8*)",
+            "declare i8* @arc_dec_to_str(i8*)",
+            "declare float @llvm.trunc.f32(float)",
+            "declare double @llvm.trunc.f64(double)",
             "@arc_exception = external global i8*",
                  })
         {
@@ -287,7 +311,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var slots = EmitSlots(t, out var count);
         _mod.AppendLine(
             $"@{t.Name}__ti = constant %TypeInfo {{ " +
-            $"i8* {name}, i64 {t.HeapSize}, void (i8*)* null, i8** null, i64 0, i8** null, i64 0, i8* null, {slots}, i64 {count}, void (i8*)* null }}");
+            $"i8* {name}, i64 {t.HeapSize}, void (i8*)* bitcast (void ({t.LlvmType}*)* @{t.Name}__drop to void (i8*)*), i8** null, i64 0, i8** null, i64 0, i8* null, {slots}, i64 {count}, void (i8*)* null }}");
     }
 
     private void EmitStaticRoots()
@@ -297,12 +321,20 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         {
             foreach (var f in t.StaticFields)
             {
-                if (f.IsWeak || !f.Type.IsReferenceType)
+                if (f.IsWeak)
                 {
                     continue;
                 }
 
-                roots.Add($"i8** {f.MangledStatic}");
+                if (f.Type.IsReferenceType)
+                {
+                    roots.Add($"i8** {f.MangledStatic}");
+                }
+                else if (f.Type.Kind == TypeKind.Struct)
+                {
+                    var address = $"bitcast ({f.Type.LlvmType}* {f.MangledStatic} to i8*)";
+                    AddStructRoots(roots, f.Type, address, 0);
+                }
             }
         }
 
@@ -314,6 +346,27 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         _mod.AppendLine(
             $"@arc_static_roots = private constant [{_staticRootCount} x i8**] [ {string.Join(", ", roots)} ]");
+    }
+
+    private static void AddStructRoots(List<string> roots, TypeSymbol type, string address, int offset)
+    {
+        foreach (var field in type.InstanceFields)
+        {
+            if (field.IsWeak)
+            {
+                continue;
+            }
+
+            var fieldOffset = offset + field.ByteOffset;
+            if (field.Type.IsReferenceType)
+            {
+                roots.Add($"i8** bitcast (i8* getelementptr (i8, i8* {address}, i64 {fieldOffset}) to i8**)");
+            }
+            else if (field.Type.Kind == TypeKind.Struct)
+            {
+                AddStructRoots(roots, field.Type, address, fieldOffset);
+            }
+        }
     }
 
     private string SiteOperand(string site)
@@ -358,6 +411,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 if (t.InterfaceImpl.TryGetValue(sel, out var m) && !m.IsAbstract)
                 {
                     entries.Add($"i8* bitcast ({FnPtrType(m)} @{m.MangledName} to i8*)");
+                }
+                else if (t.InterfaceMembership.Contains(sel))
+                {
+                    entries.Add($"i8* bitcast (%TypeInfo* @{t.Name}__ti to i8*)");
                 }
                 else
                 {
@@ -473,7 +530,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private int NextGen() => ++_genTmp;
 
     // Byte-offset field address in generated (non-_body) code. Classes address
-    // fields by byte offset; structs are blobs of one 8-byte slot per field.
+    // fields by byte offset; structs are blobs of 8-byte slots, and a nested struct field spans several.
     // Every access is emitted as its own instruction so that the result is a
     // plain local value, usable as any pointer operand.
     private string FieldAddrFromBytes(StringBuilder into, string basePtr, FieldSymbol f)
@@ -481,7 +538,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var n = NextGen();
         if (f.Owner.Kind == TypeKind.Struct)
         {
-            into.AppendLine($"  %gp{n} = getelementptr {f.Owner.LlvmType}, {f.Owner.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+            into.AppendLine($"  %gp{n} = getelementptr {f.Owner.LlvmType}, {f.Owner.LlvmType}* {basePtr}, i64 0, i64 {f.ByteOffset / 8}");
             into.AppendLine($"  %fp{n} = bitcast i64* %gp{n} to {f.Type.LlvmType}*");
             return $"%fp{n}";
         }
@@ -513,7 +570,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 case TypeKind.Struct:
                     fns.AppendLine($"  call void @{f.Type.Name}__copy({f.Type.LlvmType}* {dst}, {f.Type.LlvmType}* {src})");
                     break;
-                case TypeKind.Primitive when !f.IsWeak:
+                case TypeKind.Primitive or TypeKind.Enum when !f.IsWeak:
                 {
                     fns.AppendLine($"  %v{n} = load {f.Type.LlvmType}, {f.Type.LlvmType}* {src}");
                     fns.AppendLine($"  store {f.Type.LlvmType} %v{n}, {f.Type.LlvmType}* {dst}");
@@ -577,7 +634,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private string FieldAddrFromGep(StringBuilder fns, string basePtr, TypeSymbol owner, FieldSymbol f)
     {
         var n = NextGen();
-        fns.AppendLine($"  %gp{n} = getelementptr {owner.LlvmType}, {owner.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+        fns.AppendLine($"  %gp{n} = getelementptr {owner.LlvmType}, {owner.LlvmType}* {basePtr}, i64 0, i64 {f.ByteOffset / 8}");
         fns.AppendLine($"  %fp{n} = bitcast i64* %gp{n} to {f.Type.LlvmType}*");
         return $"%fp{n}";
     }
@@ -587,11 +644,24 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var ps = new List<string> { "i8*" };
         foreach (var p in m.Parameters)
         {
-            ps.Add(p.RefKind != RefKind.None ? p.Type.LlvmType + "*" : p.Type.LlvmType);
+            ps.Add(ParameterAbiType(p));
         }
 
-        return $"{m.ReturnType.LlvmType} ({string.Join(", ", ps)})*";
+        if (m.ReturnType.Kind == TypeKind.Struct)
+        {
+            ps.Add(m.ReturnType.LlvmType + "*");
+        }
+
+        return $"{ReturnAbiType(m)} ({string.Join(", ", ps)})*";
     }
+
+    private static string ParameterAbiType(ParamSymbol parameter) =>
+        parameter.RefKind != RefKind.None || parameter.Type.Kind == TypeKind.Struct
+            ? parameter.Type.LlvmType + "*"
+            : parameter.Type.LlvmType;
+
+    private static string ReturnAbiType(MethodSymbol method) =>
+        method.ReturnType.Kind == TypeKind.Struct ? "void" : method.ReturnType.LlvmType;
 
     private void EmitMethod(BoundMethodBody b, StringBuilder fns)
     {
@@ -621,8 +691,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         foreach (var p in m.Parameters)
         {
-            var ty = p.RefKind != RefKind.None ? p.Type.LlvmType + "*" : p.Type.LlvmType;
-            ps.Add($"{ty} %a{p.Index}");
+            ps.Add($"{ParameterAbiType(p)} %a{p.Index}");
+        }
+
+        if (m.ReturnType.Kind == TypeKind.Struct)
+        {
+            ps.Add($"{m.ReturnType.LlvmType}* %struct.result");
         }
 
         if (!m.IsStatic)
@@ -649,7 +723,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 _entry.Add($"  %arg{p.Index} = alloca {p.Type.LlvmType}*");
                 _entry.Add($"  store {p.Type.LlvmType}* %a{p.Index}, {p.Type.LlvmType}** %arg{p.Index}");
             }
-            else
+            else if (p.Type.Kind != TypeKind.Struct)
             {
                 _entry.Add($"  %arg{p.Index} = alloca {p.Type.LlvmType}");
                 _entry.Add($"  store {p.Type.LlvmType} %a{p.Index}, {p.Type.LlvmType}* %arg{p.Index}");
@@ -679,7 +753,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             _entry.Add($"  store i8* null, i8** %moved.arg{owner.Id}");
         }
 
-        var isVoid = m.ReturnType.Kind == TypeKind.Void;
+        var returnType = ReturnAbiType(m);
+        var isVoid = returnType == "void";
         if (!isVoid)
         {
             _entry.Add($"  %retval = alloca {m.ReturnType.LlvmType}");
@@ -689,8 +764,15 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
-        if (m == m.Owner.StaticFieldInitialiser)
+        var staticInitialiser = m == m.Owner.StaticFieldInitialiser;
+        var explicitInitialiser = staticInitialiser && m.Owner.HasExplicitStaticConstructor;
+        if (staticInitialiser)
         {
+            if (explicitInitialiser)
+            {
+                EmitCachedTypeFailure(m);
+            }
+
             var guard = $"@{m.MangledName}.started";
             _mod.AppendLine($"{guard} = private global i1 false");
             var started = Inst($"load i1, i1* {guard}");
@@ -698,6 +780,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             Lbl("field.init");
             // Recursive access sees fields that have already been initialised.
             Do($"store i1 true, i1* {guard}");
+        }
+        else if (m.Owner.HasExplicitStaticConstructor
+            && (m.IsStatic || m.IsConstructor || m.Owner.Kind == TypeKind.Struct))
+        {
+            EmitTypeInitialiserCall(m.Owner);
         }
 
         EmitStmt(b.Body);
@@ -719,6 +806,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             // return statement stores %retval only after its cleanups have
             // run, so nothing is left in it here.
             Lbl("func.unwind");
+            if (explicitInitialiser)
+            {
+                EmitTypeFailure(m);
+            }
+
             Term("br label %func.exit");
         }
 
@@ -760,7 +852,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             Term($"ret {m.ReturnType.LlvmType} {r}");
         }
 
-        fns.AppendLine($"define {m.ReturnType.LlvmType} @{m.MangledName}({string.Join(", ", ps)}) {{");
+        fns.AppendLine($"define {returnType} @{m.MangledName}({string.Join(", ", ps)}) {{");
         fns.AppendLine("entry:");
         foreach (var l in _entry)
         {
@@ -779,16 +871,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private static string DefaultVal(TypeSymbol t) =>
         t.Kind == TypeKind.Struct ? "zeroinitializer" : t.IsReferenceType ? "null" : IsFloatType(t) ? "0.0" : "0";
 
-    private static string FormatFloatConstant(string s)
-    {
-        // LLVM float/double constants must contain a decimal point or exponent.
-        if (s.Contains('.') || s.Contains('e', StringComparison.OrdinalIgnoreCase))
-        {
-            return s;
-        }
-
-        return s + ".0";
-    }
+    // LLVM reads a decimal floating-point constant only when it has a point, and rejects 1E-05.
+    // The hexadecimal form of the IEEE bits is exact and also covers NaN and infinity.
+    private static string FormatFloatConstant(double value) =>
+        "0x" + BitConverter.DoubleToInt64Bits(value).ToString("X16");
 
     private void StoreRet(string val, TypeSymbol t) => Do($"store {t.LlvmType} {val}, {t.LlvmType}* %retval");
 
@@ -808,6 +894,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundIf i: EmitIf(i); break;
             case BoundWhile w: EmitWhile(w); break;
             case BoundFor f: EmitFor(f); break;
+            case BoundSwitch selection: EmitSwitch(selection); break;
+            case BoundBranch branch: EmitBranch(branch); break;
             case BoundReturn r: EmitReturn(r); break;
             case BoundUsing u: EmitUsing(u); break;
             case BoundTry t: EmitTry(t); break;
@@ -879,10 +967,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (n.Ctor != null)
         {
             var pins = BeginPins();
-            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
+            var (argVals, _, copies) = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"{ty}* {slot}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
             EmitPendingCheck();
+            ReleaseArgumentCopies(copies);
             EndPins(pins);
         }
 
@@ -947,7 +1036,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private void EmitWhile(BoundWhile s)
     {
         string condL = L("while.cond"), bodyL = L("while.body"), endL = L("while.end");
-        Term($"br label %{condL}");
+        Term($"br label %{(s.ConditionIsTop ? condL : bodyL)}");
         Lbl(condL);
         var mark = _stmtTemps.Count;
         var smark = _stmtStructTemps.Count;
@@ -955,12 +1044,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         ReleaseTemps(mark);
         ReleaseStructTemps(smark);
         Term($"br i1 {c}, label %{bodyL}, label %{endL}");
-        Lbl(bodyL);
-        EmitStmt(s.Body);
-        if (!_terminated)
-        {
-            Term($"br label %{condL}");
-        }
+        EmitLoopBody(s.Body, bodyL, condL, endL);
 
         Lbl(endL);
     }
@@ -989,12 +1073,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             Term($"br label %{bodyL}");
         }
 
-        Lbl(bodyL);
-        EmitStmt(s.Body);
-        if (!_terminated)
-        {
-            Term($"br label %{stepL}");
-        }
+        EmitLoopBody(s.Body, bodyL, stepL, endL);
 
         Lbl(stepL);
         if (s.Update != null)
@@ -1008,6 +1087,98 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         Term($"br label %{condL}");
         Lbl(endL);
+    }
+
+    private void EmitSwitch(BoundSwitch selection)
+    {
+        var labels = selection.Sections.Select(_ => L("switch.case")).ToArray();
+        var end = L("switch.end");
+        var noMatch = L("switch.nomatch");
+        var mark = _stmtTemps.Count;
+        var structMark = _stmtStructTemps.Count;
+        _patternInputs.Add(selection.Input, CapturePatternInput(selection.Value));
+        var inputMark = _stmtTemps.Count;
+        var inputStructMark = _stmtStructTemps.Count;
+        for (var i = 0; i < selection.Sections.Count; i++)
+        {
+            foreach (var test in selection.Sections[i].Tests)
+            {
+                var matched = EmitR(test);
+                ReleaseTemps(inputMark);
+                ReleaseStructTemps(inputStructMark);
+                var next = L("switch.next");
+                Term($"br i1 {matched}, label %{labels[i]}, label %{next}");
+                Lbl(next);
+            }
+        }
+
+        var fallback = selection.Sections.FindIndex(section => section.IsDefault);
+        Term($"br label %{(fallback >= 0 ? labels[fallback] : noMatch)}");
+        _patternInputs.Remove(selection.Input);
+
+        var references = _stmtTemps.GetRange(mark, inputMark - mark);
+        var values = _stmtStructTemps.GetRange(structMark, inputStructMark - structMark);
+        _stmtTemps.RemoveRange(mark, references.Count);
+        _stmtStructTemps.RemoveRange(structMark, values.Count);
+        void DropInput()
+        {
+            for (var i = references.Count - 1; i >= 0; i--)
+            {
+                Do($"call void @arc_release(i8* {references[i]})");
+            }
+
+            for (var i = values.Count - 1; i >= 0; i--)
+            {
+                var (type, address) = values[i];
+                Do($"call void @{type.Name}__drop({type.LlvmType}* {address})");
+            }
+        }
+
+        _branchTargets.Push((end, null, _regions.Count));
+        for (var i = 0; i < labels.Length; i++)
+        {
+            Lbl(labels[i]);
+            DropInput();
+            EmitStmt(selection.Sections[i].Body);
+            if (!_terminated)
+            {
+                Term($"br label %{end}");
+            }
+        }
+
+        _branchTargets.Pop();
+        if (fallback < 0)
+        {
+            Lbl(noMatch);
+            DropInput();
+            Term($"br label %{end}");
+        }
+
+        Lbl(end);
+    }
+
+    private void EmitBranch(BoundBranch branch)
+    {
+        var target = branch.IsContinue
+            ? _branchTargets.First(candidate => candidate.Continue != null)
+            : _branchTargets.Peek();
+        EmitRegionCleanups(target.RegionDepth);
+        if (!_terminated)
+        {
+            Term($"br label %{(branch.IsContinue ? target.Continue : target.Break)}");
+        }
+    }
+
+    private void EmitLoopBody(BoundStmt body, string bodyLabel, string continueLabel, string breakLabel)
+    {
+        Lbl(bodyLabel);
+        _branchTargets.Push((breakLabel, continueLabel, _regions.Count));
+        EmitStmt(body);
+        _branchTargets.Pop();
+        if (!_terminated)
+        {
+            Term($"br label %{continueLabel}");
+        }
     }
 
     private void EmitReturn(BoundReturn r)
@@ -1024,25 +1195,30 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (r.Value != null)
         {
             var v = EmitR(r.Value);
-            ReleaseTemps(mark);
-            ReleaseStructTemps(smark);
-            if (_curMethod.ReturnType.IsReferenceType && _regions.Exists(region => region.Cleanup != null))
+            var type = _curMethod.ReturnType;
+            if (type.Kind == TypeKind.Struct)
+            {
+                CopyStruct(type, "%struct.result", v);
+            }
+            else if (type.IsReferenceType && _regions.Exists(region => region.Cleanup != null))
             {
                 held = NewHiddenSlot();
                 Do($"store i8* {v}, i8** {held}");
             }
             else
             {
-                StoreRet(v, _curMethod.ReturnType);
+                StoreRet(v, type);
             }
         }
-        else
+
+        ReleaseTemps(mark);
+        ReleaseStructTemps(smark);
+        EmitRegionCleanups(0);
+        if (_terminated)
         {
-            ReleaseTemps(mark);
-            ReleaseStructTemps(smark);
+            return;
         }
 
-        EmitReturnCleanups();
         if (held != null)
         {
             var v = Inst($"load i8*, i8** {held}");
@@ -1057,9 +1233,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     // mirroring how C# finally blocks run before control leaves. While one
     // cleanup is emitted, the regions it was inside are closed, so an exception
     // it throws goes to the enclosing handler.
-    private void EmitReturnCleanups()
+    private void EmitRegionCleanups(int depth)
     {
-        for (var i = _regions.Count - 1; i >= 0; i--)
+        for (var i = _regions.Count - 1; i >= depth && !_terminated; i--)
         {
             var region = _regions[i];
             if (region.Cleanup == null)
@@ -1473,12 +1649,26 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundNewObject n: return EmitNewObject(n);
             case BoundNewArray a: return EmitNewArray(a);
             case BoundIndex ix: return EmitIndexRead(ix);
+            case BoundArraySlice slice: return EmitArraySlice(slice);
             case BoundBinary b: return EmitBinary(b);
             case BoundUnary u: return EmitUnary(u);
             case BoundAssign asn: return EmitAssign(asn);
+            case BoundIncrement increment: return EmitIncrement(increment);
+            case BoundSequence sequence: return EmitSequence(sequence);
+            case BoundOperatorUpdate update: return EmitOperatorUpdate(update);
+            case BoundNumericCompound compound: return EmitNumericCompound(compound);
+            case BoundStringCompound compound: return EmitStringCompound(compound);
             case BoundConversion cv: return EmitConversion(cv);
             case BoundIs i: return EmitIs(i);
+            case BoundUnbox unbox: return EmitUnbox(unbox);
+            case BoundPatternTest pattern: return EmitPatternTest(pattern);
+            case BoundChoice choice: return EmitChoice(choice);
+            case BoundSwitchFailure failure: return EmitSwitchFailure(failure);
+            case BoundPatternInput input: return EmitPatternInput(input);
+            case BoundPatternBinding binding: return EmitPatternBinding(binding);
             case BoundAs a: return EmitAs(a);
+            case BoundSameType same: return EmitSameType(same);
+            case BoundDecimalOp decimalOp: return EmitDecimalOp(decimalOp);
             case BoundByRefArg br: return EmitR(br.Lvalue);
             case BoundWeakRefNew wn: return EmitWeakRefNew(wn);
             case BoundWeakRefTryGet wt: return EmitWeakRefTryGet(wt);
@@ -1500,12 +1690,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case Syntax.LiteralKind.ULong: return ((ulong)l.IntValue).ToString();
             case Syntax.LiteralKind.Float:
             {
-                var d = FormatFloatConstant(
-                    ((double)l.FloatValue).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                var d = FormatFloatConstant((double)l.FloatValue);
                 return Inst($"fptrunc double {d} to float");
             }
             case Syntax.LiteralKind.Double:
-                return FormatFloatConstant(l.FloatValue.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                return FormatFloatConstant(l.FloatValue);
             case Syntax.LiteralKind.Bool: return l.BoolValue ? "1" : "0";
             case Syntax.LiteralKind.Null: return "null";
             case Syntax.LiteralKind.String:
@@ -1555,7 +1744,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             // passed by reference).
             if (!p.ByRef)
             {
-                return $"%arg{p.Symbol.Index}";
+                return $"%a{p.Symbol.Index}";
             }
 
             return Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}");
@@ -1591,7 +1780,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                     return Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}");
                 }
 
-                return $"%arg{p.Symbol.Index}";
+                return p.Type.Kind == TypeKind.Struct ? $"%a{p.Symbol.Index}" : $"%arg{p.Symbol.Index}";
             case BoundThis th when th.Type.Kind == TypeKind.Struct:
             {
                 var ty = th.Type.LlvmType;
@@ -1654,7 +1843,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         {
             // Struct storage is an opaque blob of 8-byte slots: address the
             // field by its slot index, then cast to the field's type.
-            var sp = Inst($"getelementptr {recvType.LlvmType}, {recvType.LlvmType}* {basePtr}, i64 0, i64 {f.Index}");
+            var sp = Inst($"getelementptr {recvType.LlvmType}, {recvType.LlvmType}* {basePtr}, i64 0, i64 {f.ByteOffset / 8}");
             return Inst($"bitcast i64* {sp} to {f.Type.LlvmType}*");
         }
 
@@ -1676,7 +1865,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private string EmitStructFieldAddress(BoundFieldAccess fa)
     {
-        // static struct fields are rejected by the binder
+        if (fa.Field.IsStatic)
+        {
+            return StaticFieldAddress(fa.Field);
+        }
+
         var receiver = fa.Receiver!;
         var recv = EmitR(receiver);
         if (receiver.Type.IsReferenceType)
@@ -1690,13 +1883,50 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private string StaticFieldAddress(FieldSymbol field)
     {
-        if (field.Owner.StaticFieldInitialiser is { } initialiser && _curMethod != initialiser)
+        EmitTypeInitialiserCall(field.Owner);
+        return field.MangledStatic;
+    }
+
+    private void EmitTypeInitialiserCall(TypeSymbol owner)
+    {
+        if (owner.StaticFieldInitialiser is { } initialiser && _curMethod != initialiser)
         {
             Do($"call void @{initialiser.MangledName}()");
             EmitPendingCheck();
         }
+    }
 
-        return field.MangledStatic;
+    private static string TypeFailureSlot(MethodSymbol initialiser) => $"@{initialiser.MangledName}.failure";
+
+    private void EmitCachedTypeFailure(MethodSymbol initialiser)
+    {
+        var slot = TypeFailureSlot(initialiser);
+        _mod.AppendLine($"{slot} = private global i8* null");
+        var cached = Inst($"load i8*, i8** {slot}");
+        var hasFailure = Inst($"icmp ne i8* {cached}, null");
+        Term($"br i1 {hasFailure}, label %type.failed, label %type.check");
+        Lbl("type.failed");
+        Do($"call void @arc_retain(i8* {cached})");
+        Do($"store i8* {cached}, i8** @arc_exception");
+        Term("br label %func.exit");
+        Lbl("type.check");
+    }
+
+    private void EmitTypeFailure(MethodSymbol initialiser)
+    {
+        var type = _program.Types.Single(candidate => candidate.Name == "System.TypeInitializationException");
+        var constructor = type.Methods.Single(candidate => candidate.IsConstructor && candidate.Parameters.Count == 2);
+        var cause = Inst("load i8*, i8** @arc_exception");
+        Do("store i8* null, i8** @arc_exception");
+        var site = SiteOperand(initialiser.Owner.Name);
+        var wrapper = Inst($"call i8* @arc_alloc(%TypeInfo* @{type.Name}__ti, i8* {site})");
+        var length = Encoding.UTF8.GetByteCount(initialiser.Owner.Name);
+        var name = Inst($"call i8* @arc_str_lit(i8* {site}, i64 {length}, i8* {site})");
+        Do($"call void @{constructor.MangledName}(i8* {wrapper}, i8* {name}, i8* {cause})");
+        Do($"call void @arc_release(i8* {name})");
+        Do($"call void @arc_release(i8* {cause})");
+        Do($"call void @arc_store_strong(i8** {TypeFailureSlot(initialiser)}, i8* {wrapper})");
+        Do($"store i8* {wrapper}, i8** @arc_exception");
     }
 
     private string EmitFieldRead(BoundFieldAccess fa)
@@ -1768,7 +1998,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
         }
 
-        var argVals = EmitArguments(c.Arguments, c.Method.Parameters, pins);
+        var (argVals, lastValue, copies) = EmitArguments(c.Arguments, c.Method.Parameters, pins, c.ReturnsAssignedValue);
         if (c.Receiver != null && recv != null)
         {
             // A call on null fails after the arguments have been evaluated.
@@ -1776,8 +2006,15 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         var m = c.Method;
-        var ret = m.ReturnType.LlvmType;
-        var isVoid = m.ReturnType.Kind == TypeKind.Void;
+        var ret = ReturnAbiType(m);
+        var isVoid = ret == "void";
+        string? structResult = null;
+        if (m.ReturnType.Kind == TypeKind.Struct)
+        {
+            structResult = NewStructTemp(m.ReturnType);
+            argVals = [..argVals, $"{m.ReturnType.LlvmType}* {structResult}"];
+        }
+
         string result;
 
         if (c.Virtual || c.Interface)
@@ -1827,32 +2064,117 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         EmitPendingCheck();
+        ReleaseArgumentCopies(copies);
         EndPins(pins);
-        return result;
+        if (c.ReturnsAssignedValue)
+        {
+            if (c.Type.IsReferenceType)
+            {
+                Do($"call void @arc_retain(i8* {lastValue})");
+            }
+
+            return lastValue;
+        }
+
+        return structResult ?? result;
     }
 
-    private List<string> EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins)
+    private (string[] Values, string LastValue, List<(TypeSymbol Type, string Addr)> Copies)
+        EmitArguments(List<BoundExpr> args, List<ParamSymbol> parameters, List<string> pins, bool returnsAssignedValue = false)
     {
-        var argVals = new List<string>();
+        var lastValue = "";
+        var copies = new List<(TypeSymbol Type, string Addr)>();
+        var argVals = new string[args.Count];
         for (var i = 0; i < args.Count; i++)
         {
             var a = args[i];
-            var p = i < parameters.Count ? parameters[i] : null;
+            var ordinal = i;
+            if (a is BoundNamedArgument named)
+            {
+                ordinal = named.Ordinal;
+                a = named.Value;
+            }
+
+            var p = ordinal < parameters.Count ? parameters[ordinal] : null;
             if (p != null && p.RefKind != RefKind.None && a is BoundByRefArg bra)
             {
-                var addr = EmitManagedAddress(bra.Lvalue, pins);
-                argVals.Add($"{p.Type.LlvmType}* {addr}");
+                var addr = bra.Kind == RefKind.In ? EmitInAddress(bra.Lvalue, pins) : EmitManagedAddress(bra.Lvalue, pins);
+                argVals[ordinal] = $"{p.Type.LlvmType}* {addr}";
+            }
+            else if (p?.Type.Kind == TypeKind.Struct)
+            {
+                var source = EmitR(a);
+                var copy = NewStructTemp(p.Type);
+                CopyStruct(p.Type, copy, source);
+                copies.Add((p.Type, copy));
+                argVals[ordinal] = $"{p.Type.LlvmType}* {copy}";
+                if (returnsAssignedValue && ordinal == args.Count - 1)
+                {
+                    lastValue = NewStructTemp(p.Type);
+                    CopyStruct(p.Type, lastValue, copy);
+                }
             }
             else
             {
                 var v = EmitR(a);
                 TrackReferenceTemp(a, v);
 
-                argVals.Add($"{a.Type.LlvmType} {v}");
+                argVals[ordinal] = $"{a.Type.LlvmType} {v}";
+                if (ordinal == args.Count - 1)
+                {
+                    lastValue = v;
+                }
             }
         }
 
-        return argVals;
+        return (argVals, lastValue, copies);
+    }
+
+    private string NewStructTemp(TypeSymbol type)
+    {
+        var address = T();
+        var ty = type.LlvmType;
+        _entry.Add($"  {address} = alloca {ty}");
+        Do($"store {ty} zeroinitializer, {ty}* {address}");
+        _stmtStructTemps.Add((type, address));
+        return address;
+    }
+
+    private void CopyStruct(TypeSymbol type, string destination, string source)
+    {
+        var ty = type.LlvmType;
+        Do($"call void @{type.Name}__copy({ty}* {destination}, {ty}* {source})");
+    }
+
+    private void ReleaseArgumentCopies(List<(TypeSymbol Type, string Addr)> copies)
+    {
+        for (var i = copies.Count - 1; i >= 0; i--)
+        {
+            var (type, address) = copies[i];
+            Do($"call void @{type.Name}__drop({type.LlvmType}* {address})");
+            _stmtStructTemps.Remove(copies[i]);
+        }
+    }
+
+    private string EmitInAddress(BoundExpr value, List<string> pins)
+    {
+        if (value is BoundLocal or BoundParam or BoundFieldAccess or BoundIndex or BoundThis { Type.Kind: TypeKind.Struct })
+        {
+            return EmitManagedAddress(value, pins);
+        }
+
+        var result = EmitR(value);
+        if (value.Type.Kind == TypeKind.Struct)
+        {
+            return result;
+        }
+
+        TrackReferenceTemp(value, result);
+        var address = T();
+        var type = value.Type.LlvmType;
+        _entry.Add($"  {address} = alloca {type}");
+        Do($"store {type} {result}, {type}* {address}");
+        return address;
     }
 
     private void TrackReferenceTemp(BoundExpr expression, string value)
@@ -1881,22 +2203,30 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             return EmitNewObjectValue(n);
         }
 
+        var pins = BeginPins();
+        var (argVals, _, copies) = n.Ctor == null
+            ? (Array.Empty<string>(), "", new List<(TypeSymbol Type, string Addr)>())
+            : EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
+        if (n.Type.HasExplicitStaticConstructor)
+        {
+            EmitTypeInitialiserCall(n.Type);
+        }
+
         var obj = Inst($"call i8* @arc_alloc(%TypeInfo* @{n.Type.Name}__ti, i8* {SiteOperand(n.Site)})");
         if (n.Ctor != null)
         {
-            // The object is a temporary until the constructor returns, so an
-            // exception from an argument or from the constructor releases it.
+            // While its constructor runs, the new object belongs to the
+            // statement and is released if the constructor throws.
             var objIndex = _stmtTemps.Count;
             _stmtTemps.Add(obj);
-            var pins = BeginPins();
-            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"i8* {obj}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
             EmitPendingCheck();
-            EndPins(pins);
+            ReleaseArgumentCopies(copies);
             _stmtTemps.RemoveAt(objIndex);
         }
 
+        EndPins(pins);
         return obj;
     }
 
@@ -1906,20 +2236,16 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private string EmitNewObjectValue(BoundNewObject n)
     {
         var ty = n.Type.LlvmType;
-        var temp = Inst($"alloca {ty}");
-        _stmtStructTemps.Add((n.Type, temp));
-        if (n.Type.InstanceFields.Count > 0)
-        {
-            Do($"store {ty} zeroinitializer, {ty}* {temp}");
-        }
+        var temp = NewStructTemp(n.Type);
 
         if (n.Ctor != null)
         {
             var pins = BeginPins();
-            var argVals = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
+            var (argVals, _, copies) = EmitArguments(n.Arguments, n.Ctor.Parameters, pins);
             var args = string.Join(", ", new[] { $"{ty}* {temp}" }.Concat(argVals));
             Do($"call void @{n.Ctor.MangledName}({args})");
             EmitPendingCheck();
+            ReleaseArgumentCopies(copies);
             EndPins(pins);
         }
 
@@ -1930,11 +2256,90 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         var size = EmitR(a.Size);
         var s64 = Inst($"sext i32 {size} to i64");
-        var isRef = a.ElementType.IsReferenceType ? 1 : 0;
-        var elemTi = a.ElementType.Kind == TypeKind.Class
+        var elementKind = a.ElementType.IsReferenceType ? 1 : a.ElementType.Kind == TypeKind.Struct ? 2 : 0;
+        var elemTi = a.ElementType.Kind is TypeKind.Class or TypeKind.Struct
             ? $"%TypeInfo* @{a.ElementType.Name}__ti"
             : "%TypeInfo* null";
-        return Inst($"call i8* @arc_array_new(i64 {s64}, i32 {isRef}, {elemTi}, i8* {SiteOperand(a.Site)})");
+        var array = Inst($"call i8* @arc_array_new(i64 {s64}, i32 {elementKind}, {elemTi}, i8* {SiteOperand(a.Site)})");
+        if (a.Initializers.Count == 0)
+        {
+            return array;
+        }
+
+        var tracked = _stmtTemps.Count;
+        _stmtTemps.Add(array);
+        for (var i = 0; i < a.Initializers.Count; i++)
+        {
+            var element = EmitR(a.Initializers[i]);
+            var address = ElemAddr(array, i.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                a.ElementType, checkBounds: false);
+            if (a.ElementType.IsReferenceType)
+            {
+                Do($"call void @arc_assign_take(i8** {address}, i8* {element})");
+            }
+            else if (a.ElementType.Kind == TypeKind.Struct)
+            {
+                CopyStruct(a.ElementType, address, element);
+            }
+            else
+            {
+                var type = a.ElementType.LlvmType;
+                Do($"store {type} {element}, {type}* {address}");
+            }
+        }
+
+        UntrackInFlight(tracked);
+        return array;
+    }
+
+    private string EmitArraySlice(BoundArraySlice slice)
+    {
+        var array = EmitR(slice.Receiver);
+        TrackReferenceTemp(slice.Receiver, array);
+        var start = EmitR(slice.Start);
+        var length = EmitR(slice.Length);
+        var wideLength = Inst($"sext i32 {length} to i64");
+        var result = Inst($"call i8* @arc_array_slice_new(i8* {array}, i64 {wideLength}, i8* {SiteOperand(slice.Site)})");
+
+        var slot = T();
+        _entry.Add($"  {slot} = alloca i32");
+        Do($"store i32 0, i32* {slot}");
+        var condition = L("slice.cond");
+        var body = L("slice.body");
+        var end = L("slice.end");
+        Term($"br label %{condition}");
+        Lbl(condition);
+        var index = Inst($"load i32, i32* {slot}");
+        var more = Inst($"icmp slt i32 {index}, {length}");
+        Term($"br i1 {more}, label %{body}, label %{end}");
+        Lbl(body);
+        var sourceIndex = Inst($"add i32 {start}, {index}");
+        var element = slice.ElementType;
+        var source = ElemAddr(array, sourceIndex, element, checkBounds: false);
+        var destination = ElemAddr(result, index, element, checkBounds: false);
+        if (element.Kind == TypeKind.Struct)
+        {
+            CopyStruct(element, destination, source);
+        }
+        else
+        {
+            var type = element.LlvmType;
+            var value = Inst($"load {type}, {type}* {source}");
+            if (element.IsReferenceType)
+            {
+                Do($"call void @arc_store_strong(i8** {destination}, i8* {value})");
+            }
+            else
+            {
+                Do($"store {type} {value}, {type}* {destination}");
+            }
+        }
+
+        var next = Inst($"add i32 {index}, 1");
+        Do($"store i32 {next}, i32* {slot}");
+        Term($"br label %{condition}");
+        Lbl(end);
+        return result;
     }
 
     private string ElemAddr(string arr, string idx, TypeSymbol elem, bool checkBounds = true)
@@ -1946,7 +2351,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             EmitPendingCheck();
         }
 
-        var mul = Inst($"mul i64 {i64}, 8");
+        var mul = Inst($"mul i64 {i64}, {Math.Max(8, elem.SlotSize)}");
         var off = Inst($"add i64 {mul}, 40");
         var p = Inst($"getelementptr i8, i8* {arr}, i64 {off}");
         return Inst($"bitcast i8* {p} to {elem.LlvmType}*");
@@ -1958,6 +2363,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         TrackReferenceTemp(ix.Receiver, arr);
         var idx = EmitR(ix.Index);
         var addr = ElemAddr(arr, idx, ix.Type);
+        if (ix.Type.Kind == TypeKind.Struct)
+        {
+            return addr;
+        }
+
         var v = Inst($"load {ix.Type.LlvmType}, {ix.Type.LlvmType}* {addr}");
         if (ix.Type.IsReferenceType)
         {
@@ -1971,11 +2381,13 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         switch (b.Kind)
         {
-            case BinKind.IntArith: return EmitIntegerArithmetic(b, 32);
+            case BinKind.BoolArith: return EmitIntegerArithmetic(b, 1);
+            case BinKind.BoolCmp: return Inst($"icmp {CmpOp(b.Op, false)} i1 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.IntArith: return EmitIntegerArithmetic(b, int.Parse(b.Left.Type.LlvmType.AsSpan(1)));
             case BinKind.LongArith: return EmitIntegerArithmetic(b, 64);
             case BinKind.FloatArith: return Inst($"{FloatArithOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleArith: return Inst($"{FloatArithOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
-            case BinKind.IntCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} i32 {EmitR(b.Left)}, {EmitR(b.Right)}");
+            case BinKind.IntCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} {b.Left.Type.LlvmType} {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.LongCmp: return Inst($"icmp {CmpOp(b.Op, b.IsUnsigned)} i64 {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.FloatCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} float {EmitR(b.Left)}, {EmitR(b.Right)}");
             case BinKind.DoubleCmp: return Inst($"fcmp {FloatCmpOp(b.Op)} double {EmitR(b.Left)}, {EmitR(b.Right)}");
@@ -2004,20 +2416,52 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private string EmitIntegerArithmetic(BoundBinary b, int bits)
     {
-        var left = EmitR(b.Left);
-        var right = EmitR(b.Right);
-        if (b.Op is TokenKind.Slash or TokenKind.Percent && !IsSafeDivisor(right))
+        return EmitIntegerArithmetic(b.Op, b.IsUnsigned, bits, EmitR(b.Left), EmitR(b.Right), b.IsChecked);
+    }
+
+    private string EmitIntegerArithmetic(TokenKind op, bool unsigned, int bits, string left, string right, bool isChecked = false)
+    {
+        if (isChecked && op is TokenKind.Plus or TokenKind.Minus or TokenKind.Star)
+        {
+            var narrowType = $"i{bits}";
+            var wideType = $"i{bits * 2}";
+            var extend = unsigned ? "zext" : "sext";
+            var wideLeft = Inst($"{extend} {narrowType} {left} to {wideType}");
+            var wideRight = Inst($"{extend} {narrowType} {right} to {wideType}");
+            var wideResult = Inst($"{ArithOp(op, unsigned)} {wideType} {wideLeft}, {wideRight}");
+            var result = Inst($"trunc {wideType} {wideResult} to {narrowType}");
+            var restored = Inst($"{extend} {narrowType} {result} to {wideType}");
+            EmitOverflowCheck(Inst($"icmp ne {wideType} {wideResult}, {restored}"));
+            return result;
+        }
+
+        if (op is TokenKind.LeftShift or TokenKind.RightShift or TokenKind.UnsignedRightShift)
+        {
+            right = Inst($"and i32 {right}, {bits - 1}");
+            if (bits == 64)
+            {
+                right = Inst($"zext i32 {right} to i64");
+            }
+        }
+
+        if (op is TokenKind.Slash or TokenKind.Percent && !IsSafeDivisor(right))
         {
             // Hardware division traps on zero and on the minimum value divided
             // by -1. The runtime turns both into exceptions.
-            var widen = b.IsUnsigned ? "zext" : "sext";
+            var widen = unsigned ? "zext" : "sext";
             var wideLeft = bits == 64 ? left : Inst($"{widen} i32 {left} to i64");
             var wideRight = bits == 64 ? right : Inst($"{widen} i32 {right} to i64");
-            Do($"call void @arc_div_check(i64 {wideLeft}, i64 {wideRight}, i32 {(b.IsUnsigned ? 0 : bits)})");
+            Do($"call void @arc_div_check(i64 {wideLeft}, i64 {wideRight}, i32 {(unsigned ? 0 : bits)})");
             EmitPendingCheck();
         }
 
-        return Inst($"{ArithOp(b.Op, b.IsUnsigned)} i{bits} {left}, {right}");
+        return Inst($"{ArithOp(op, unsigned)} i{bits} {left}, {right}");
+    }
+
+    private void EmitOverflowCheck(string overflowed)
+    {
+        Do($"call void @arc_overflow_check(i32 {ZeroExtendBool(overflowed)})");
+        EmitPendingCheck();
     }
 
     // A literal divisor other than zero and -1 cannot fail.
@@ -2031,6 +2475,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         TokenKind.Star => "mul",
         TokenKind.Slash => unsigned ? "udiv" : "sdiv",
         TokenKind.Percent => unsigned ? "urem" : "srem",
+        TokenKind.Amp => "and",
+        TokenKind.Pipe => "or",
+        TokenKind.Caret => "xor",
+        TokenKind.LeftShift => "shl",
+        TokenKind.RightShift => unsigned ? "lshr" : "ashr",
+        TokenKind.UnsignedRightShift => "lshr",
         _ => "add"
     };
 
@@ -2136,7 +2586,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         if (e.Type.LlvmType == "i64")
         {
-            return Inst($"call i8* @arc_str_from_int(i64 {v})");
+            var convert = e.Type.IsUnsignedInteger ? "arc_str_from_uint" : "arc_str_from_int";
+            return Inst($"call i8* @{convert}(i64 {v})");
         }
 
         if (e.Type.LlvmType == "i32")
@@ -2177,12 +2628,150 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             return Inst($"xor i1 {v}, true");
         }
 
+        if (u.Op == TokenKind.Tilde)
+        {
+            return Inst($"xor {u.Type.LlvmType} {v}, -1");
+        }
+
         if (u.Type.LlvmType is "float" or "double")
         {
             return Inst($"fneg {u.Type.LlvmType} {v}");
         }
 
-        return Inst($"sub {u.Type.LlvmType} 0, {v}");
+        return EmitIntegerArithmetic(TokenKind.Minus, u.Type.IsUnsignedInteger,
+            int.Parse(u.Type.LlvmType.AsSpan(1)), "0", v, u.IsChecked);
+    }
+
+    private string EmitOperatorUpdate(BoundOperatorUpdate update)
+    {
+        var type = update.Type;
+        var pins = BeginPins();
+        string? array = null;
+        string? index = null;
+        string address;
+        if (update.Target is BoundIndex element && type.IsReferenceType)
+        {
+            array = EmitR(element.Receiver);
+            _stmtTemps.Add(array);
+            PinOwner(pins, array);
+            index = EmitR(element.Index);
+            address = ElemAddr(array, index, element.Type);
+        }
+        else
+        {
+            address = EmitManagedAddress(update.Target, pins);
+        }
+
+        string before;
+        if (type.Kind == TypeKind.Struct)
+        {
+            before = NewStructTemp(type);
+            CopyStruct(type, before, address);
+        }
+        else
+        {
+            before = EmitLoadSlot(address, type);
+            if (type.IsReferenceType)
+            {
+                _stmtTemps.Add(before);
+            }
+        }
+
+        _patternInputs.Add(update.Input, before);
+        var after = EmitR(update.Result);
+        _patternInputs.Remove(update.Input);
+        var result = update.IsPostfix ? before : after;
+        if (type.IsReferenceType)
+        {
+            if (array != null && index != null)
+            {
+                var pending = _stmtTemps.Count;
+                _stmtTemps.Add(after);
+                var wideIndex = Inst($"sext i32 {index} to i64");
+                Do($"call void @arc_array_store_check(i8* {array}, i64 {wideIndex}, i8* {after})");
+                EmitPendingCheck();
+                UntrackInFlight(pending);
+            }
+
+            Do($"call void @arc_assign_take(i8** {address}, i8* {after})");
+            Do($"call void @arc_retain(i8* {result})");
+        }
+        else if (type.Kind == TypeKind.Struct)
+        {
+            CopyStruct(type, address, after);
+        }
+        else
+        {
+            Do($"store {type.LlvmType} {after}, {type.LlvmType}* {address}");
+        }
+
+        EndPins(pins);
+        return result;
+    }
+
+    private string EmitStringCompound(BoundStringCompound compound)
+    {
+        var pins = BeginPins();
+        var address = EmitManagedAddress(compound.Target, pins);
+        var left = EmitLoadSlot(address, compound.Type);
+        _stmtTemps.Add(left);
+        var right = EmitStringOperand(compound.Right);
+        _stmtTemps.Add(right);
+        var result = Inst($"call i8* @arc_str_concat(i8* {left}, i8* {right})");
+        Do($"call void @arc_assign_take(i8** {address}, i8* {result})");
+        Do($"call void @arc_retain(i8* {result})");
+        EndPins(pins);
+        return result;
+    }
+
+    private string EmitNumericCompound(BoundNumericCompound compound)
+    {
+        var pins = BeginPins();
+        var address = EmitManagedAddress(compound.Target, pins);
+        var storage = compound.Type;
+        var operation = compound.OperationType;
+        var before = Inst($"load {storage.LlvmType}, {storage.LlvmType}* {address}");
+        var left = EmitNumericConversion(before, storage, operation);
+        var right = EmitR(compound.Right);
+        if (compound.Op is not (TokenKind.LeftShift or TokenKind.RightShift or TokenKind.UnsignedRightShift))
+        {
+            right = EmitNumericConversion(right, compound.Right.Type, operation);
+        }
+        var combined = operation.IsFloat
+            ? Inst($"{FloatArithOp(compound.Op)} {operation.LlvmType} {left}, {right}")
+            : EmitIntegerArithmetic(compound.Op, operation.IsUnsignedInteger,
+                int.Parse(operation.LlvmType.AsSpan(1)), left, right, compound.IsChecked);
+        var after = EmitNumericConversion(combined, operation, storage, compound.IsChecked);
+
+        Do($"store {storage.LlvmType} {after}, {storage.LlvmType}* {address}");
+        EndPins(pins);
+        return after;
+    }
+
+    private string EmitIncrement(BoundIncrement increment)
+    {
+        var pins = BeginPins();
+        var address = EmitManagedAddress(increment.Target, pins);
+        var type = increment.Type.LlvmType;
+        var before = Inst($"load {type}, {type}* {address}");
+        var op = increment.IsDecrement ? TokenKind.Minus : TokenKind.Plus;
+        var after = type is "float" or "double"
+            ? Inst($"{FloatArithOp(op)} {type} {before}, 1.0")
+            : EmitIntegerArithmetic(op, increment.Type.IsUnsignedInteger,
+                int.Parse(type.AsSpan(1)), before, "1", increment.IsChecked);
+        if (increment.Type.Name == "char")
+        {
+            if (increment.IsChecked)
+            {
+                EmitOverflowCheck(Inst($"icmp ugt i32 {after}, 65535"));
+            }
+
+            after = Inst($"and i32 {after}, 65535");
+        }
+
+        Do($"store {type} {after}, {type}* {address}");
+        EndPins(pins);
+        return increment.IsPostfix ? before : after;
     }
 
     private string EmitAssign(BoundAssign a)
@@ -2285,8 +2874,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             BoundLocal lo => _localSlot[lo.Symbol.Id],
             BoundParam p => p.ByRef
                 ? Inst($"load {p.Type.LlvmType}*, {p.Type.LlvmType}** %arg{p.Symbol.Index}")
-                : $"%arg{p.Symbol.Index}",
+                : $"%a{p.Symbol.Index}",
             BoundFieldAccess fa => EmitStructFieldAddress(fa),
+            BoundIndex index => EmitIndexRead(index),
             _ => "null"
         };
         Do($"call void @{a.Type.Name}__copy({ty}* {dst}, {ty}* {src})");
@@ -2368,11 +2958,32 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             return v;
         }
 
+        return EmitNumericConversion(v, from, to, cv.IsChecked);
+    }
+
+    private string EmitNumericConversion(string v, TypeSymbol from, TypeSymbol to, bool isChecked = false)
+    {
+        if (isChecked && from != to && to.IsInteger)
+        {
+            EmitCheckedConversion(v, from, to);
+        }
+
         // integer extension/truncation
         if (from.IsInteger && to.IsInteger)
         {
             var fromBits = int.Parse(from.LlvmType.TrimStart('i'));
             var toBits = int.Parse(to.LlvmType.TrimStart('i'));
+            if (to.Name == "char" && from.Name != "char")
+            {
+                var narrow = fromBits switch
+                {
+                    > 16 => Inst($"trunc {from.LlvmType} {v} to i16"),
+                    < 16 => Inst($"{(from.IsUnsignedInteger ? "zext" : "sext")} {from.LlvmType} {v} to i16"),
+                    _ => v
+                };
+                return Inst($"zext i16 {narrow} to i32");
+            }
+
             if (fromBits < toBits)
             {
                 return Inst($"{(from.IsUnsignedInteger ? "zext" : "sext")} {from.LlvmType} {v} to {to.LlvmType}");
@@ -2396,7 +3007,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         // floating point -> integer
         if (from.IsFloat && to.IsInteger)
         {
-            var op = to.IsUnsignedInteger ? "fptoui" : "fptosi";
+            var op = to.IsUnsignedInteger || to.Name == "char" ? "fptoui" : "fptosi";
             return Inst($"{op} {from.LlvmType} {v} to {to.LlvmType}");
         }
 
@@ -2414,12 +3025,320 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         return v;
     }
 
+    private void EmitCheckedConversion(string value, TypeSymbol from, TypeSymbol to)
+    {
+        var unsigned = to.IsUnsignedInteger || to.Name == "char";
+        var bits = to.Name == "char" ? 16 : int.Parse(to.LlvmType.AsSpan(1));
+        if (from.IsInteger)
+        {
+            var sourceExtend = from.IsUnsignedInteger || from.Name == "char" ? "zext" : "sext";
+            var destinationExtend = unsigned ? "zext" : "sext";
+            var wide = Inst($"{sourceExtend} {from.LlvmType} {value} to i128");
+            var narrow = Inst($"trunc i128 {wide} to i{bits}");
+            var restored = Inst($"{destinationExtend} i{bits} {narrow} to i128");
+            EmitOverflowCheck(Inst($"icmp ne i128 {wide}, {restored}"));
+        }
+        else if (from.IsFloat)
+        {
+            var type = from.LlvmType;
+            var intrinsic = type == "float" ? "f32" : "f64";
+            var truncated = Inst($"call {type} @llvm.trunc.{intrinsic}({type} {value})");
+            var bound = Math.ScaleB(1.0, unsigned ? bits : bits - 1);
+            var lower = unsigned ? 0.0 : -bound;
+            var min = FormatFloatConstant(lower);
+            var max = FormatFloatConstant(bound);
+            var aboveMin = Inst($"fcmp oge {type} {truncated}, {min}");
+            var belowMax = Inst($"fcmp olt {type} {truncated}, {max}");
+            var inRange = Inst($"and i1 {aboveMin}, {belowMax}");
+            EmitOverflowCheck(Inst($"xor i1 {inRange}, true"));
+        }
+    }
+
+    private string EmitChoice(BoundChoice choice)
+    {
+        var test = EmitR(choice.Condition);
+        var result = choice.Type.Kind == TypeKind.Struct ? NewStructTemp(choice.Type) : null;
+        var trueLabel = L("choice.true");
+        var falseLabel = L("choice.false");
+        var end = L("choice.end");
+        Term($"br i1 {test}, label %{trueLabel}, label %{falseLabel}");
+
+        var incoming = new List<(string Value, string Label, List<string> References, List<(TypeSymbol Type, string Addr)> Structs)>();
+        void EmitArm(string label, BoundExpr arm)
+        {
+            Lbl(label);
+            var armMark = _stmtTemps.Count;
+            var armStructMark = _stmtStructTemps.Count;
+            var value = EmitR(arm);
+            if (_terminated)
+            {
+                _stmtTemps.RemoveRange(armMark, _stmtTemps.Count - armMark);
+                _stmtStructTemps.RemoveRange(armStructMark, _stmtStructTemps.Count - armStructMark);
+                return;
+            }
+
+            if (result != null)
+            {
+                CopyStruct(choice.Type, result, value);
+            }
+
+            var references = _stmtTemps.GetRange(armMark, _stmtTemps.Count - armMark);
+            var structs = _stmtStructTemps.GetRange(armStructMark, _stmtStructTemps.Count - armStructMark);
+            _stmtTemps.RemoveRange(armMark, references.Count);
+            _stmtStructTemps.RemoveRange(armStructMark, structs.Count);
+            incoming.Add((value, _block, references, structs));
+            Term($"br label %{end}");
+        }
+
+        EmitArm(trueLabel, choice.WhenTrue);
+        EmitArm(falseLabel, choice.WhenFalse);
+        Lbl(end);
+        if (incoming.Count == 0)
+        {
+            Term("unreachable");
+            return "undef";
+        }
+
+        for (var i = 0; i < incoming.Count; i++)
+        {
+            var arm = incoming[i];
+            string MergeTemp(string type, string value) => incoming.Count == 1
+                ? value
+                : Inst($"phi {type} [ {value}, %{arm.Label} ], [ null, %{incoming[1 - i].Label} ]");
+
+            foreach (var reference in arm.References)
+            {
+                _stmtTemps.Add(MergeTemp("i8*", reference));
+            }
+
+            foreach (var (type, address) in arm.Structs)
+            {
+                _stmtStructTemps.Add((type, MergeTemp(type.LlvmType + "*", address)));
+            }
+        }
+
+        if (result != null)
+        {
+            return result;
+        }
+
+        return incoming.Count == 1
+            ? incoming[0].Value
+            : Inst($"phi {choice.Type.LlvmType} {string.Join(", ", incoming.Select(arm => $"[ {arm.Value}, %{arm.Label} ]"))}");
+    }
+
+    private string EmitSwitchFailure(BoundSwitchFailure failure)
+    {
+        var exception = EmitR(failure.Exception);
+        Do($"call void @arc_throw(i8* {exception})");
+        EmitPendingCheck();
+        Term("unreachable");
+        return "undef";
+    }
+
+    private string EmitSequence(BoundSequence sequence)
+    {
+        foreach (var effect in sequence.Effects)
+        {
+            var value = EmitR(effect);
+            if (effect.Type.IsReferenceType)
+            {
+                _stmtTemps.Add(value);
+            }
+        }
+
+        return EmitR(sequence.Value);
+    }
+
+    private string EmitPatternTest(BoundPatternTest pattern)
+    {
+        _patternInputs.Add(pattern.Input, CapturePatternInput(pattern.Value));
+        var matched = EmitR(pattern.Test);
+        _patternInputs.Remove(pattern.Input);
+        return matched;
+    }
+
+    private string CapturePatternInput(BoundExpr expression)
+    {
+        var value = EmitR(expression);
+        TrackReferenceTemp(expression, value);
+        if (expression.Type.Kind != TypeKind.Struct)
+        {
+            return value;
+        }
+
+        var copy = NewStructTemp(expression.Type);
+        CopyStruct(expression.Type, copy, value);
+        return copy;
+    }
+
+    private string EmitPatternInput(BoundPatternInput input)
+    {
+        var value = _patternInputs[input];
+        if (input.Type.IsReferenceType)
+        {
+            Do($"call void @arc_retain(i8* {value})");
+        }
+
+        return value;
+    }
+
+    private string EmitPatternBinding(BoundPatternBinding binding)
+    {
+        var matched = EmitR(binding.Test);
+        var assign = L("pattern.bind");
+        var end = L("pattern.end");
+        Term($"br i1 {matched}, label %{assign}, label %{end}");
+        Lbl(assign);
+        EmitLocalDecl(new BoundLocalDecl { Symbol = binding.Local, Initializer = binding.Value });
+        Term($"br label %{end}");
+        Lbl(end);
+        return matched;
+    }
+
+    private string EmitUnbox(BoundUnbox unbox)
+    {
+        var value = EmitR(unbox.Operand);
+        TrackReferenceTemp(unbox.Operand, value);
+        EmitNullCheck(unbox.Operand, value);
+        var field = unbox.BoxedValue;
+        Do($"call void @arc_cast_check(i8* {value}, %TypeInfo* @{field.Owner.Name}__ti)");
+        EmitPendingCheck();
+        var source = FieldAddr(value, field.Owner, field);
+        var copy = NewStructTemp(unbox.Type);
+        CopyStruct(unbox.Type, copy, source);
+        return copy;
+    }
+
     private string EmitIs(BoundIs i)
     {
         var v = EmitR(i.Operand);
         TrackReferenceTemp(i.Operand, v);
-        var r = Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{i.TestType.Name}__ti)");
+        var r = i.TestType.Kind == TypeKind.Interface
+            ? Inst($"call i32 @arc_has_interface(i8* {v}, i64 {i.TestType.InterfaceTestSlot})")
+            : Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{i.TestType.Name}__ti)");
         return Inst($"icmp ne i32 {r}, 0");
+    }
+
+    private string EmitSameType(BoundSameType same)
+    {
+        var left = EmitR(same.Left);
+        TrackReferenceTemp(same.Left, left);
+        var right = EmitR(same.Right);
+        TrackReferenceTemp(same.Right, right);
+        return Inst($"icmp eq %TypeInfo* {LoadTypeInfo(left)}, {LoadTypeInfo(right)}");
+    }
+
+    // A decimal is passed to the runtime by address. The runtime raises through
+    // arc_raise like the other checks, so every operation that can fail is
+    // followed by a pending-exception check.
+    private string EmitDecimalOp(BoundDecimalOp op)
+    {
+        string AddressOf(BoundExpr argument)
+        {
+            var value = EmitR(argument);
+            return Inst($"bitcast {argument.Type.LlvmType}* {value} to i8*");
+        }
+
+        string NewResult(out string bytes)
+        {
+            var temp = NewStructTemp(op.Type);
+            bytes = Inst($"bitcast {op.Type.LlvmType}* {temp} to i8*");
+            return temp;
+        }
+
+        string result;
+        switch (op.Op)
+        {
+            case DecimalOp.Constant:
+            {
+                result = NewResult(out var bytes);
+                Do($"call void @arc_dec_set(i8* {bytes}, i64 {op.Low}, i64 {op.High})");
+                return result;
+            }
+
+            case DecimalOp.Add or DecimalOp.Subtract or DecimalOp.Multiply or DecimalOp.Divide or DecimalOp.Remainder:
+            {
+                var function = op.Op switch
+                {
+                    DecimalOp.Add => "arc_dec_add",
+                    DecimalOp.Subtract => "arc_dec_sub",
+                    DecimalOp.Multiply => "arc_dec_mul",
+                    DecimalOp.Divide => "arc_dec_div",
+                    _ => "arc_dec_rem"
+                };
+                var left = AddressOf(op.Arguments[0]);
+                var right = AddressOf(op.Arguments[1]);
+                result = NewResult(out var bytes);
+                Do($"call void @{function}(i8* {left}, i8* {right}, i8* {bytes})");
+                EmitPendingCheck();
+                return result;
+            }
+
+            case DecimalOp.Negate:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                result = NewResult(out var bytes);
+                Do($"call void @arc_dec_neg(i8* {operand}, i8* {bytes})");
+                return result;
+            }
+
+            case DecimalOp.Compare:
+            {
+                var left = AddressOf(op.Arguments[0]);
+                var right = AddressOf(op.Arguments[1]);
+                return Inst($"call i32 @arc_dec_cmp(i8* {left}, i8* {right})");
+            }
+
+            case DecimalOp.FromInteger or DecimalOp.FromUnsigned or DecimalOp.FromDouble:
+            {
+                var argument = EmitR(op.Arguments[0]);
+                result = NewResult(out var bytes);
+                var (function, type) = op.Op switch
+                {
+                    DecimalOp.FromInteger => ("arc_dec_from_i64", "i64"),
+                    DecimalOp.FromUnsigned => ("arc_dec_from_u64", "i64"),
+                    _ => ("arc_dec_from_double", "double")
+                };
+                Do($"call void @{function}({type} {argument}, i8* {bytes})");
+                EmitPendingCheck();
+                return result;
+            }
+
+            case DecimalOp.ToInteger:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                var value = Inst($"call i64 @arc_dec_to_i64(i8* {operand}, i64 {op.Low}, i64 {op.High})");
+                EmitPendingCheck();
+                return value;
+            }
+
+            case DecimalOp.ToUnsigned:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                var value = Inst($"call i64 @arc_dec_to_u64(i8* {operand})");
+                EmitPendingCheck();
+                return value;
+            }
+
+            case DecimalOp.ToDouble:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                return Inst($"call double @arc_dec_to_double(i8* {operand})");
+            }
+
+            default:
+            {
+                var operand = AddressOf(op.Arguments[0]);
+                return Inst($"call i8* @arc_dec_to_str(i8* {operand})");
+            }
+        }
+    }
+    private string LoadTypeInfo(string objectPointer)
+    {
+        var address = Inst($"getelementptr i8, i8* {objectPointer}, i64 16");
+        var typed = Inst($"bitcast i8* {address} to %TypeInfo**");
+        return Inst($"load %TypeInfo*, %TypeInfo** {typed}");
     }
 
     private string EmitAs(BoundAs a)
@@ -2555,9 +3474,19 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         var t = c.Argument.Type;
-        if (t.Kind == TypeKind.String)
+        if (t.Kind is TypeKind.String or TypeKind.Struct)
         {
             var v = EmitR(c.Argument);
+            if (t.Kind == TypeKind.Struct)
+            {
+                v = EmitLiteral(new BoundLiteral
+                {
+                    Type = t,
+                    LitKind = Syntax.LiteralKind.String,
+                    StringValue = t.Name
+                });
+            }
+
             _stmtTemps.Add(v);
             Do($"call void @arc_console_write(i8* {v}, i32 {nl})");
             return "";
@@ -2580,7 +3509,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         if (t.LlvmType == "i64")
         {
             var v = EmitR(c.Argument);
-            Do($"call void @arc_console_write_int(i64 {v}, i32 {nl})");
+            var write = t.IsUnsignedInteger ? "arc_console_write_uint" : "arc_console_write_int";
+            Do($"call void @{write}(i64 {v}, i32 {nl})");
             return "";
         }
 
@@ -2651,6 +3581,14 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         else
         {
             fns.AppendLine($"  %r = call {entry.ReturnType.LlvmType} @{entry.MangledName}()");
+        }
+
+        foreach (var type in _program.Types)
+        {
+            if (type.HasExplicitStaticConstructor && type.StaticFieldInitialiser is { } initialiser)
+            {
+                fns.AppendLine($"  call void @arc_assign_take(i8** {TypeFailureSlot(initialiser)}, i8* null)");
+            }
         }
 
         // An exception that no handler caught ends the program here.

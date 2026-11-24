@@ -29,8 +29,15 @@ sealed partial class RoslynLowering
     private readonly Dictionary<TypeSymbol, List<(FieldSymbol Field, EqualsValueClauseSyntax Syntax)>> _fieldInitialisers = [];
     private readonly Dictionary<MemberKey, MethodSymbol> _methods = [];
     private readonly Dictionary<MethodSymbol, int> _selectors = [];
+    private readonly Dictionary<TypeSymbol, INamedTypeSymbol> _sources = [];
+    private readonly Dictionary<MethodSymbol, MethodSymbol> _dispatchRoots = [];
+    private readonly List<(MethodSymbol Root, IMethodSymbol Definition)> _genericRoots = [];
+    private readonly HashSet<(MethodSymbol Root, TypeSymbol Type)> _resolvedRoots = [];
     private readonly Dictionary<string, TypeSymbol> _arrays = [];
     private readonly Dictionary<string, TypeSymbol> _weakRefs = [];
+    private readonly Dictionary<TypeSymbol, FieldSymbol> _structBoxes = [];
+    private readonly Dictionary<TypeSymbol, TypeSymbol> _nullableTypes = [];
+    private readonly Dictionary<TypeSymbol, INamedTypeSymbol> _variantInterfaces = [];
     private readonly HashSet<TypeSymbol> _filled = [];
     private readonly HashSet<MethodSymbol> _queued = [];
     private readonly Queue<PendingBody> _bodies = [];
@@ -46,6 +53,7 @@ sealed partial class RoslynLowering
     private TypeSymbol _currentType = null!;
     private MethodSymbol _currentMethod = null!;
     private List<LocalSymbol> _methodLocals = [];
+    private readonly Stack<BoundExpr> _initialiserTargets = [];
     private readonly Dictionary<ILocalSymbol, LocalSymbol> _locals = new(SymbolEqualityComparer.Default);
 
     internal RoslynLowering(CSharpCompilation compilation, List<(string file, Diagnostic d)> diags)
@@ -102,14 +110,14 @@ sealed partial class RoslynLowering
             var model = _compilation.GetSemanticModel(tree);
             foreach (var declaration in tree.GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
             {
-                if (declaration.Parent is TypeDeclarationSyntax)
+                if (model.GetDeclaredSymbol(declaration) is not INamedTypeSymbol symbol)
                 {
-                    Report(declaration, "nested types are not supported", DiagnosticCatalog.UnsupportedConstructId);
                     continue;
                 }
 
-                if (model.GetDeclaredSymbol(declaration) is not INamedTypeSymbol symbol)
+                if (symbol.ContainingType?.IsGenericType == true)
                 {
+                    Report(declaration, "types nested in generic types are not supported", DiagnosticCatalog.UnsupportedConstructId);
                     continue;
                 }
 
@@ -122,14 +130,31 @@ sealed partial class RoslynLowering
             }
         }
 
-        while (_bodies.Count > 0)
+        // Lowering a body can reach a new generic instantiation, and resolving
+        // an implementation queues a body, so the two repeat until neither adds work.
+        bool resolved;
+        do
         {
-            LowerBody(_bodies.Dequeue());
+            while (_bodies.Count > 0)
+            {
+                LowerBody(_bodies.Dequeue());
+            }
+
+            resolved = ResolveGenericDispatch();
         }
+        while (resolved || _bodies.Count > 0);
 
         program.Types.AddRange(_named.Values.Where(t => t.Kind is BoundKind.Class or BoundKind.Struct or BoundKind.Interface));
         program.Types.AddRange(_generic.Values);
-        program.InterfaceSelectorCount = _selectors.Count;
+        program.Types.AddRange(_structBoxes.Values.Select(field => field.Owner));
+        program.Types.AddRange(_nullableTypes.Values);
+        if (_decimal != null)
+        {
+            program.Types.Add(_decimal);
+        }
+
+        MapVariantInterfaces(program.Types);
+        program.InterfaceSelectorCount = AssignInterfaceTestSlots(program.Types);
         program.MethodBodies.AddRange(_readyBodies);
 
         DefiniteAssignment.Analyze(program, (line, msg) => Report(line, 0, msg, "ARC2100", DiagnosticSeverity.Warning));
@@ -182,13 +207,6 @@ sealed partial class RoslynLowering
             }
 
             var element = MapType(array.ElementType, location);
-            if (element.Kind == BoundKind.Struct)
-            {
-                Report(location,
-                    "arrays of struct element type are not supported",
-                    DiagnosticCatalog.UnsupportedConstructId);
-            }
-
             var key = element.Name + "[]";
             if (!_arrays.TryGetValue(key, out var arrayType))
             {
@@ -227,6 +245,17 @@ sealed partial class RoslynLowering
             return _error;
         }
 
+        if (named.SpecialType == SpecialType.System_Decimal)
+        {
+            return GetDecimalType();
+        }
+
+        if (named.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
+        {
+            var element = MapType(named.TypeArguments[0], location);
+            return element == _error ? _error : GetNullableType(element);
+        }
+
         if (IsWeakReference(named))
         {
             var argument = named.TypeArguments.Length == 1 ? MapType(named.TypeArguments[0], location) : _error;
@@ -256,6 +285,12 @@ sealed partial class RoslynLowering
             return _error;
         }
 
+        if (named.TypeKind == RoslynKind.Enum && named.ContainingType?.IsGenericType == true)
+        {
+            Report(location, "types nested in generic types are not supported", DiagnosticCatalog.UnsupportedConstructId);
+            return _error;
+        }
+
         if (named.IsGenericType)
         {
             var arguments = named.TypeArguments.Select(argument => MapType(argument, location)).ToList();
@@ -275,7 +310,15 @@ sealed partial class RoslynLowering
 
         var created = CreateShell(named);
         _named.Add(named, created);
-        Fill(created, named);
+        if (named.EnumUnderlyingType is { } underlying)
+        {
+            created.EnumUnderlyingType = MapType(underlying, location);
+        }
+        else
+        {
+            Fill(created, named);
+        }
+
         return created;
     }
 
@@ -299,10 +342,16 @@ sealed partial class RoslynLowering
         try
         {
             var created = CreateShell(definition);
-            created.Name = SpecialisedName(definition.Name, arguments);
+            created.Name = SpecialisedName(created.Name, arguments);
             created.GenericDefinition = definition.Name;
             created.TypeArguments = arguments;
             _generic.Add(key, created);
+            if (definition.TypeKind == RoslynKind.Interface
+                && definition.TypeParameters.Any(parameter => parameter.Variance != VarianceKind.None))
+            {
+                _variantInterfaces.Add(created, definition);
+            }
+
             _substitution.Clear();
             for (var i = 0; i < definition.TypeParameters.Length && i < arguments.Count; i++)
             {
@@ -329,22 +378,35 @@ sealed partial class RoslynLowering
         var kind = symbol.TypeKind switch
         {
             RoslynKind.Struct => BoundKind.Struct,
+            RoslynKind.Enum => BoundKind.Enum,
             RoslynKind.Interface => BoundKind.Interface,
             _ => BoundKind.Class
         };
         var location = symbol.Locations.FirstOrDefault(item => item.IsInSource);
         var line = location == null ? 0 : location.GetLineSpan().StartLinePosition.Line + 1;
         var file = location?.SourceTree == null ? "" : Path.GetFileName(location.SourceTree.FilePath);
-        return new TypeSymbol
+        var shell = new TypeSymbol
         {
-            Name = symbol.ContainingNamespace is { IsGlobalNamespace: false } ns
-                ? ns.ToDisplayString() + "." + symbol.Name
-                : symbol.Name,
+            Name = QualifiedTypeName(symbol),
             Kind = kind,
             IsAbstract = symbol.IsAbstract,
             DeclarationLine = line,
             SourceFile = file
         };
+        _sources[shell] = symbol;
+        return shell;
+    }
+
+    private static string QualifiedTypeName(INamedTypeSymbol symbol)
+    {
+        if (symbol.ContainingType != null)
+        {
+            return QualifiedTypeName(symbol.ContainingType) + "." + symbol.Name;
+        }
+
+        return symbol.ContainingNamespace is { IsGlobalNamespace: false } ns
+            ? ns.ToDisplayString() + "." + symbol.Name
+            : symbol.Name;
     }
 
     private int _fillDepth;
@@ -389,7 +451,9 @@ sealed partial class RoslynLowering
 
         foreach (var iface in symbol.Interfaces)
         {
-            if (iface.SpecialType == SpecialType.System_Object)
+            // A record lists IEquatable<R>, which only its generated Equals satisfies.
+            if (iface.SpecialType == SpecialType.System_Object
+                || (symbol.IsRecord && iface.OriginalDefinition is { Name: "IEquatable", ContainingNamespace.Name: "System" }))
             {
                 continue;
             }
@@ -410,20 +474,19 @@ sealed partial class RoslynLowering
                 case IFieldSymbol field when !field.IsImplicitlyDeclared && !field.IsConst:
                     declaredFields.Add(CreateField(type, field));
                     break;
-                case IFieldSymbol field when field.IsConst:
-                    ReportOnce(field, "constants are not supported: use a 'static' field");
+                case IPropertySymbol { IsImplicitlyDeclared: true, Name: "EqualityContract" } when symbol.IsRecord:
                     break;
                 case IPropertySymbol property:
                     CreateProperty(type, property, declaredFields, declaredMethods);
                     break;
                 case IMethodSymbol method when method.MethodKind is MethodKind.Ordinary or MethodKind.Constructor
-                    or MethodKind.ExplicitInterfaceImplementation:
+                    or MethodKind.ExplicitInterfaceImplementation or MethodKind.UserDefinedOperator or MethodKind.Conversion:
                     CreateMethod(type, method, declaredMethods);
                     break;
                 case IMethodSymbol method when method.MethodKind is MethodKind.Destructor:
                     CreateFinaliser(type, method, declaredMethods);
                     break;
-                case IMethodSymbol { MethodKind: MethodKind.StaticConstructor, IsImplicitlyDeclared: true } method:
+                case IMethodSymbol { MethodKind: MethodKind.StaticConstructor } method:
                     var initialiser = new MethodSymbol
                     {
                         Name = "<field_init>",
@@ -432,14 +495,8 @@ sealed partial class RoslynLowering
                         ReturnType = _void
                     };
                     type.StaticFieldInitialiser = initialiser;
+                    type.HasExplicitStaticConstructor = !method.IsImplicitlyDeclared;
                     Queue(initialiser, method);
-                    break;
-                case IMethodSymbol method when method.MethodKind is MethodKind.StaticConstructor:
-                    ReportOnce(method, "static constructors are not supported yet");
-                    break;
-                case IMethodSymbol method when method.MethodKind is MethodKind.UserDefinedOperator
-                    or MethodKind.Conversion:
-                    ReportOnce(method, "operator declarations are not supported yet");
                     break;
                 case IEventSymbol:
                     Report(member.Locations.FirstOrDefault(), "events are not supported yet", DiagnosticCatalog.UnsupportedConstructId);
@@ -504,15 +561,18 @@ sealed partial class RoslynLowering
 
     private static bool HasAccessorBody(IMethodSymbol? accessor)
     {
-        if (accessor == null || accessor.IsImplicitlyDeclared)
+        if (accessor == null)
         {
             return false;
         }
 
         foreach (var reference in accessor.DeclaringSyntaxReferences)
         {
-            if (reference.GetSyntax() is AccessorDeclarationSyntax syntax
-                && (syntax.Body != null || syntax.ExpressionBody != null))
+            if (reference.GetSyntax() is AccessorDeclarationSyntax { Body: not null }
+                or AccessorDeclarationSyntax { ExpressionBody: not null }
+                or PropertyDeclarationSyntax { ExpressionBody: not null }
+                or IndexerDeclarationSyntax { ExpressionBody: not null }
+                or ArrowExpressionClauseSyntax)
             {
                 return true;
             }
@@ -524,11 +584,6 @@ sealed partial class RoslynLowering
     private FieldSymbol CreateField(TypeSymbol owner, IFieldSymbol field)
     {
         var mapped = MapType(field.Type, field.Locations.FirstOrDefault());
-        if (field.IsStatic && mapped.Kind == BoundKind.Struct)
-        {
-            ReportOnce(field, "static struct fields are not supported");
-        }
-
         var created = new FieldSymbol
         {
             Name = field.Name,
@@ -539,47 +594,56 @@ sealed partial class RoslynLowering
         _fields[new MemberKey(field.OriginalDefinition, owner)] = created;
         if (field.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is VariableDeclaratorSyntax { Initializer: { } syntax })
         {
-            if (!_fieldInitialisers.TryGetValue(owner, out var initialisers))
-            {
-                initialisers = [];
-                _fieldInitialisers.Add(owner, initialisers);
-            }
-
-            initialisers.Add((created, syntax));
+            RegisterInitialiser(created, syntax);
         }
 
         return created;
     }
 
+    private void RegisterInitialiser(FieldSymbol field, EqualsValueClauseSyntax syntax)
+    {
+        if (!_fieldInitialisers.TryGetValue(field.Owner, out var initialisers))
+        {
+            initialisers = [];
+            _fieldInitialisers.Add(field.Owner, initialisers);
+        }
+
+        initialisers.Add((field, syntax));
+    }
+
     private void CreateProperty(TypeSymbol owner, IPropertySymbol property, List<FieldSymbol> fields, List<MethodSymbol> methods)
     {
-        if (property.IsIndexer || property.Parameters.Length > 0)
+        if (property.ReturnsByRef || property.ReturnsByRefReadonly)
         {
-            ReportOnce(property, "indexers are not supported yet");
+            ReportOnce(property, "ref-returning properties and indexers are not supported");
             return;
         }
 
         var location = property.Locations.FirstOrDefault();
-        if (HasAccessorBody(property.GetMethod) || HasAccessorBody(property.SetMethod))
+        var hasBody = HasAccessorBody(property.GetMethod) || HasAccessorBody(property.SetMethod);
+        if (owner.Kind == BoundKind.Interface && hasBody)
         {
-            ReportOnce(property, "accessor bodies are not supported yet: use an auto-property");
+            ReportOnce(property, "default interface accessors are not supported");
             return;
         }
 
         var mapped = MapType(property.Type, location);
-        if (mapped.Kind == BoundKind.Struct)
+        FieldSymbol? backing = null;
+        if (!hasBody && !property.IsAbstract && !property.IsIndexer && owner.Kind != BoundKind.Interface)
         {
-            Report(location, "auto-properties of struct type are not supported yet: use a public field", DiagnosticCatalog.UnsupportedConstructId);
+            backing = new FieldSymbol
+            {
+                Name = $"<{property.Name}>k__BackingField",
+                Type = mapped,
+                Owner = owner,
+                IsStatic = property.IsStatic
+            };
+            fields.Add(backing);
+            if (property.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is PropertyDeclarationSyntax { Initializer: { } initialiser })
+            {
+                RegisterInitialiser(backing, initialiser);
+            }
         }
-
-        var backing = new FieldSymbol
-        {
-            Name = $"<{property.Name}>k__BackingField",
-            Type = mapped,
-            Owner = owner,
-            IsStatic = property.IsStatic
-        };
-        fields.Add(backing);
         var prop = new PropertySymbol
         {
             Name = property.Name,
@@ -591,6 +655,23 @@ sealed partial class RoslynLowering
             BackingField = backing
         };
         owner.Properties.Add(prop);
+        if (backing == null)
+        {
+            if (property.GetMethod is { } declaredGetter)
+            {
+                CreateMethod(owner, declaredGetter, methods);
+                prop.Getter = _methods.GetValueOrDefault(new MemberKey(declaredGetter.OriginalDefinition, owner));
+            }
+
+            if (property.SetMethod is { } declaredSetter)
+            {
+                CreateMethod(owner, declaredSetter, methods);
+                prop.Setter = _methods.GetValueOrDefault(new MemberKey(declaredSetter.OriginalDefinition, owner));
+            }
+
+            return;
+        }
+
         if (property.GetMethod != null)
         {
             var getter = Accessor(owner, property.GetMethod, "get_" + property.Name, mapped, []);
@@ -616,11 +697,15 @@ sealed partial class RoslynLowering
             Name = name,
             Owner = owner,
             ReturnType = returnType,
+            IsPublic = roslyn.DeclaredAccessibility == Accessibility.Public,
             IsStatic = roslyn.IsStatic,
+            IsVirtual = roslyn.IsVirtual,
+            IsOverride = roslyn.IsOverride,
             DeclarationLine = Line(roslyn),
             Parameters = parameters
         };
         _methods[new MemberKey(roslyn.OriginalDefinition, owner)] = method;
+        RecordExplicitTargets(method, roslyn);
         return method;
     }
 
@@ -661,42 +746,42 @@ sealed partial class RoslynLowering
 
     private void CreateMethod(TypeSymbol owner, IMethodSymbol method, List<MethodSymbol> methods)
     {
-        if (method.IsImplicitlyDeclared && (method.MethodKind != MethodKind.Constructor || owner.Kind != BoundKind.Class))
+        var recordMember = ClassifyRecordMember(method);
+        if (recordMember == RecordMember.Skip)
+        {
+            return;
+        }
+
+        if (method.IsImplicitlyDeclared && recordMember == RecordMember.None
+            && (method.MethodKind != MethodKind.Constructor || owner.Kind != BoundKind.Class)
+            && !HasAccessorBody(method))
         {
             return;
         }
 
         if (method.IsGenericMethod)
         {
-            if (method.IsVirtual || method.IsOverride || method.IsAbstract || owner.Kind == BoundKind.Interface)
-            {
-                ReportOnce(method, "virtual and interface generic methods are not supported yet");
-            }
-
+            // Each closed instantiation is created at its first use.
             return;
-        }
-
-        if (owner.Kind == BoundKind.Struct && (method.IsVirtual || method.IsOverride))
-        {
-            ReportOnce(method, "virtual members are not supported on structs");
         }
 
         var returnType = method.MethodKind == MethodKind.Constructor
             ? _void
             : MapType(method.ReturnType, method.Locations.FirstOrDefault());
-        if (method.MethodKind != MethodKind.Constructor && returnType.Kind == BoundKind.Struct)
-        {
-            ReportOnce(method, "struct return values are not supported yet: write through an 'out' parameter or a field instead");
-        }
-
         var created = new MethodSymbol
         {
-            Name = method.MethodKind == MethodKind.Constructor ? "<ctor>" : method.Name,
+            Name = method.MethodKind switch
+            {
+                MethodKind.Constructor => "<ctor>",
+                MethodKind.Conversion => method.Name + "$" + returnType.Name,
+                _ => method.Name
+            },
             Owner = owner,
             ReturnType = returnType,
+            IsPublic = method.DeclaredAccessibility == Accessibility.Public,
             IsStatic = method.IsStatic,
-            IsVirtual = method.IsVirtual || method.IsAbstract,
-            IsOverride = method.IsOverride,
+            IsVirtual = owner.Kind != BoundKind.Struct && !method.IsStatic && (method.IsVirtual || method.IsAbstract),
+            IsOverride = owner.Kind != BoundKind.Struct && method.IsOverride,
             IsAbstract = method.IsAbstract,
             IsConstructor = method.MethodKind == MethodKind.Constructor,
             DeclarationLine = Line(method)
@@ -706,13 +791,6 @@ sealed partial class RoslynLowering
         {
             var parameterType = MapType(parameter.Type, parameter.Locations.FirstOrDefault());
             var refKind = MapRef(parameter.RefKind);
-            if (parameterType.Kind == BoundKind.Struct && refKind == RefKind.None)
-            {
-                Report(parameter.Locations.FirstOrDefault(),
-                    $"parameter '{parameter.Name}' of struct type '{parameterType}' must be passed with 'ref', 'out', or 'in'",
-                    DiagnosticCatalog.UnsupportedConstructId);
-            }
-
             created.Parameters.Add(new ParamSymbol
             {
                 Name = parameter.Name,
@@ -723,16 +801,122 @@ sealed partial class RoslynLowering
         }
 
         methods.Add(created);
+        if (owner.Kind == BoundKind.Struct && method.IsOverride && method.Name == "ToString"
+            && created.ReturnType == _string && created.Parameters.Count == 0)
+        {
+            owner.ToStringOverride = created;
+        }
+
         _methods[new MemberKey(method.OriginalDefinition, owner)] = created;
-        if (owner.Kind == BoundKind.Interface)
+        RecordExplicitTargets(created, method);
+        // A static interface member is never dispatched through the itable.
+        // A call on a type parameter binds to the concrete type's member.
+        if (owner.Kind == BoundKind.Interface && !method.IsStatic)
         {
             _selectors[created] = _selectors.Count;
             return;
         }
 
-        if (!method.IsAbstract && (method.IsImplicitlyDeclared || HasBody(method)))
+        if (!method.IsAbstract && (method.IsImplicitlyDeclared || HasBody(method) || IsPrimaryConstructor(method)))
         {
             Queue(created, method);
+        }
+    }
+
+    private FieldSymbol StructBox(TypeSymbol valueType)
+    {
+        if (_structBoxes.TryGetValue(valueType, out var existing))
+        {
+            return existing;
+        }
+
+        var box = new TypeSymbol
+        {
+            Name = valueType.Name + ".$box",
+            Kind = BoundKind.Class,
+            HeapSize = 24 + valueType.HeapSize,
+            LayoutDone = true,
+            DeclarationLine = valueType.DeclarationLine,
+            SourceFile = valueType.SourceFile
+        };
+        var field = new FieldSymbol { Name = "value", Owner = box, Type = valueType, ByteOffset = 24 };
+        box.InstanceFields.Add(field);
+        box.Interfaces.AddRange(valueType.Interfaces);
+        _structBoxes.Add(valueType, field);
+
+        BoundFieldAccess Receiver() => new() { Receiver = new BoundThis { Type = box }, Field = field, Type = valueType };
+        var parameter = new ParamSymbol { Name = "value", Type = valueType };
+        var constructor = new MethodSymbol
+        {
+            Name = "<ctor>", Owner = box, IsConstructor = true, Parameters = [parameter], ReturnType = _void
+        };
+        box.Methods.Add(constructor);
+        _readyBodies.Add(new BoundMethodBody
+        {
+            Method = constructor,
+            Body = new BoundBlock
+            {
+                Statements = [new BoundExprStmt
+                {
+                    Expression = new BoundAssign
+                    {
+                        Target = Receiver(), Type = valueType,
+                        Value = new BoundParam { Symbol = parameter, Type = valueType }
+                    }
+                }]
+            }
+        });
+
+        foreach (var (selector, implementation) in valueType.InterfaceImpl)
+        {
+            var bridge = new MethodSymbol
+            {
+                Name = "$interface_" + selector,
+                Owner = box,
+                ReturnType = implementation.ReturnType,
+                Parameters = implementation.Parameters
+            };
+            var arguments = new List<BoundExpr>();
+            foreach (var argument in bridge.Parameters)
+            {
+                var parameterValue = new BoundParam
+                {
+                    Symbol = argument, Type = argument.Type, ByRef = argument.RefKind != RefKind.None
+                };
+                arguments.Add(parameterValue.ByRef
+                    ? new BoundByRefArg { Lvalue = parameterValue, Kind = argument.RefKind, Type = argument.Type }
+                    : parameterValue);
+            }
+
+            var call = new BoundCall
+            {
+                Method = implementation, Type = implementation.ReturnType, Receiver = Receiver(), Arguments = arguments
+            };
+            box.Methods.Add(bridge);
+            box.InterfaceImpl[selector] = bridge;
+            _readyBodies.Add(new BoundMethodBody
+            {
+                Method = bridge,
+                Body = new BoundBlock
+                {
+                    Statements = [bridge.ReturnType == _void
+                        ? new BoundExprStmt { Expression = call }
+                        : new BoundReturn { Value = call }]
+                }
+            });
+        }
+
+        return field;
+    }
+
+    private void RecordExplicitTargets(MethodSymbol method, IMethodSymbol declaration)
+    {
+        foreach (var target in declaration.ExplicitInterfaceImplementations)
+        {
+            if (MapMethod(target, declaration.Locations.FirstOrDefault()) is { } mapped)
+            {
+                method.ExplicitInterfaceTargets.Add(mapped);
+            }
         }
     }
 
@@ -750,6 +934,12 @@ sealed partial class RoslynLowering
         };
         owner.Finaliser = created;
         methods.Add(created);
+        if (owner.Kind == BoundKind.Struct && method.IsOverride && method.Name == "ToString"
+            && created.ReturnType == _string && created.Parameters.Count == 0)
+        {
+            owner.ToStringOverride = created;
+        }
+
         _methods[new MemberKey(method.OriginalDefinition, owner)] = created;
         Queue(created, method);
     }
@@ -764,6 +954,11 @@ sealed partial class RoslynLowering
 
     private static bool HasBody(IMethodSymbol method)
     {
+        if (method.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet)
+        {
+            return HasAccessorBody(method);
+        }
+
         foreach (var reference in method.DeclaringSyntaxReferences)
         {
             switch (reference.GetSyntax())
@@ -772,6 +967,10 @@ sealed partial class RoslynLowering
                 case MethodDeclarationSyntax { ExpressionBody: not null }:
                 case ConstructorDeclarationSyntax { Body: not null }:
                 case ConstructorDeclarationSyntax { ExpressionBody: not null }:
+                case OperatorDeclarationSyntax { Body: not null }:
+                case OperatorDeclarationSyntax { ExpressionBody: not null }:
+                case ConversionOperatorDeclarationSyntax { Body: not null }:
+                case ConversionOperatorDeclarationSyntax { ExpressionBody: not null }:
                     return true;
             }
         }
@@ -867,20 +1066,25 @@ sealed partial class RoslynLowering
         {
             foreach (var pair in type.BaseType.InterfaceImpl)
             {
-                type.InterfaceImpl[pair.Key] = pair.Value;
+                var implementation = pair.Value;
+                type.InterfaceImpl[pair.Key] = implementation.IsVirtual || implementation.IsOverride
+                    ? FindVirtual(type, implementation) ?? implementation
+                    : implementation;
             }
         }
 
-        foreach (var iface in AllInterfaces(type))
+        foreach (var iface in DeclaredInterfaceClosure(type))
         {
             foreach (var method in iface.Methods)
             {
-                if (!_selectors.TryGetValue(method, out var selector))
+                // A closed generic method is bound to its implementation later,
+                // once every instantiation is known.
+                if (method.TypeArguments.Count > 0 || !_selectors.TryGetValue(method, out var selector))
                 {
                     continue;
                 }
 
-                var implementation = FindExact(type, method);
+                var implementation = FindInterfaceImplementation(type, method);
                 if (implementation != null)
                 {
                     type.InterfaceImpl[selector] = implementation;
@@ -893,21 +1097,22 @@ sealed partial class RoslynLowering
         }
     }
 
-    private static IEnumerable<TypeSymbol> AllInterfaces(TypeSymbol type)
+    private static IEnumerable<TypeSymbol> DeclaredInterfaceClosure(TypeSymbol type)
     {
         var seen = new HashSet<TypeSymbol>();
-        var current = type;
-        while (current != null)
+        var pending = new Queue<TypeSymbol>(type.Interfaces);
+        while (pending.TryDequeue(out var iface))
         {
-            foreach (var iface in current.Interfaces)
+            if (!seen.Add(iface))
             {
-                if (seen.Add(iface))
-                {
-                    yield return iface;
-                }
+                continue;
             }
 
-            current = current.BaseType;
+            yield return iface;
+            foreach (var parent in iface.Interfaces)
+            {
+                pending.Enqueue(parent);
+            }
         }
     }
 
@@ -930,16 +1135,21 @@ sealed partial class RoslynLowering
         return null;
     }
 
-    private static MethodSymbol? FindExact(TypeSymbol? type, MethodSymbol method)
+    private static MethodSymbol? FindInterfaceImplementation(TypeSymbol? type, MethodSymbol method)
     {
         while (type != null)
         {
-            foreach (var candidate in type.Methods)
+            var explicitImplementation = type.Methods.Find(candidate => candidate.ExplicitInterfaceTargets.Contains(method));
+            if (explicitImplementation != null)
             {
-                if (!candidate.IsConstructor && candidate.Name == method.Name && SameSignature(candidate, method))
-                {
-                    return candidate;
-                }
+                return explicitImplementation;
+            }
+
+            var implicitImplementation = type.Methods.Find(candidate => candidate.IsPublic && !candidate.IsStatic
+                && !candidate.IsConstructor && candidate.Name == method.Name && SameSignature(candidate, method));
+            if (implicitImplementation != null)
+            {
+                return implicitImplementation;
             }
 
             type = type.BaseType;
@@ -985,8 +1195,27 @@ sealed partial class RoslynLowering
         return true;
     }
 
-    private MethodSymbol? MapMethod(IMethodSymbol method, Location? location = null)
+    private MethodSymbol? MapMethod(IMethodSymbol method, Location? location = null, ITypeSymbol? constrainedTo = null)
     {
+        if (constrainedTo != null && method is { IsStatic: true, ContainingType.TypeKind: RoslynKind.Interface }
+            && (method.IsAbstract || method.IsVirtual))
+        {
+            return MapConstrainedStatic(method, constrainedTo, location);
+        }
+
+        if (method.ContainingType.SpecialType == SpecialType.System_Decimal)
+        {
+            return GetDecimalType().Methods.Find(candidate => !candidate.IsConstructor && candidate.Name == method.Name
+                && candidate.Parameters.Count == method.Parameters.Length);
+        }
+
+        if (method.ContainingType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
+        {
+            var type = MapType(method.ContainingType, location);
+            var name = method.MethodKind == MethodKind.Constructor ? "<ctor>" : method.Name;
+            return type.Methods.Find(candidate => candidate.Name == name && candidate.Parameters.Count == method.Parameters.Length);
+        }
+
         if (method.MethodKind is MethodKind.PropertyGet or MethodKind.PropertySet)
         {
             var owner = MapType(method.ContainingType, location);
@@ -1012,7 +1241,13 @@ sealed partial class RoslynLowering
             }
 
             var arguments = method.TypeArguments.Select(argument => MapType(argument, location)).ToList();
-            return Specialise(owner, method.OriginalDefinition, arguments, location);
+            var specialised = Specialise(owner, method.OriginalDefinition, arguments, location);
+            if (specialised != null)
+            {
+                RegisterDispatch(specialised, method, location);
+            }
+
+            return specialised;
         }
 
         var mappedOwner = MapType(method.ContainingType, location);
@@ -1022,6 +1257,55 @@ sealed partial class RoslynLowering
         }
 
         return _methods.GetValueOrDefault(new MemberKey(method.OriginalDefinition, mappedOwner));
+    }
+
+    // `T.Member` for a `static abstract` or `static virtual` interface member.
+    // Every closed instantiation knows the concrete type, so the call binds
+    // straight to that type's member and needs no dispatch table.
+    private MethodSymbol? MapConstrainedStatic(IMethodSymbol method, ITypeSymbol constrainedTo, Location? location)
+    {
+        var concrete = MapType(constrainedTo, location);
+        var iface = MapType(method.ContainingType, location);
+        if (method.IsGenericMethod || concrete.Kind is not (BoundKind.Class or BoundKind.Struct)
+            || iface == _error || !_sources.TryGetValue(concrete, out var source))
+        {
+            return null;
+        }
+
+        var saved = new Dictionary<ITypeSymbol, TypeSymbol>(_substitution, SymbolEqualityComparer.Default);
+        try
+        {
+            _substitution.Clear();
+            for (var i = 0; i < source.TypeParameters.Length && i < concrete.TypeArguments.Count; i++)
+            {
+                _substitution[source.TypeParameters[i]] = concrete.TypeArguments[i];
+            }
+
+            foreach (var candidate in source.AllInterfaces)
+            {
+                if (!SymbolEqualityComparer.Default.Equals(candidate.OriginalDefinition, method.ContainingType.OriginalDefinition)
+                    || MapType(candidate, location) != iface)
+                {
+                    continue;
+                }
+
+                var member = candidate.GetMembers(method.Name).OfType<IMethodSymbol>().FirstOrDefault(item =>
+                    SymbolEqualityComparer.Default.Equals(item.OriginalDefinition, method.OriginalDefinition));
+                return member != null && source.FindImplementationForInterfaceMember(member) is IMethodSymbol implementation
+                    ? MapMethod(implementation, location)
+                    : null;
+            }
+        }
+        finally
+        {
+            _substitution.Clear();
+            foreach (var pair in saved)
+            {
+                _substitution[pair.Key] = pair.Value;
+            }
+        }
+
+        return null;
     }
 
     private readonly List<(TypeSymbol Owner, IMethodSymbol Definition, List<TypeSymbol> Arguments, MethodSymbol Method)> _specialisations = [];
@@ -1064,6 +1348,7 @@ sealed partial class RoslynLowering
             Owner = owner,
             ReturnType = MapType(definition.ReturnType, location),
             IsStatic = definition.IsStatic,
+            IsAbstract = definition.IsAbstract,
             DeclarationLine = Line(definition),
             TypeArguments = arguments
         };
@@ -1072,11 +1357,6 @@ sealed partial class RoslynLowering
         {
             var parameterType = MapType(parameter.Type, location);
             var refKind = MapRef(parameter.RefKind);
-            if (parameterType.Kind == BoundKind.Struct && refKind == RefKind.None)
-            {
-                Report(location, "generic struct arguments must be passed with 'ref', 'out', or 'in'", DiagnosticCatalog.UnsupportedConstructId);
-            }
-
             created.Parameters.Add(new ParamSymbol
             {
                 Name = parameter.Name,
@@ -1084,11 +1364,6 @@ sealed partial class RoslynLowering
                 RefKind = refKind,
                 Index = index++
             });
-        }
-
-        if (created.ReturnType.Kind == BoundKind.Struct)
-        {
-            Report(location, "struct return values are not supported yet", DiagnosticCatalog.UnsupportedConstructId);
         }
 
         owner.Methods.Add(created);
@@ -1099,8 +1374,192 @@ sealed partial class RoslynLowering
             _substitution[pair.Key] = pair.Value;
         }
 
-        Queue(created, definition);
+        if (HasBody(definition))
+        {
+            Queue(created, definition);
+        }
+
         return created;
+    }
+
+    // A call to a virtual, abstract or interface generic method goes through
+    // the itable. Each closed instantiation of the method that was first
+    // declared gets one selector, shared by every override and implementation.
+    private void RegisterDispatch(MethodSymbol specialised, IMethodSymbol call, Location? location)
+    {
+        if (_dispatchRoots.ContainsKey(specialised)
+            || !(call.IsVirtual || call.IsOverride || call.IsAbstract || call.ContainingType.TypeKind == RoslynKind.Interface))
+        {
+            return;
+        }
+
+        var root = call;
+        while (root.OverriddenMethod is { } overridden)
+        {
+            root = overridden;
+        }
+
+        var rootSpecialised = specialised;
+        if (!SymbolEqualityComparer.Default.Equals(root, call))
+        {
+            var rootOwner = MapType(root.ContainingType, location);
+            var rootArguments = root.TypeArguments.Select(argument => MapType(argument, location)).ToList();
+            if (rootOwner == _error || Specialise(rootOwner, root.OriginalDefinition, rootArguments, location) is not { } found)
+            {
+                return;
+            }
+
+            rootSpecialised = found;
+        }
+
+        if (!_selectors.ContainsKey(rootSpecialised))
+        {
+            _selectors[rootSpecialised] = _selectors.Count;
+            _genericRoots.Add((rootSpecialised, root.OriginalDefinition));
+        }
+
+        _dispatchRoots[specialised] = rootSpecialised;
+    }
+
+    // Binds each generic root to the method that implements it in every class
+    // and struct that inherits or implements the root's declaring type.
+    private bool ResolveGenericDispatch()
+    {
+        var changed = false;
+        var types = _named.Values.Concat(_generic.Values)
+            .Where(type => type.Kind is BoundKind.Class or BoundKind.Struct)
+            .ToList();
+        for (var i = 0; i < _genericRoots.Count; i++)
+        {
+            var (root, definition) = _genericRoots[i];
+            foreach (var type in types)
+            {
+                if (_resolvedRoots.Contains((root, type)))
+                {
+                    continue;
+                }
+
+                var isInterface = root.Owner.Kind == BoundKind.Interface;
+                var applies = isInterface
+                    ? ImplementsInterface(type, root.Owner)
+                    : type == root.Owner || type.IsSubclassOf(root.Owner);
+                if (!applies)
+                {
+                    continue;
+                }
+
+                _resolvedRoots.Add((root, type));
+                changed = true;
+                if (isInterface && type.Kind == BoundKind.Struct)
+                {
+                    ReportOnce(_sources[type], $"'{type.Name}' implements the generic interface method '{definition.Name}'; generic interface methods are not supported on structs");
+                    continue;
+                }
+
+                var implementation = isInterface
+                    ? FindGenericImplementation(type, root, definition)
+                    : FindGenericOverride(type, root, definition);
+                if (implementation != null)
+                {
+                    type.InterfaceImpl[_selectors[root]] = implementation;
+                }
+            }
+        }
+
+        return changed;
+    }
+
+    private static bool ImplementsInterface(TypeSymbol type, TypeSymbol iface)
+    {
+        for (var current = type; current != null; current = current.BaseType)
+        {
+            if (DeclaredInterfaceClosure(current).Contains(iface))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IMethodSymbol RootOf(IMethodSymbol method)
+    {
+        while (method.OverriddenMethod is { } overridden)
+        {
+            method = overridden;
+        }
+
+        return method.OriginalDefinition;
+    }
+
+    private MethodSymbol? FindGenericOverride(TypeSymbol type, MethodSymbol root, IMethodSymbol definition)
+    {
+        for (var current = type; current != null; current = current.BaseType)
+        {
+            if (!_sources.TryGetValue(current, out var source))
+            {
+                break;
+            }
+
+            foreach (var member in source.GetMembers(definition.Name).OfType<IMethodSymbol>())
+            {
+                if (member.IsGenericMethod && SymbolEqualityComparer.Default.Equals(RootOf(member), definition))
+                {
+                    return Specialise(current, member.OriginalDefinition, root.TypeArguments, member.Locations.FirstOrDefault());
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private MethodSymbol? FindGenericImplementation(TypeSymbol type, MethodSymbol root, IMethodSymbol definition)
+    {
+        if (!_sources.TryGetValue(type, out var source))
+        {
+            return null;
+        }
+
+        var saved = new Dictionary<ITypeSymbol, TypeSymbol>(_substitution, SymbolEqualityComparer.Default);
+        try
+        {
+            _substitution.Clear();
+            for (var i = 0; i < source.TypeParameters.Length && i < type.TypeArguments.Count; i++)
+            {
+                _substitution[source.TypeParameters[i]] = type.TypeArguments[i];
+            }
+
+            foreach (var iface in source.AllInterfaces)
+            {
+                if (!SymbolEqualityComparer.Default.Equals(iface.OriginalDefinition, definition.ContainingType)
+                    || MapType(iface) != root.Owner)
+                {
+                    continue;
+                }
+
+                var member = iface.GetMembers(definition.Name).OfType<IMethodSymbol>()
+                    .First(candidate => SymbolEqualityComparer.Default.Equals(candidate.OriginalDefinition, definition));
+                if (source.FindImplementationForInterfaceMember(member) is not IMethodSymbol { IsGenericMethod: true } implementation)
+                {
+                    return null;
+                }
+
+                var owner = MapType(implementation.ContainingType);
+                return owner == _error
+                    ? null
+                    : Specialise(owner, implementation.OriginalDefinition, root.TypeArguments, implementation.Locations.FirstOrDefault());
+            }
+        }
+        finally
+        {
+            _substitution.Clear();
+            foreach (var pair in saved)
+            {
+                _substitution[pair.Key] = pair.Value;
+            }
+        }
+
+        return null;
     }
 
     private FieldSymbol? MapField(IFieldSymbol field, Location? location = null)

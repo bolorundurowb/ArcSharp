@@ -136,7 +136,7 @@ honoured, and a namespace is part of a type's identity. A global
 `using System` is added so `Console` resolves without one.
 
 The verification baseline, the lifetime pass, deterministic finalisers, and
-exceptions have landed. The next milestone is M6 in the [Roadmap](docs/roadmap.md). A defect in
+exceptions have landed, and so has M6, the ordinary C# surface. The next milestone is M7 in the [Roadmap](docs/roadmap.md). A defect in
 the emitter or the runtime may still be fixed. A defect in binding is fixed in
 the Roslyn lowering.
 
@@ -246,7 +246,7 @@ the symbols, and the runtime.
 |---|---|
 | Header (all heap objects) | `strong` at 0, `weak` at 8, `TypeInfo*` at 16. The weak word holds the weak count in its low 32 bits, the "finalisation suppressed" flag at bit 32, and the "finaliser running" flag at bit 33. Only the runtime touches those bits |
 | Class instance | Field `i` at `24 + 8 * i` (`FieldSymbol.ByteOffset`) |
-| Struct value | Field `i` at `8 * i`; size is `HeapSize` bytes (whole 8-byte slots) |
+| Struct value | Field at `ByteOffset` (`8 * i` when no earlier field is a struct; a nested struct spans several slots); size is `HeapSize` bytes (whole 8-byte slots) |
 | Array | Length at 24, element `TypeInfo*` at 32, elements at 40 in 8-byte slots |
 | String | Length at 24, UTF-8 bytes at 32, NUL-terminated |
 | `WeakReference<T>` | One weak slot at 24 |
@@ -451,21 +451,23 @@ Write prose in UK English (for example "finalisation", "behaviour",
 
 The [compatibility target](docs/roadmap.md#compatibility-target) is the language surface the project is aiming at. Do not treat it as implemented, and do not start work outside it. Do not assume that these work today. Each is unimplemented or deliberately limited:
 
-- Generics beyond the specialised subset already in the compiler
+- Generic `static abstract` methods, generic interface methods on structs, and
+  types nested in generic types (`ARC3001`)
 - Exception filters, throw expressions, and any exception type outside
   `corelib/Exceptions.cs`
-- Struct arrays, struct return values, static struct fields, by-value struct
-  parameters, struct-typed properties, printing a struct, `virtual`/`override`
-  members on structs, interfaces on structs, and self-containing structs (all
-  `ARC3001`)
-- Enums, delegates, events, and indexers
-- Lambdas, closures, `async`, and `await`
-- Bitwise and shift operators, including single `&` and `|` (`ARC3001`).
+- Self-containing structs, `using` on a struct resource, and ref locals and ref
+  returns (`ARC3001`)
+- Record structs, generic records, records with a struct or array member,
+  collection initialisers, and object initialisers on structs (`ARC3001`)
+- Boxing a primitive, an enum or a nullable primitive, and `??=` (`ARC3001`)
+- Delegates and events (`ARC3001`)
+- Lambdas, closures, local functions, `async`, `await`, iterators, and LINQ
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, `WeakReference<T>`,
-  the exception types in `corelib`, and the `GC` calls `SuppressFinalize`,
-  `Collect` and `WaitForPendingFinalizers`
+  `decimal` arithmetic and conversions (no parsing, rounding methods or format
+  strings), the exception types in `corelib`, and the `GC` calls
+  `SuppressFinalize`, `Collect` and `WaitForPendingFinalizers`
 - Threads, which the non-atomic refcounts do not support
 
 The Roslyn analyser in `analyzers/ArcSharp.Analyzers` flags the unsupported

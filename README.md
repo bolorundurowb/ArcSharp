@@ -64,18 +64,30 @@ reclaimed.
 
 ## What works
 
-- Classes with single inheritance, interfaces, and `virtual`/`override` dispatch.
+- Classes with single inheritance, transitive base interfaces, and
+  `virtual`/`override` dispatch.
 - Generic classes, structs, interfaces, and methods through monomorphisation,
-  with basic type inference and generic constraints.
+  with Roslyn type inference, generic constraints, interface variance,
+  virtual and interface generic methods, and static abstract members.
 - Constructors, instance and static methods and fields, and instance
-  auto-properties.
+  properties, indexers, constants, readonly fields, and expression-bodied methods
+  and constructors. Calls support named arguments, optional defaults, and
+  parameter arrays. Static constructors run lazily on first use.
 - Structs with value semantics, including reference fields, nested structs,
-  and structs inside classes.
-- `int`, `long`, `uint`, `ulong`, `float`, `double`, `bool`, `char`, and
-  `string`, plus single-dimensional arrays.
+  structs inside classes, struct arrays, static fields, properties, parameters,
+  and return values. Structs can implement interfaces and override their
+  printed representation.
+- `int`, `long`, `uint`, `ulong`, `float`, `double`, `decimal`, `bool`, `char`, and
+  `string`, enums, nullable values (with updates, user-defined operators and
+  struct boxing), and single-dimensional arrays.
+- Record classes with value equality, `with` and deconstruction, and object
+  initialisers on classes.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept
   alive for the call. Also `is` and `as`.
-- `if`, `while`, `for`, and `return`.
+- `if`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, constant-label
+  and pattern `switch`, and array `foreach`.
+- Bitwise operators, shifts, prefix and postfix updates, compound assignments,
+  and checked numeric arithmetic.
 - `using` statements with deterministic `Dispose()` at scope exit, including
   when an exception unwinds
   (`IDisposable` is structural: any type with a `Dispose()` method qualifies).
@@ -92,7 +104,7 @@ reclaimed.
 - A Roslyn analyser in `analyzers/ArcSharp.Analyzers` that reports the same
   `ARC3001`, `ARC3100` and `ARC3200` rules inside an ordinary `dotnet build`.
 
-Exception filters, `foreach`, `switch`, `++`, lambdas, and the .NET class
+Exception filters, switch expressions, lambdas, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
 has the full list, the differences from .NET, and the known issues. The
 [compatibility target](docs/roadmap.md#compatibility-target) is the language
@@ -124,8 +136,8 @@ workload recorded 9,200,856 retains and 10,601,216 releases per run.
 ## Status
 
 ArcSharp is a proof of concept. The full pipeline (C# to LLVM IR to a native
-executable, with ARC accounting) works, and 47 sample programs pass the test
-harness on Windows x64. The harness also runs four leak-report checks, 29
+executable, with ARC accounting) works, and 79 sample programs pass the test
+harness on Windows x64. The harness also runs four leak-report checks, 55
 must-fail diagnostics, two run-time abort checks, three command-line checks,
 cycle and `ARC3200` checks, and 74 analyser unit tests. The
 compiler can also emit IR for Linux x64, but that path is not tested. See

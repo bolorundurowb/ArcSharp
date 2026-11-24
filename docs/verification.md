@@ -23,19 +23,19 @@ still retained at exit). **`live=0` means no leaks.**
 
 Peak memory and collector pauses are a separate measurement. The programs in
 `bench/` are compiled with ArcSharp and with the ordinary .NET runtime by
-`tools\compare-gc.ps1`. The original results and the M2, M3, M4 and M5 medians are in
+`tools\compare-gc.ps1`. The original results and the M2, M3, M4, M5 and M6 medians are in
 [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md).
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (47 samples, Windows x64, 23 November 2026)
+## Results (79 samples, Windows x64, 23 November 2026)
 
-`tools\verify.ps1` reported **94 passed, 0 failed** with the .NET 11.0.100 SDK:
-47 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 29 must-fail
+`tools\verify.ps1` reported **152 passed, 0 failed** with the .NET 11.0.100 SDK:
+79 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 55 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 5 cycle checks,
-2 `ARC3200` checks, one run of the analyser unit tests (74 cases), and one
+2 `ARC3200` checks, one run of the analyser unit tests, and one
 reference-surface check. `live=0` means every object was reclaimed.
-`numerics` and `byref` allocate nothing because they use only value types.
+`byref` allocates nothing because it uses only value types, and `numerics` allocates only the strings of one concatenation check.
 `cycle_strong`, `cycle_struct` and `finaliser_cycle` are the leaks the harness
 asserts on purpose.
 
@@ -54,7 +54,7 @@ asserts on purpose.
 | `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 freed=1 **live=2** | `done (strong cycle)` |
 | `cycle_struct` | a **strong** cycle that runs through an inline struct field | alloc=3 dead=1 freed=1 **live=2** | `done (struct cycle)` |
 | `multifile` | `mf_main.cs` and `mf_lib.cs` compiled together; `Greeter` is declared in one file and used from the other | alloc=4 dead=4 freed=4 **live=0** | `twice=42` |
-| `numerics` | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong`, unsigned arithmetic, casts | alloc=0 dead=0 freed=0 **live=0** | `150` |
+| `numerics` | `byte`/`sbyte`/`short`/`ushort`/`uint`/`ulong`, unsigned arithmetic, casts, and the largest `ulong` printed by concatenation and by `Console.WriteLine` | alloc=4 dead=4 freed=4 **live=0** | `18446744073709551615` |
 | `byref` | `ref`, `out`, and `in` parameters | alloc=0 dead=0 freed=0 **live=0** | `3` |
 | `properties` | auto-properties | alloc=2 dead=2 freed=2 **live=0** | `Alice` |
 | `isas` | `is` and `as` runtime type checks | alloc=5 dead=5 freed=5 **live=0** | `as Cat: null` |
@@ -69,6 +69,9 @@ asserts on purpose.
 | `staticprop` | a static auto-property, read and written | alloc=3 dead=3 freed=3 **live=0** | `count=4` |
 | `leaks` | a static root, an unreachable class cycle, and an unreachable cycle through a reference array. With `ARC_LEAKS=1` the report marks `Node` as `root=static` and the others as `root=unreachable`, and prints the `Parent`/`Child` and `<ref[]>`/`Cell` cycles | alloc=7 dead=1 freed=1 **live=6** | `leaks reported` |
 | `generics` | two-file generic classes/interfaces, generic bases and virtual dispatch, methods and inference, recursion, independent statics, arrays and weak references as arguments, constraints, and primitive default construction | alloc=72 dead=72 freed=72 **live=0** | `generic=42,hello`, `dispatch=7,7`, `infer=11,hello,9`, `owners=after,hello,made`, `counts=2,1`, `arrays=11,array`, `weak=made`, `types=True,True`, `generics PASS` |
+| `generic_dispatch` | interface, `virtual`, `abstract` and `override` generic methods, a generic owner, a constrained call, and an instantiation first reached inside an override | alloc=31 dead=31 freed=31 **live=0** | `generic dispatch PASS` |
+| `static_abstract` | `static abstract` and `static virtual` members called through a type parameter: a method, operators, a property with a setter, and a default body, for a class and a struct | alloc=21 dead=21 freed=21 **live=0** | `static abstract PASS` |
+| `generic_inference` | Roslyn inference for widening, base and derived arguments, array elements, nested generic types, `out` arguments, a constraint on another type parameter, and the non-generic overload | alloc=43 dead=43 freed=43 **live=0** | `widened=2.5`, `overload=int,generic,generic`, `generic inference PASS` |
 | `generic_structs` | specialised struct copies, reference fields, nested wide values, managed-reference generic methods, and class field offsets | alloc=28 dead=28 freed=28 **live=0** | `copies=first,second,wide`, `layout=20,30,99,40` |
 | `owners` | interior references stay valid when the callee drops the named owner: a field, an array element reached through a forwarded `ref`, a nested reference, a struct method's `this`, a static `ref`, an `in` read, and a constructor `ref` | alloc=33 dead=33 freed=33 **live=0** | `owners=4,7,5,6,5,2` |
 | `destruction_points` | two strong owners cleared in separate statements | alloc=3 dead=3 freed=3 **live=0** | `destruction points PASS` |
@@ -86,6 +89,35 @@ asserts on purpose.
 | `exceptions_basic` | `try`, `catch`, `finally`, a `throw` caught in the same method and one caught across a call, a runtime division by zero, and a catch clause that does not match | alloc=16 dead=16 freed=16 **live=0** | `outer caught inner` |
 | `exceptions_unwind` | cleanup on every unwind path: argument temporaries, locals across frames, a throwing constructor, a store that throws, a concatenation that throws, `return` through `finally`, nested `finally`, rethrow, a `finally` that replaces an exception, and a thrown stored exception | alloc=97 dead=97 freed=97 **live=0** | `exceptions unwind PASS` |
 | `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, `throw null`, and a base-class catch | alloc=53 dead=53 freed=53 **live=0** | `exceptions runtime PASS` |
+| `variance` | Covariant and contravariant slots, generic defaults, and unmanaged, notnull, enum and nullable reference constraints | alloc=5 dead=5 freed=5 **live=0** | `variance PASS` |
+| `nullable_values` | Lifted operations, nullable conversions and coalescing, presence tests, and a nullable struct's owned reference | alloc=4 dead=4 freed=4 **live=0** | `nullable values PASS` |
+| `operator_updates` | Operator results for struct and reference updates, single index evaluation and failed covariant stores | alloc=9 dead=9 freed=9 **live=0** | `operator updates PASS` |
+| `conditional_values` | Struct and reference results, overloaded short circuiting, switch expressions and exception cleanup | alloc=10 dead=10 freed=10 **live=0** | `conditional values PASS` |
+| `patterns` | Single evaluation, numeric and string patterns, bindings, short circuiting, switch case guards, property and positional patterns, array list patterns with a slice, interface membership and dispatch, and decimal and nullable decimal comparisons | alloc=6 dead=6 freed=6 **live=0** | `patterns PASS` |
+| `struct_interfaces` | Boxing with owned reference fields, constrained dispatch, checked unboxing and struct printing | alloc=9 dead=9 freed=9 **live=0** | `struct interfaces PASS` |
+| `struct_storage` | Inline arrays, interior references, static struct fields, and property assignment copies | alloc=5 dead=5 freed=5 **live=0** | `struct storage PASS` |
+| `struct_calls` | Argument snapshots, interface calls, result copies before finally, and ARC cleanup when a later argument throws | alloc=6 dead=6 freed=6 **live=0** | `struct calls PASS` |
+| `base_interfaces` | Diamond inheritance, explicit implementations and inherited virtual overrides | alloc=2 dead=2 freed=2 **live=0** | `base interfaces PASS` |
+| `enums` | Enum widths, struct copies, arrays, switches, compound updates and unsigned constants | alloc=2 dead=2 freed=2 **live=0** | `enums PASS` |
+| `static_constructor` | First-use initialisation, argument order, recursive access, and cached failure with its cause | alloc=11 dead=11 freed=11 **live=0** | `static constructor PASS` |
+| `accessors` | Property and indexer bodies, interface and virtual dispatch, a property initialiser and assignment results | alloc=4 dead=4 freed=4 **live=0** | `accessors PASS` |
+| `accessor_updates` | `++`, `--` and compound updates through accessor bodies, one getter and setter call per update, string and operator updates, virtual, static and interface properties | alloc=13 dead=13 freed=13 **live=0** | `accessor updates PASS` |
+| `extensions` (two files) | Extension methods on a class, `int`, `string` and a struct, chained calls, and a partial class split across files | alloc=15 dead=15 freed=15 **live=0** | `extensions PASS` |
+| `nullable_updates` | Lifted compound and increment updates on locals, fields and array elements, user-defined lifted operators and conversions, and absent operands | alloc=3 dead=3 freed=3 **live=0** | `nullable updates PASS` |
+| `nullable_struct_boxing` | Boxing a nullable struct to `object` and an interface, `as` and casts back, absent values and unboxing failures | alloc=6 dead=6 freed=6 **live=0** | `nullable struct boxing PASS` |
+| `decimals` | `decimal` scale and rounding, remainder, limits and overflow, comparisons, conversions to and from integers, `double` and `float`, updates, class and struct members, arrays and `decimal?` | alloc=292 dead=292 freed=292 **live=0** | `decimals PASS` |
+| `object_initialisers` | Member initialisers, nested initialisers and evaluation order | alloc=24 dead=24 freed=24 **live=0** | `object initialisers PASS` |
+| `records` | Record classes: positional members, equality, hashing, formatting, `with`, deconstruction and inheritance | alloc=197 dead=197 freed=197 **live=0** | `records PASS` |
+| `arguments` | Named evaluation order for methods and constructors, defaults, parameter arrays and cleanup when an array element throws | alloc=9 dead=9 freed=9 **live=0** | `arguments PASS` |
+| `operators_members` | Direct operator overloads, conversion symbols, expression bodies, constants, readonly fields and nested names | alloc=4 dead=4 freed=4 **live=0** | `operators and members PASS` |
+| `array_foreach` | Single evaluation, numeric conversion and reference iteration with early exits | alloc=5 dead=5 freed=5 **live=0** | `array foreach PASS` |
+| `checked_arithmetic` | Checked integral overflow and conversions, catchable exceptions, and nested unchecked arithmetic | alloc=13 dead=13 freed=13 **live=0** | `checked PASS` |
+| `bitwise` | Eager Boolean operators, masked shifts, signed and unsigned shifts, and compound updates | alloc=1 dead=1 freed=1 **live=0** | `bitwise PASS` |
+| `numeric_compound` | One evaluation of an update target, numeric promotion, and auto-property updates including string concatenation | alloc=10 dead=10 freed=10 **live=0** | `compound PASS` |
+| `increment` | Prefix and postfix results, single array-index evaluation, narrowing, and floating point | alloc=2 dead=2 freed=2 **live=0** | `increment PASS` |
+| `switch_statement` | String and numeric labels, default dispatch, and continue through a switch inside a loop | alloc=4 dead=4 freed=4 **live=0** | `switch PASS` |
+| `loop_branches` | Nested loop targets, for updates, and cleanups on break and continue | alloc=3 dead=3 freed=3 **live=0** | `loop branches PASS` |
+| `do_while` | Body runs before the condition and repeats until it becomes false | alloc=1 dead=1 freed=1 **live=0** | `do while PASS` |
 | `exceptions_using` | `Dispose()` while an exception unwinds, a `Dispose()` that throws after the body and during an unwind, `return` from `using`, and `using` inside `try` with `finally` | alloc=74 dead=74 freed=74 **live=0** | `exceptions using PASS` |
 | `exceptions_finaliser` | a finaliser that throws is reported and ignored, the object's children are still finalised, an exception already unwinding survives it, and a finaliser that catches its own exception | alloc=32 dead=32 freed=32 **live=0** | `exceptions finaliser PASS` |
 
@@ -221,7 +253,7 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 29 programs that must fail (`samples/negative/`) and
+The harness also compiles 55 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, including ref
 locals, ref returns, shift operators, exception filters, throw expressions and
 `GC.ReRegisterForFinalize`, `CS0029` for throwing a value that is not an

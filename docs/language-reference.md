@@ -57,20 +57,23 @@ can be used from another.
 | `long`, `ulong` | 64 bits | |
 | `float` | 32 bits | |
 | `double` | 64 bits | |
+| `decimal` | 128 bits | Exact base-ten arithmetic with a scale of up to 28. See [Decimal](features/decimal.md) |
 
-Integer arithmetic wraps on overflow, as in an `unchecked` context. There are
-no `checked` contexts.
+Integer arithmetic wraps on overflow by default. In a `checked` context,
+arithmetic overflow and out-of-range numeric conversions raise `OverflowException`.
+An `unchecked` context restores the default arithmetic behaviour.
 
 Value types never live on the heap on their own and never take part in
-reference counting. Struct values are stored inline in the local, field, or
-parameter that holds them. `decimal`, `enum`, and nullable value types
-(`int?`) are not supported.
+reference counting until boxed. Struct and nullable values are stored inline
+in the local, field, array element, or parameter that holds them. Enums use
+their underlying integer representation. See [Nullable values](features/nullable-values.md).
 
 ### Reference types
 
 - **Classes** you declare.
+- **Record classes**, with the members C# writes for them. Record structs and generic records are not supported. See [Record classes](features/records.md).
 - **`string`**, an immutable sequence of UTF-8 bytes.
-- **Single-dimensional arrays** `T[]` of supported non-struct element types.
+- **Single-dimensional arrays** `T[]` of supported value and reference types.
   Multi-dimensional and jagged array syntax
   (`int[,]`, `int[][]`) is not supported.
 - **`System.WeakReference<T>`**, where `T` is a reference type. It can be used
@@ -111,35 +114,33 @@ class Program
 Supported:
 
 - Instance fields of value, reference, struct, and `WeakReference<T>` type.
-- Constructors, instance methods, and `ref`/`out`/`in` parameters.
-- Struct locals, struct fields inside classes and other structs, and struct
-  assignment.
+- Constructors, instance methods, return values, and parameters passed by value
+  or by `ref`/`out`/`in`.
+- Struct locals, arrays, static fields and properties, struct fields inside
+  classes and other structs, and struct assignment.
 - Copying a struct retains its reference fields; dropping a struct value
   releases them.
+- Struct interface implementations and boxing to supported reference types.
+- A `ToString()` override can format the struct for `Console.Write` or
+  `Console.WriteLine`.
 
 Not supported yet, each reported as `ARC3001`:
 
-- Arrays of structs, struct return values, static struct fields, and by-value
-  struct parameters.
-- Properties whose type is a struct, and printing a struct value with
-  `Console.Write` or `Console.WriteLine`.
-- `virtual` or `override` members on a struct, and interfaces on a struct.
 - A struct that contains itself, directly or through another struct.
 - `using` a struct resource.
 
 ## Generics
 
-Generic classes, structs, interfaces, and non-virtual methods are specialised
+Generic classes, structs, interfaces, and methods are specialised
 for each closed set of type arguments. For example, `Box<int>` and
 `Box<string>` have separate layouts, type descriptors, methods, destructors,
 and static fields. Nested arguments such as `Box<Box<string>>` are supported,
 as are arrays and `WeakReference<T>` as type arguments.
 
-Methods accept explicit arguments, such as `Identity<int>(42)`. Basic inference
-also recognises exact parameter types, array elements, and matching closed
-generic types, so `Identity(42)` infers `int`. Conflicting inferred arguments
-require explicit types; full C# overload inference and variance are not
-implemented. A non-generic overload wins when its conversions are equally good.
+Methods accept explicit arguments, such as `Identity<int>(42)`. Roslyn infers
+the rest with the full C# rules, so `Identity(42)` infers `int`, and
+`Pick(1, 2.5)` infers `double`. A non-generic overload wins when its
+conversions are equally good.
 
 ```csharp
 using System;
@@ -159,21 +160,26 @@ class Program
 
 Output: `42`.
 
-Constraints support `class`, `struct`, base classes, interfaces, other type
-parameters, and `new()`. They are checked when a closed type or method is used;
+Constraints support `class`, `class?`, `struct`, `unmanaged`, `notnull`,
+base classes, interfaces, other type parameters, and `new()`. They are checked when a closed type or method is used;
 Roslyn reports constraint failures with `CS` diagnostics. A `new()` reference argument must be concrete
 and have a public parameterless constructor, or an implicit default constructor.
 Parameterless construction of primitive value types produces zero.
 
-The existing struct restrictions still apply after substitution: struct values
-can be stored inline in generic fields and copied through managed references,
-but cannot be returned, passed by value, or placed in arrays. Virtual methods
+Struct type arguments can be stored inline, passed by value, returned, and
+placed in arrays. Virtual methods
 on generic classes and methods of generic interfaces work. Methods that are
-themselves generic cannot be virtual, overrides, abstract, or interface members
-(`ARC3001`). Method type parameters must not shadow enclosing type parameters.
-Templates are checked when instantiated. Nested type declarations, variance,
-`default(T)`, and additional constraint forms such as `unmanaged`, `notnull`,
-and `class?` remain unsupported. The compiler caps specialisation at 64 nested
+themselves generic can be `virtual`, `abstract`, overrides, or interface
+members, except that a struct cannot implement a generic interface method
+(`ARC3001`). Interfaces can declare `static abstract` and `static virtual`
+members, including operators, that code calls through a constrained type
+parameter, but a generic `static abstract` method is `ARC3001`. See
+[generic dispatch](features/generic-dispatch.md). Method type parameters must
+not shadow enclosing type parameters.
+Templates are checked when instantiated. Generic interfaces support covariant
+and contravariant dispatch for reference type arguments. Types nested in
+generic types remain unsupported. `default(T)` uses the closed type's zero
+or null value. The compiler caps specialisation at 64 nested
 instantiations and 1024 total type/method instantiations (`ARC2013`).
 
 ## Classes, interfaces, and members
@@ -209,15 +215,30 @@ Supported:
 - `virtual` and `override` methods, dispatched through a virtual table.
 - The modifiers `public`, `private`, `protected`, `internal`, `static`, and
   `abstract` on a class, and `new` on a member.
-- Instance and static auto-properties with both accessors:
+- Instance and static properties and indexers with accessor bodies, and auto-properties:
   `public string Name { get; set; }` and `public static int Count { get; set; }`.
 - A finaliser, `~T()`, with no parameters and no modifiers. See
   [Finalisers](#finalisers).
 
-Not supported yet: `sealed`, `readonly`, `const`, `partial`, static constructors,
-nested types, expression-bodied members (`=> expr`),
-properties with accessor bodies, get-only auto-properties, indexers, operator
-overloading, extension methods, `params`, and optional or named arguments.
+Classes and structs can declare `const` and `readonly` fields. Non-generic
+types can contain nested types. Methods, constructors and supported operators
+can use an expression body (`=> expr`).
+
+An explicit static constructor runs once, after static initialisers, on the
+first relevant use of the type. A failure surfaces as
+`TypeInitializationException` on the triggering use and on later uses.
+
+Partial classes, including parts in different files, and extension methods
+are supported. `++`, `--` and compound assignments work through properties and
+indexers that have accessor bodies, except through a struct receiver. See
+[Updates through accessors](features/accessor-updates.md) and
+[Extension methods and partial types](features/extensions-partial.md).
+
+Not supported yet: `sealed`, types nested in
+generic types,
+default interface accessor bodies, and ref-returning properties and indexers.
+Method and constructor calls accept
+named arguments, optional defaults and `params T[]`.
 
 Access modifiers are accepted but **not enforced**. Code in one class can read
 another class's `private` field.
@@ -293,8 +314,7 @@ parameter count. Calls through an interface-typed variable are dispatched at
 run time.
 
 The binder reports an error if a class does not implement every interface
-method. Interface inheritance (`interface IB : IA`) is parsed, but the base
-interface list is ignored.
+method. A derived interface inherits its base interfaces' dispatch slots.
 
 ### Methods and overloading
 
@@ -337,16 +357,19 @@ error.
 | Expression statement | Assignment, a method call, or `new`. |
 | `if` and `else`, including `else if` | The condition must be `bool`. |
 | `while` | |
+| `do`/`while` | Evaluates the condition after each iteration. |
+| `break`, `continue` | `break` exits the innermost switch or loop. `continue` advances the innermost loop. |
+| `switch` | Constant cases, supported pattern cases with optional `when` guards, and `default`. |
+| `foreach` | Iterates over single-dimensional arrays. |
 | `for` | Each of the three clauses is optional. |
 | `using` | `using (var x = expr) { ... }` or `using (expr) { ... }`. See below. |
 | `return` | With or without a value. |
+| `checked`, `unchecked` | Set overflow behaviour for the enclosed operations. |
 | `try`, `catch`, `finally` | See [Exceptions](#exceptions). |
 | `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
-Not supported: `do`/`while`, `foreach`, `switch`, `break`, `continue`, `goto`,
-`lock`, `yield`, `checked`,
-`unchecked`, `unsafe`, `fixed`, and local functions. Because `break` and
-`continue` are missing, end a loop by making its condition false.
+Not supported: tuple, extension-method and indexer patterns, list patterns on types other than arrays, `goto`,
+`lock`, `yield`, `unsafe`, `fixed`, and local functions.
 
 ### Exceptions
 
@@ -384,7 +407,7 @@ compiler adds it to every program, so no reference is needed:
 | `SystemException` | `Exception` |
 | `ArithmeticException` | `SystemException` |
 | `DivideByZeroException`, `OverflowException` | `ArithmeticException` |
-| `IndexOutOfRangeException`, `InvalidCastException`, `NullReferenceException`, `ArrayTypeMismatchException`, `InvalidOperationException`, `NotSupportedException`, `NotImplementedException`, `ArgumentException` | `SystemException` |
+| `IndexOutOfRangeException`, `InvalidCastException`, `NullReferenceException`, `ArrayTypeMismatchException`, `InvalidOperationException`, `NotSupportedException`, `NotImplementedException`, `ArgumentException`, `TypeInitializationException` | `SystemException` |
 | `ArgumentNullException` | `ArgumentException` |
 
 Each type has a parameterless constructor, which sets a default message, and a
@@ -413,8 +436,8 @@ process exits with code 70. The counts on that line are balanced, because the
 unwind released everything.
 
 Not supported: exception filters (`catch ... when`) and throw expressions are
-rejected with `ARC3001`. There is no `InnerException`, `StackTrace`, or
-`ToString()`.
+rejected with `ARC3001`. The base exception exposes `Message`.
+`TypeInitializationException` additionally exposes `TypeName` and `InnerException`.
 
 ### `using` and `IDisposable`
 
@@ -448,29 +471,49 @@ Differences from .NET:
 - `using var x = ...;` declarations without a block, and multiple resources in
   one statement (`using (a = ..., b = ...)`), are not supported.
 
+### Enums
+
+Enums use their declared integral width and signedness. Enum values can be
+stored in fields, locals and arrays, passed to methods, used in constant-label
+switches, and converted explicitly to and from numeric values. Enum boxing
+and unboxing remain unsupported. See [Enums](features/enums.md).
+
+Classes inherit interfaces through their base class and through base interface
+lists. Both implicit and explicit implementations dispatch through native
+interface slots. See [Base interfaces](features/base-interfaces.md).
+
 ## Expressions and operators
+
+User-defined unary, binary and conversion operators work with supported
+by-value signatures, including struct values. Compound assignment, increment
+and decrement can call overloads on supported storage. Overloaded `&&` and `||`
+use the declared truth operator to decide whether to evaluate the right operand.
 
 | Category | Operators and forms |
 |---|---|
 | Arithmetic | `+`, `-`, `*`, `/`, `%`, unary `-` |
 | Comparison | `==`, `!=`, `<`, `<=`, `>`, `>=` |
-| Logical | `&&`, `\|\|`, `!` (short-circuiting) |
+| Logical | `&&`, `\|\|`, `!`, and eager Boolean `&`, `\|`, `^` |
+| Integral bitwise and shifts | `&`, `\|`, `^`, `~`, `<<`, `>>`, `>>>` |
 | Assignment | `=`, `+=`, `-=`. Assignment can be used as an expression. |
 | String | `+` concatenates a string with a string, number, or `bool` |
-| Type tests | `x is T`, `x as T`, and casts `(T)x` |
-| Object creation | `new T(args)`, `new T[n]`, `new WeakReference<T>(x)` |
+| Type tests and patterns | `x is T`, `x as T`, casts `(T)x`, and supported constant, relational, declaration, logical, property, positional and array list patterns. Interface patterns on reference inputs test the runtime type. Constant and relational patterns support `decimal` and non-null `decimal?` values. |
+| Object creation | `new T(args)`, `new T { Member = value }` on classes, `new T[n]`, `new WeakReference<T>(x)`, and `with` on records. See [Object initialisers](features/object-initialisers.md) |
 | Access | Fields, properties, static members, `this`, `base` constructor calls, array indexing `a[i]` |
+| Choice | `condition ? first : second` and `switch` expressions with supported patterns |
 | Grouping | Parentheses |
 
-Not supported: `++` and `--` (write `i = i + 1`), the conditional operator
-`?:`, `*=`, `/=` and the other compound assignments, the bitwise and shift
-operators (`&`, `|`, `^`, `~`, `<<`, `>>`), `??` and `?.`, `typeof`, `sizeof`,
-`nameof`, `default`, lambdas, anonymous types, tuples, pattern matching beyond
-a plain `is T`, `switch` expressions, object and collection initialisers, and
-interpolated strings (`$"..."`).
+Prefix and postfix `++` and `--` work on numeric locals, parameters, fields
+array elements and non-virtual auto-properties. These storage forms also accept compound
+assignments `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
+and `>>>=`. String storage accepts `+=` for supported concatenation operands.
 
-A single `&` or `|`, and the shift operators, are rejected with
-[`ARC3001`](diagnostics.md#arc3001).
+The `??` operator can select a fallback for a nullable value or a reference.
+A nullable value also accepts compound assignment, `++` and `--`, user-defined lifted operators, and boxing when it is a nullable struct. A nullable primitive still cannot be boxed.
+`decimal` supports the arithmetic, comparison, increment and conversion operators, including on `decimal?`.
+Not supported: `??=`, `?.`, `typeof`, `sizeof`,
+`nameof`, lambdas, anonymous types, tuples, tuple and indexer patterns, collection initialisers, object initialisers on structs, and
+interpolated strings (`$"..."`).
 
 ### Conversions
 
@@ -478,6 +521,7 @@ Implicit conversions:
 
 - From `int` to `long`, and from `char` to `int` or `long`.
 - Between numeric types.
+- From any integer type or `char` to `decimal`. Conversions from `float` and `double` to `decimal`, and every conversion from `decimal`, are explicit. A conversion to an integer type truncates and raises `OverflowException` when the value does not fit.
 - From a class to its base class or to an interface it implements.
 - From `S[]` to `T[]` when `S` converts to `T` as a reference (array
   covariance). A store into such an array is checked at run time.
@@ -517,6 +561,7 @@ directly:
 | Member | Notes |
 |---|---|
 | `Console.Write(x)`, `Console.WriteLine(x)` | `x` is a `string`, `bool`, `char`, integer, `float`, or `double`. A `char` prints as the character. `Console.WriteLine()` with no argument prints an empty line. |
+| `decimal.Zero`, `One`, `MinusOne`, `MaxValue`, `MinValue` | Constants of `decimal`. `Console.Write`, `Console.WriteLine`, string concatenation and `ToString()` print a decimal |
 | `array.Length` | Number of elements |
 | `str.Length` | Number of **bytes** in the UTF-8 encoding |
 | `new WeakReference<T>(target)` | |
@@ -541,7 +586,7 @@ items that target marks as full and items it marks as limited.
 - Generic features outside the subset described under [Generics](#generics).
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
-- Enums, delegates, events, indexers, and records.
+- Delegates and events. Record structs, generic records, and records with a struct or array member are also rejected.
 - Lambdas, closures, local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
@@ -573,10 +618,12 @@ says so. The finalisation contract is the runtime's compatibility profile.
 | Reference cycles | Collected. Finalisers of cyclic objects may still run | Permitted. `ARC3100` warns when the type graph can form one. An ignored warning, including in a library, leaks, and a finaliser in the cycle does not run. `WeakReference<T>` breaks the cycle |
 | `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false`. The weak reference does not keep the object alive |
 | `string.Length` | UTF-16 code units | UTF-8 bytes. `"héllo".Length` is 6, not 5. |
+| `(decimal)` of a `double` | The exact binary value, rounded to 28 digits, in current .NET | The same. Older .NET versions rounded to 15 digits |
+| Formatting a `decimal` | `ToString` takes formats and a culture | `ToString()` and string concatenation only. The result is digits, an optional minus sign and a point |
 | Formatting a `double` or `float` | Shortest round-trippable form, such as `0.3333333333333333` | Six significant digits, such as `0.333333` |
 | Null dereference, index out of range, invalid class cast, integer division by zero, array type mismatch | `NullReferenceException`, `IndexOutOfRangeException`, `InvalidCastException`, `DivideByZeroException`, `ArrayTypeMismatchException`, all catchable | The same exceptions, all catchable. See [Exceptions](#exceptions) |
 | Unhandled exception | Prints the type, message, and stack trace, and exits with a non-zero code | Prints `Unhandled exception. Type: message`, then the `[arc]` line, and exits with code 70. There is no stack trace |
-| Exception members | `Message`, `InnerException`, `StackTrace`, `ToString()`, and more | `Message` only. There is no `InnerException`, because a field of its own type would trigger `ARC3100` |
+| Exception members | `Message`, `InnerException`, `StackTrace`, `ToString()`, and more | The base exposes `Message`. `TypeInitializationException` exposes `TypeName` and `InnerException`. |
 | Exception filters and throw expressions | Supported | `ARC3001` |
 | Exception while another is in flight | A `finally` block that throws replaces the exception in flight | The same. The replaced exception is released |
 | `catch` of a type that is not an exception | Compile error | Compile error from Roslyn |

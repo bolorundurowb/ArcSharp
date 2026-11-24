@@ -52,7 +52,8 @@ public sealed class BoundCall : BoundExpr
     public required MethodSymbol Method;
     public List<BoundExpr> Arguments = [];
     public bool Virtual;
-    public bool Interface; // interface dispatch
+    public bool Interface;
+    public bool ReturnsAssignedValue; // interface dispatch
     public int Selector = -1; // global interface selector when Interface
 }
 
@@ -68,6 +69,22 @@ public sealed class BoundNewArray : BoundExpr
     public string Site = "";
     public required TypeSymbol ElementType;
     public required BoundExpr Size;
+    public List<BoundExpr> Initializers = [];
+}
+
+public sealed class BoundNamedArgument : BoundExpr
+{
+    public required int Ordinal;
+    public required BoundExpr Value;
+}
+
+public sealed class BoundArraySlice : BoundExpr
+{
+    public required BoundExpr Receiver;
+    public required BoundExpr Start;
+    public required BoundExpr Length;
+    public required TypeSymbol ElementType;
+    public string Site = "";
 }
 
 public sealed class BoundIndex : BoundExpr
@@ -106,6 +123,8 @@ public enum BinKind
     DoubleCmp,
     RefEq,
     BoolLogic,
+    BoolArith,
+    BoolCmp,
     StrConcat,
     StrEq
 }
@@ -115,6 +134,7 @@ public sealed class BoundBinary : BoundExpr
     public TokenKind Op;
     public BinKind Kind;
     public bool IsUnsigned;
+    public bool IsChecked;
     public required BoundExpr Left;
     public required BoundExpr Right;
 }
@@ -122,7 +142,46 @@ public sealed class BoundBinary : BoundExpr
 public sealed class BoundUnary : BoundExpr
 {
     public TokenKind Op;
+    public bool IsChecked;
     public required BoundExpr Operand;
+}
+
+public sealed class BoundOperatorUpdate : BoundExpr
+{
+    public required BoundExpr Target;
+    public required BoundPatternInput Input;
+    public required BoundExpr Result;
+    public bool IsPostfix;
+}
+
+// Evaluates the effects in order and discards their values, then yields Value.
+public sealed class BoundSequence : BoundExpr
+{
+    public required List<BoundExpr> Effects;
+    public required BoundExpr Value;
+}
+
+public sealed class BoundStringCompound : BoundExpr
+{
+    public required BoundExpr Target;
+    public required BoundExpr Right;
+}
+
+public sealed class BoundNumericCompound : BoundExpr
+{
+    public required BoundExpr Target;
+    public required BoundExpr Right;
+    public required TypeSymbol OperationType;
+    public required TokenKind Op;
+    public bool IsChecked;
+}
+
+public sealed class BoundIncrement : BoundExpr
+{
+    public required BoundExpr Target;
+    public bool IsDecrement;
+    public bool IsPostfix;
+    public bool IsChecked;
 }
 
 public sealed class BoundAssign : BoundExpr
@@ -138,12 +197,87 @@ public sealed class BoundConversion : BoundExpr
     // An explicit reference cast to a class. The emitter tests the runtime type
     // and raises InvalidCastException when the operand is not an instance.
     public bool CastCheck;
+    public bool IsChecked;
+}
+
+public sealed class BoundChoice : BoundExpr
+{
+    public required BoundExpr Condition;
+    public required BoundExpr WhenTrue;
+    public required BoundExpr WhenFalse;
+}
+
+public sealed class BoundSwitchFailure : BoundExpr
+{
+    public required BoundExpr Exception;
+}
+
+public sealed class BoundPatternInput : BoundExpr
+{
+}
+
+public sealed class BoundPatternTest : BoundExpr
+{
+    public required BoundExpr Value;
+    public required BoundPatternInput Input;
+    public required BoundExpr Test;
+}
+
+public sealed class BoundPatternBinding : BoundExpr
+{
+    public required BoundExpr Test;
+    public required BoundExpr Value;
+    public required LocalSymbol Local;
+}
+
+public sealed class BoundUnbox : BoundExpr
+{
+    public required BoundExpr Operand;
+    public required FieldSymbol BoxedValue;
 }
 
 public sealed class BoundIs : BoundExpr
 {
     public required BoundExpr Operand;
     public required TypeSymbol TestType;
+}
+
+// True when two non-null objects have exactly the same runtime type. A record's
+// generated equality uses it in place of EqualityContract.
+public sealed class BoundSameType : BoundExpr
+{
+    public required BoundExpr Left;
+    public required BoundExpr Right;
+}
+
+public enum DecimalOp
+{
+    Constant,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    Negate,
+    Compare,
+    FromInteger,
+    FromUnsigned,
+    FromDouble,
+    ToInteger,
+    ToUnsigned,
+    ToDouble,
+    ToText
+}
+
+// One decimal operation, done by the runtime on 128-bit values. Constant holds
+// the two slots of the value in Low and High. ToInteger holds the smallest and
+// largest result the target type allows in Low and High.
+public sealed class BoundDecimalOp : BoundExpr
+{
+    public DecimalOp Op;
+    public List<BoundExpr> Arguments = [];
+    public long Low;
+    public long High;
 }
 
 public sealed class BoundAs : BoundExpr
@@ -216,6 +350,7 @@ public sealed class BoundIf : BoundStmt
 
 public sealed class BoundWhile : BoundStmt
 {
+    public required bool ConditionIsTop;
     public required BoundExpr Condition;
     public required BoundStmt Body;
 }
@@ -226,6 +361,25 @@ public sealed class BoundFor : BoundStmt
     public BoundExpr? Condition;
     public BoundExpr? Update;
     public required BoundStmt Body;
+}
+
+public sealed class BoundSwitch : BoundStmt
+{
+    public required BoundExpr Value;
+    public required BoundPatternInput Input;
+    public List<BoundSwitchSection> Sections = [];
+}
+
+public sealed class BoundSwitchSection
+{
+    public bool IsDefault;
+    public List<BoundExpr> Tests = [];
+    public required BoundBlock Body;
+}
+
+public sealed class BoundBranch : BoundStmt
+{
+    public required bool IsContinue;
 }
 
 public sealed class BoundReturn : BoundStmt

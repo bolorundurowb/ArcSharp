@@ -1,9 +1,12 @@
-// Expected: ARC3001 arrays of struct element type are not supported.
-struct Point {
-    public int x;
+struct Point
+{
+    public int X;
 }
-class Program {
-    static void Main() {
-        Point[] points = new Point[2];
+
+static class Program
+{
+    static void Main()
+    {
+        Point[,] points = new Point[2, 2];
     }
 }

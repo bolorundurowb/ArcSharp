@@ -27,6 +27,19 @@ namespace System
             return null;
         }
 
+        // Roslyn binds the equality members that a record synthesises as
+        // overrides of these two. A direct call is not a supported library
+        // feature.
+        public virtual bool Equals(object other)
+        {
+            return false;
+        }
+
+        public virtual int GetHashCode()
+        {
+            return 0;
+        }
+
         // The C# compiler binds a '~T()' declaration as an override of this
         // method. It is not callable from user code, and ArcSharp never
         // dispatches through it: the generated teardown runs the finalisers.
@@ -39,6 +52,21 @@ namespace System
 
     public abstract class ValueType
     {
+    }
+
+    public struct Nullable<T> where T : struct
+    {
+        public Nullable(T value)
+        {
+        }
+
+        public bool HasValue => false;
+
+        public T Value => default;
+
+        public T GetValueOrDefault() => default;
+
+        public T GetValueOrDefault(T defaultValue) => defaultValue;
     }
 
     // The C# compiler cannot emit this assembly without Attribute and
@@ -83,6 +111,11 @@ namespace System
         All = Assembly | Module | Class | Struct | Enum | Constructor
             | Method | Property | Field | Event | Interface | Parameter
             | Delegate | ReturnValue | GenericParameter
+    }
+
+    // Roslyn attaches this attribute to the compiler-generated parameter array metadata.
+    public sealed class ParamArrayAttribute : Attribute
+    {
     }
 
     public sealed class AttributeUsageAttribute : Attribute
@@ -138,6 +171,11 @@ namespace System
     }
 
     public struct UInt64
+    {
+    }
+
+    // Roslyn requires this predefined type when it emits a list pattern.
+    public struct UIntPtr
     {
     }
 
@@ -266,6 +304,14 @@ namespace System
 
     public static class Console
     {
+        public static void Write(object value)
+        {
+        }
+
+        public static void WriteLine(object value)
+        {
+        }
+
         public static void Write()
         {
         }

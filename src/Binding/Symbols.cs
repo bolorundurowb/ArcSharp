@@ -5,6 +5,7 @@ namespace ArcSharp.Binding;
 public enum TypeKind
 {
     Primitive,
+    Enum,
     String,
     Class,
     Struct,
@@ -23,6 +24,8 @@ public sealed class TypeSymbol
     // class/struct
     public TypeSymbol? BaseType;
     public MethodSymbol? StaticFieldInitialiser;
+    public bool HasExplicitStaticConstructor;
+    public MethodSymbol? ToStringOverride;
     public MethodSymbol? Finaliser; // the '~T()' declared by this class, not an inherited one
     public List<TypeSymbol> Interfaces = [];
     public List<FieldSymbol> InstanceFields = []; // includes inherited, in layout order
@@ -31,6 +34,8 @@ public sealed class TypeSymbol
     public List<PropertySymbol> Properties = []; // declared in this type
     public List<MethodSymbol> Vtable = []; // virtual slot order (incl inherited)
     public Dictionary<int, MethodSymbol> InterfaceImpl = []; // selector -> implementing method
+    public HashSet<int> InterfaceMembership = [];
+    public int InterfaceTestSlot = -1;
     public bool LayoutDone;
     public bool LayoutInProgress;
     public bool IsAbstract;
@@ -41,6 +46,8 @@ public sealed class TypeSymbol
 
     // array
     public TypeSymbol? ElementType;
+    public TypeSymbol? EnumUnderlyingType;
+    public TypeSymbol? NullableElementType;
 
     public bool IsReferenceType =>
         Kind is TypeKind.Class or TypeKind.String or TypeKind.Array or TypeKind.Interface or TypeKind.WeakRef;
@@ -63,6 +70,7 @@ public sealed class TypeSymbol
             "double" => "double",
             _ => "i32"
         },
+        TypeKind.Enum => EnumUnderlyingType?.LlvmType ?? throw new InvalidOperationException("missing enum representation"),
         TypeKind.Void => "void",
         // A struct value is an opaque blob of one 8-byte slot per field, so
         // every field sits at a known 8*i byte offset without declaring an
@@ -73,8 +81,11 @@ public sealed class TypeSymbol
         _ => "i8*" // all reference types are opaque pointers
     };
 
-    public bool IsUnsignedInteger => Kind == TypeKind.Primitive && Name is "byte" or "ushort" or "uint" or "ulong";
-    public bool IsSignedInteger => Kind == TypeKind.Primitive && Name is "sbyte" or "short" or "int" or "long";
+    public bool IsUnsignedInteger => EnumUnderlyingType?.IsUnsignedInteger
+        ?? (Kind == TypeKind.Primitive && Name is "byte" or "ushort" or "uint" or "ulong");
+
+    public bool IsSignedInteger => EnumUnderlyingType?.IsSignedInteger
+        ?? (Kind == TypeKind.Primitive && Name is "sbyte" or "short" or "int" or "long");
     public bool IsInteger => IsSignedInteger || IsUnsignedInteger || Name == "char";
     public bool IsFloat => Kind == TypeKind.Primitive && Name is "float" or "double";
 
@@ -175,6 +186,8 @@ public sealed class MethodSymbol
     public required TypeSymbol Owner;
     public TypeSymbol ReturnType = null!;
     public List<ParamSymbol> Parameters = [];
+    public List<MethodSymbol> ExplicitInterfaceTargets = [];
+    public bool IsPublic;
     public bool IsStatic;
     public bool IsVirtual;
     public bool IsOverride;

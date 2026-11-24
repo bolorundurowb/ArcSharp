@@ -58,6 +58,99 @@ return 0;
 
 static SurfaceCase[] Cases() =>
 [
+    new("decimal arithmetic", """
+        class P
+        {
+            static decimal Test(decimal a, int b)
+            {
+                decimal total = a * b + 1.25m;
+                total += decimal.One;
+                total++;
+                return -total % 7m;
+            }
+        }
+        """),
+    new("decimal conversions", """
+        class P
+        {
+            static double Test(decimal value, long whole, double real)
+            {
+                decimal sum = value + whole + (decimal)real;
+                return (double)sum + (int)value;
+            }
+        }
+        """),
+    new("nullable decimal", """
+        class P
+        {
+            static decimal? Test(decimal? a, decimal b) => a * b > 1m ? a : null;
+        }
+        """),
+    new("decimal parse is absent", """
+        class P
+        {
+            static decimal Test() => decimal.Parse("1");
+        }
+        """, "CS0117"),    new("list pattern", """
+        class P
+        {
+            static bool Test(int[] values) => values is [1, .. var tail] && tail.Length > 0;
+        }
+        """),
+    new("static abstract member", """
+        interface IZero<T> where T : IZero<T>
+        {
+            static abstract T Zero();
+        }
+
+        class P
+        {
+            static T Make<T>() where T : IZero<T> => T.Zero();
+        }
+        """),
+    new("extension method", """
+        static class Extensions
+        {
+            public static int Twice(this int value) => value * 2;
+        }
+
+        class P
+        {
+            static int Call() => 3.Twice();
+        }
+        """),
+    new("unmanaged constraint", """
+        class P
+        {
+            static T Identity<T>(T value) where T : unmanaged => value;
+            static int Call() => Identity(42);
+        }
+        """),
+    new("parameter array", """
+        class P
+        {
+            static void Collect(params int[] values)
+            {
+            }
+
+            static void Call()
+            {
+                Collect(1, 2);
+            }
+        }
+        """),
+    new("array foreach", """
+        class P
+        {
+            static void M(int[] values)
+            {
+                foreach (long value in values)
+                {
+                    System.Console.WriteLine(value);
+                }
+            }
+        }
+        """),
     new("console", """
         using System;
         class P
@@ -242,9 +335,10 @@ static SurfaceCase[] Cases() =>
             static void M()
             {
                 int? n = null;
+                int fallback = n.GetValueOrDefault(9);
             }
         }
-        """, "CS0518"),
+        """),
     new("math", """
         class P
         {
@@ -287,19 +381,20 @@ static SurfaceCase[] Cases() =>
             }
         }
         """, "CS1729"),
-    new("print-class", """
+    new("print-struct", """
         using System;
-        class Box
+        struct Point
         {
+            public int X;
         }
         class P
         {
             static void M()
             {
-                Console.WriteLine(new Box());
+                Console.WriteLine(new Point());
             }
         }
-        """, "CS1503"),
+        """),
     new("weak-value", """
         using System;
         class P

@@ -138,15 +138,8 @@ sealed partial class RoslynLowering
 
             switch (node.Kind())
             {
-                case SyntaxKind.BreakStatement:
-                    Reject(node, "'break' is not supported");
-                    break;
-                case SyntaxKind.ContinueStatement:
-                    Reject(node, "'continue' is not supported");
-                    break;
-                case SyntaxKind.ForEachStatement:
                 case SyntaxKind.ForEachVariableStatement:
-                    Reject(node, "'foreach' is not supported");
+                    Reject(node, "deconstructing 'foreach' is not supported");
                     break;
                 case SyntaxKind.ThrowExpression:
                     Reject(node, "throw expressions are not supported: use a 'throw' statement");
@@ -154,22 +147,12 @@ sealed partial class RoslynLowering
                 case SyntaxKind.CatchFilterClause:
                     Reject(node, "exception filters are not supported");
                     break;
-                case SyntaxKind.SwitchStatement:
-                case SyntaxKind.SwitchExpression:
-                    Reject(node, "'switch' is not supported");
-                    break;
                 case SyntaxKind.LockStatement:
                     Reject(node, "'lock' is not supported");
                     break;
                 case SyntaxKind.YieldReturnStatement:
                 case SyntaxKind.YieldBreakStatement:
                     Reject(node, "'yield' is not supported");
-                    break;
-                case SyntaxKind.CheckedStatement:
-                case SyntaxKind.CheckedExpression:
-                case SyntaxKind.UncheckedStatement:
-                case SyntaxKind.UncheckedExpression:
-                    Reject(node, "'checked' and 'unchecked' are not supported");
                     break;
                 case SyntaxKind.UnsafeStatement:
                     Reject(node, "'unsafe' is not supported");
@@ -182,27 +165,11 @@ sealed partial class RoslynLowering
                 case SyntaxKind.LocalFunctionStatement:
                     Reject(node, "local functions are not supported");
                     break;
-                case SyntaxKind.ArrowExpressionClause:
-                    Reject(node, "expression-bodied members are not supported");
-                    break;
-                case SyntaxKind.LeftShiftExpression:
-                case SyntaxKind.RightShiftExpression:
-                case SyntaxKind.UnsignedRightShiftExpression:
-                    Reject(node, "shift operators are not supported");
-                    break;
-                case SyntaxKind.BitwiseAndExpression:
-                case SyntaxKind.BitwiseOrExpression:
-                case SyntaxKind.ExclusiveOrExpression:
-                    Reject(node, "bitwise operators are not supported");
-                    break;
-                case SyntaxKind.PreIncrementExpression:
-                case SyntaxKind.PostIncrementExpression:
-                case SyntaxKind.PreDecrementExpression:
-                case SyntaxKind.PostDecrementExpression:
-                    Reject(node, "'++' and '--' are not supported");
-                    break;
-                case SyntaxKind.ConditionalExpression:
-                    Reject(node, "the conditional operator is not supported");
+                case SyntaxKind.ArrowExpressionClause when node.Parent is not
+                    (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
+                        or ConversionOperatorDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
+                        or AccessorDeclarationSyntax):
+                    Reject(node, "this expression-bodied member is not supported");
                     break;
                 case SyntaxKind.QueryExpression:
                     Reject(node, "query expressions are not supported");
@@ -210,12 +177,11 @@ sealed partial class RoslynLowering
                 case SyntaxKind.AwaitExpression:
                     Reject(node, "'await' is not supported");
                     break;
-                case SyntaxKind.RecordDeclaration:
                 case SyntaxKind.RecordStructDeclaration:
-                    Reject(node, "records are not supported");
+                    Reject(node, "record structs are not supported: declare a record class");
                     break;
-                case SyntaxKind.EnumDeclaration:
-                    Reject(node, "enums are not supported");
+                case SyntaxKind.RecordDeclaration when node is RecordDeclarationSyntax { TypeParameterList: not null }:
+                    Reject(node, "generic records are not supported");
                     break;
                 case SyntaxKind.DelegateDeclaration:
                     Reject(node, "delegates are not supported");
@@ -224,25 +190,9 @@ sealed partial class RoslynLowering
                 case SyntaxKind.EventFieldDeclaration:
                     Reject(node, "events are not supported");
                     break;
-                case SyntaxKind.IndexerDeclaration:
-                    Reject(node, "indexers are not supported");
-                    break;
-                case SyntaxKind.NameColon:
-                    Reject(node, "named arguments are not supported");
-                    break;
             }
 
             base.Visit(node);
-        }
-
-        public override void VisitParameter(ParameterSyntax node)
-        {
-            if (node.Default != null)
-            {
-                Reject(node, "optional parameters are not supported");
-            }
-
-            base.VisitParameter(node);
         }
 
         public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
@@ -250,13 +200,6 @@ sealed partial class RoslynLowering
             if (node.ReturnType is RefTypeSyntax)
             {
                 Reject(node, "ref locals and ref returns are not supported: a managed reference must not outlive the call");
-            }
-
-            if (_model.GetDeclaredSymbol(node) is IMethodSymbol method
-                && method.ReturnType.TypeKind == RoslynKind.Struct
-                && method.ReturnType.SpecialType == SpecialType.None)
-            {
-                Reject(node, "struct return values are not supported yet: write through an 'out' parameter or a field instead");
             }
 
             base.VisitMethodDeclaration(node);

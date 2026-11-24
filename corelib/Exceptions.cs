@@ -9,8 +9,8 @@
 // classes marked below, so renaming one needs a change in
 // Emitter.RuntimeExceptionTypes.
 //
-// There is no InnerException and no StackTrace. A field of type Exception would
-// be a strong self-reference and would raise ARC3100 for every program.
+// TypeInitializationException exposes the cause of a failed type initializer.
+// The base Exception carries the message without a strong self-reference.
 
 namespace System
 {
@@ -37,6 +37,20 @@ namespace System
 
         public SystemException(string message) : base(message)
         {
+        }
+    }
+
+    public sealed class TypeInitializationException : SystemException
+    {
+        public string TypeName { get; }
+
+        public Exception InnerException { get; }
+
+        public TypeInitializationException(string fullTypeName, Exception innerException)
+            : base("The type initializer for '" + fullTypeName + "' threw an exception.")
+        {
+            TypeName = fullTypeName;
+            InnerException = innerException;
         }
     }
 
@@ -174,6 +188,16 @@ namespace System
         }
 
         public NotImplementedException(string message) : base(message)
+        {
+        }
+    }
+}
+
+namespace System.Runtime.CompilerServices
+{
+    public sealed class SwitchExpressionException : System.InvalidOperationException
+    {
+        public SwitchExpressionException() : base("Non-exhaustive switch expression failed to match its input.")
         {
         }
     }
