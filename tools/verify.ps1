@@ -268,8 +268,8 @@ try {
     Invoke-Sample cycle_weakref "alloc=4 dead=4 freed=4 live=0" "done (WeakReference cycle)" @("cycle_weakref")
     Invoke-Sample weakref_get   "alloc=4 dead=4 freed=4 live=0" "PASS under ARC"             @("weakref_get")
     Invoke-Sample cycle_strong  "alloc=3 dead=1 freed=1 live=2" "done (strong cycle)"        @("cycle_strong")   # intentional leak without weak
-    Invoke-Sample lambdas       "alloc=10 dead=10 freed=10 live=0" "lambdas PASS"           @("lambdas")
-    Invoke-Sample lambda_cycle  "alloc=3 dead=1 freed=1 live=2" "lambda capture cycle"     @("lambda_cycle")
+    Invoke-Sample lambdas       "alloc=14 dead=14 freed=14 live=0" "lambdas PASS"           @("lambdas")
+    Invoke-Sample lambda_cycle  "alloc=4 dead=1 freed=1 live=3" "lambda capture cycle"     @("lambda_cycle")
     Invoke-Sample cycle_struct  "alloc=3 dead=1 freed=1 live=2" "done (struct cycle)"        @("cycle_struct")   # strong cycle through an inline struct field
     Invoke-Sample multifile     "alloc=4 dead=4 freed=4 live=0" "twice=42"                   @("mf_main", "mf_lib")   # two source files compiled together
     Invoke-Sample numerics      "alloc=4 dead=4 freed=4 live=0" "18446744073709551615"                        @("numerics")             # byte/sbyte/short/ushort/uint/ulong
@@ -308,6 +308,11 @@ try {
     Invoke-Sample operator_updates "alloc=9 dead=9 freed=9 live=0" "operator updates PASS" @("operator_updates")
     Invoke-Sample conditional_values "alloc=10 dead=10 freed=10 live=0" "conditional values PASS" @("conditional_values")
     Invoke-Sample patterns "alloc=6 dead=6 freed=6 live=0" "patterns PASS" @("patterns")
+    Invoke-Sample delegates_basic "alloc=17 dead=17 freed=17 live=0" "delegates basic PASS" @("delegates_basic")           # method groups and explicit creation, static and instance
+    Invoke-Sample delegates_multicast "alloc=127 dead=127 freed=127 live=0" "delegates multicast PASS" @("delegates_multicast") # combine, remove, equality, last result, null invoke
+    Invoke-Sample delegates_targets "alloc=72 dead=72 freed=72 live=0" "delegates targets PASS" @("delegates_targets") # virtual, interface, ref, out, struct, generic, Func and Action
+    Invoke-Sample delegates_lifetime "alloc=94 dead=94 freed=94 live=0" "after=finalised kept;" @("delegates_lifetime") # the delegate owns its target; handler exceptions; fields; arrays
+Invoke-Sample delegates_lambdas "alloc=70 dead=70 freed=70 live=0" "delegates lambdas PASS" @("delegates_lambdas") # lambdas with captures, mixed with method groups in multicast lists
     Invoke-Sample struct_interfaces "alloc=9 dead=9 freed=9 live=0" "struct interfaces PASS" @("struct_interfaces")
     Invoke-Sample struct_storage "alloc=5 dead=5 freed=5 live=0" "struct storage PASS" @("struct_storage")
     Invoke-Sample struct_calls "alloc=6 dead=6 freed=6 live=0" "struct calls PASS" @("struct_calls")
@@ -383,6 +388,9 @@ try {
     Invoke-MustFail static_abstract_generic "ARC3001" @("static_abstract_generic")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
     Invoke-MustFail lambda          "ARC3001" @("lambda")
+    Invoke-MustFail delegate_struct_target "ARC3001" @("delegate_struct_target")
+    Invoke-MustFail delegate_library_method "ARC3001" @("delegate_library_method")
+Invoke-MustFail lambda_ref_parameter "ARC3001" @("lambda_ref_parameter")
     Invoke-MustFail generic         "CS0246" @("generic")
     Invoke-MustFail generic_arity "CS0305" @("generic_arity")
     Invoke-MustFail generic_constraint "CS0452" @("generic_constraint")
