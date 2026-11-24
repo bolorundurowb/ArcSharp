@@ -6,6 +6,26 @@ namespace ArcSharp.Frontend;
 
 sealed partial class RoslynLowering
 {
+    private int AssignInterfaceTestSlots(List<TypeSymbol> types)
+    {
+        // Marker interfaces have membership even when there is no dispatch slot.
+        var slot = _selectors.Count;
+        var classes = types.Where(type => type.Kind == BoundKind.Class).ToList();
+        foreach (var target in types.Where(type => type.Kind == BoundKind.Interface).Distinct())
+        {
+            target.InterfaceTestSlot = slot++;
+            foreach (var type in classes)
+            {
+                if (ReferenceAssignable(type, target, []))
+                {
+                    type.InterfaceMembership.Add(target.InterfaceTestSlot);
+                }
+            }
+        }
+
+        return slot;
+    }
+
     private void MapVariantInterfaces(IEnumerable<TypeSymbol> types)
     {
         if (_variantInterfaces.Count == 0)

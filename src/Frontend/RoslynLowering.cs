@@ -154,7 +154,7 @@ sealed partial class RoslynLowering
         }
 
         MapVariantInterfaces(program.Types);
-        program.InterfaceSelectorCount = _selectors.Count;
+        program.InterfaceSelectorCount = AssignInterfaceTestSlots(program.Types);
         program.MethodBodies.AddRange(_readyBodies);
 
         DefiniteAssignment.Analyze(program, (line, msg) => Report(line, 0, msg, "ARC2100", DiagnosticSeverity.Warning));

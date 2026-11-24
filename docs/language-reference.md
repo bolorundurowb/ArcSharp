@@ -497,7 +497,7 @@ use the declared truth operator to decide whether to evaluate the right operand.
 | Integral bitwise and shifts | `&`, `\|`, `^`, `~`, `<<`, `>>`, `>>>` |
 | Assignment | `=`, `+=`, `-=`. Assignment can be used as an expression. |
 | String | `+` concatenates a string with a string, number, or `bool` |
-| Type tests and patterns | `x is T`, `x as T`, casts `(T)x`, and supported constant, relational, declaration, logical, property, positional and array list patterns |
+| Type tests and patterns | `x is T`, `x as T`, casts `(T)x`, and supported constant, relational, declaration, logical, property, positional and array list patterns. Interface patterns on reference inputs test the runtime type. Constant and relational patterns support `decimal` and non-null `decimal?` values. |
 | Object creation | `new T(args)`, `new T { Member = value }` on classes, `new T[n]`, `new WeakReference<T>(x)`, and `with` on records. See [Object initialisers](features/object-initialisers.md) |
 | Access | Fields, properties, static members, `this`, `base` constructor calls, array indexing `a[i]` |
 | Choice | `condition ? first : second` and `switch` expressions with supported patterns |

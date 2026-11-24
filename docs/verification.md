@@ -93,7 +93,7 @@ asserts on purpose.
 | `nullable_values` | Lifted operations, nullable conversions and coalescing, presence tests, and a nullable struct's owned reference | alloc=4 dead=4 freed=4 **live=0** | `nullable values PASS` |
 | `operator_updates` | Operator results for struct and reference updates, single index evaluation and failed covariant stores | alloc=9 dead=9 freed=9 **live=0** | `operator updates PASS` |
 | `conditional_values` | Struct and reference results, overloaded short circuiting, switch expressions and exception cleanup | alloc=10 dead=10 freed=10 **live=0** | `conditional values PASS` |
-| `patterns` | Single evaluation, numeric and string patterns, bindings, short circuiting, switch case guards, property and positional patterns, and array list patterns with a slice | alloc=6 dead=6 freed=6 **live=0** | `patterns PASS` |
+| `patterns` | Single evaluation, numeric and string patterns, bindings, short circuiting, switch case guards, property and positional patterns, array list patterns with a slice, interface membership and dispatch, and decimal and nullable decimal comparisons | alloc=6 dead=6 freed=6 **live=0** | `patterns PASS` |
 | `struct_interfaces` | Boxing with owned reference fields, constrained dispatch, checked unboxing and struct printing | alloc=9 dead=9 freed=9 **live=0** | `struct interfaces PASS` |
 | `struct_storage` | Inline arrays, interior references, static struct fields, and property assignment copies | alloc=5 dead=5 freed=5 **live=0** | `struct storage PASS` |
 | `struct_calls` | Argument snapshots, interface calls, result copies before finally, and ARC cleanup when a later argument throws | alloc=6 dead=6 freed=6 **live=0** | `struct calls PASS` |

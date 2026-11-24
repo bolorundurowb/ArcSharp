@@ -6,6 +6,16 @@ representations. Patterns compose with `and`, `or` and `not`. A `var`
 binding can capture null, and a declaration pattern binds its local only
 on a successful match.
 
+Interface type and declaration patterns on reference inputs test the
+runtime type, including inherited interfaces and marker interfaces. The
+compiler reserves interface table entries for membership so a match does
+not depend on the interface having any callable methods. A successful
+declaration pattern can use the bound value for interface dispatch.
+
+Decimal constant and relational patterns use the same exact comparison as
+decimal operators. A nullable decimal must contain a value to match either
+kind of pattern.
+
 ## Recursive patterns
 
 A recursive pattern tests a type and then examines members of the matched

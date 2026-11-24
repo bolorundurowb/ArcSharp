@@ -183,6 +183,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                      "declare void @arc_console_write_double(double, i32)",
             "declare void @arc_console_newline()",
             "declare i32 @arc_is_instance(i8*, %TypeInfo*)",
+            "declare i32 @arc_has_interface(i8*, i64)",
             "declare void @arc_suppress_finalize(i8*)",
             "declare void @arc_set_roots(i8***, i64)",
             "declare void @arc_report()",
@@ -410,6 +411,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 if (t.InterfaceImpl.TryGetValue(sel, out var m) && !m.IsAbstract)
                 {
                     entries.Add($"i8* bitcast ({FnPtrType(m)} @{m.MangledName} to i8*)");
+                }
+                else if (t.InterfaceMembership.Contains(sel))
+                {
+                    entries.Add($"i8* bitcast (%TypeInfo* @{t.Name}__ti to i8*)");
                 }
                 else
                 {
@@ -3209,7 +3214,9 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         var v = EmitR(i.Operand);
         TrackReferenceTemp(i.Operand, v);
-        var r = Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{i.TestType.Name}__ti)");
+        var r = i.TestType.Kind == TypeKind.Interface
+            ? Inst($"call i32 @arc_has_interface(i8* {v}, i64 {i.TestType.InterfaceTestSlot})")
+            : Inst($"call i32 @arc_is_instance(i8* {v}, %TypeInfo* @{i.TestType.Name}__ti)");
         return Inst($"icmp ne i32 {r}, 0");
     }
 

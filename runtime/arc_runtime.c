@@ -1264,6 +1264,11 @@ int arc_is_instance(void* obj, TypeInfo* target) {
     }
     return 0;
 }
+int arc_has_interface(void* obj, intptr_t slot) {
+    if (!obj || slot < 0) return 0;
+    TypeInfo* type = ((ObjHeader*)obj)->type;
+    return type && slot < type->itableLen && type->itable[slot] != NULL;
+}
 void arc_weakref_set(void* wr, void* target) {
     if (!wr) return;
     void** slot = (void**)((char*)wr + 24);

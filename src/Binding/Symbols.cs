@@ -34,6 +34,8 @@ public sealed class TypeSymbol
     public List<PropertySymbol> Properties = []; // declared in this type
     public List<MethodSymbol> Vtable = []; // virtual slot order (incl inherited)
     public Dictionary<int, MethodSymbol> InterfaceImpl = []; // selector -> implementing method
+    public HashSet<int> InterfaceMembership = [];
+    public int InterfaceTestSlot = -1;
     public bool LayoutDone;
     public bool LayoutInProgress;
     public bool IsAbstract;

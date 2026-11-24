@@ -171,7 +171,7 @@ typedef struct TypeInfo {
     void      (*deinit)(void*);   // releases all strong fields of an instance
     void**      vtable;           // virtual method slots (function pointers)
     intptr_t    vtableLen;
-    void**      itable;           // interface method slots, indexed by selector
+    void**      itable;           // interface dispatch and membership slots
     intptr_t    itableLen;
     TypeInfo*   base;             // base class, or NULL; used by is/as
     ArcSlot*    slots;            // strong edges; weak fields are omitted
@@ -197,7 +197,10 @@ described in Section 6.
   selector that is unique across the whole program, and each class's itable has
   one slot per selector, with `null` for the selectors it does not implement.
   This makes a call a single indexed load, at the cost of itables that grow with
-  the number of interface methods in the program.
+  the number of interface methods in the program. The compiler appends
+  membership slots for interface type tests. A non-null entry indicates
+  that the class or struct box implements the interface, including through
+  inheritance or variance.
 
 ---
 

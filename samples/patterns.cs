@@ -1,4 +1,13 @@
-class Tag
+interface IMarker
+{
+}
+
+interface ITag : IMarker
+{
+    int Limit { get; }
+}
+
+class Tag : ITag
 {
     public int Count;
 
@@ -34,6 +43,12 @@ static class Program
         values[2] = 3;
         values[3] = 4;
 
+        object other = word;
+        object missing = null;
+        decimal amount = -1.20m;
+        decimal? optional = amount;
+        decimal? absent = null;
+
         int selected = 0;
         switch (reference)
         {
@@ -51,6 +66,11 @@ static class Program
             && word is "word" or "other"
             && reference is Tag(4, > 7) { Limit: 8 } shape && shape.Count == 4
             && values is [1, .. var middle, 4] && middle.Length == 2 && middle[1] == 3
+            && reference is ITag tagged && tagged.Limit == 8
+            && reference is IMarker
+            && other is not IMarker && missing is not IMarker
+            && amount is -1.2m and >= -2m and < 0m
+            && optional is -1.20m and <= -1m && absent is not < 0m
             && selected == 4 && evaluations == 1)
         {
             Console.WriteLine("patterns PASS");

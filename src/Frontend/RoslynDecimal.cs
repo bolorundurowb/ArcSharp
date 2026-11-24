@@ -55,13 +55,6 @@ sealed partial class RoslynLowering
             Op = op, Arguments = [.. arguments], Type = type
         };
 
-        BoundExpr Comparison(TokenKind op, List<BoundExpr> arguments) => new BoundBinary
-        {
-            Op = op, Kind = BinKind.IntCmp, Type = _bool,
-            Left = new BoundDecimalOp { Op = DecimalOp.Compare, Arguments = arguments, Type = _int },
-            Right = new BoundLiteral { Type = _int, LitKind = LiteralKind.Int }
-        };
-
         BoundExpr One() => new BoundDecimalOp { Op = DecimalOp.Constant, Low = 1, Type = type };
 
         Add("op_Addition", type, 2, arguments => Operation(DecimalOp.Add, arguments[0], arguments[1]));
@@ -72,12 +65,12 @@ sealed partial class RoslynLowering
         Add("op_UnaryNegation", type, 1, arguments => Operation(DecimalOp.Negate, arguments[0]));
         Add("op_Increment", type, 1, arguments => Operation(DecimalOp.Add, arguments[0], One()));
         Add("op_Decrement", type, 1, arguments => Operation(DecimalOp.Subtract, arguments[0], One()));
-        Add("op_Equality", _bool, 2, arguments => Comparison(TokenKind.EqualsEquals, arguments));
-        Add("op_Inequality", _bool, 2, arguments => Comparison(TokenKind.BangEquals, arguments));
-        Add("op_LessThan", _bool, 2, arguments => Comparison(TokenKind.Less, arguments));
-        Add("op_LessThanOrEqual", _bool, 2, arguments => Comparison(TokenKind.LessEquals, arguments));
-        Add("op_GreaterThan", _bool, 2, arguments => Comparison(TokenKind.Greater, arguments));
-        Add("op_GreaterThanOrEqual", _bool, 2, arguments => Comparison(TokenKind.GreaterEquals, arguments));
+        Add("op_Equality", _bool, 2, arguments => DecimalComparison(TokenKind.EqualsEquals, arguments));
+        Add("op_Inequality", _bool, 2, arguments => DecimalComparison(TokenKind.BangEquals, arguments));
+        Add("op_LessThan", _bool, 2, arguments => DecimalComparison(TokenKind.Less, arguments));
+        Add("op_LessThanOrEqual", _bool, 2, arguments => DecimalComparison(TokenKind.LessEquals, arguments));
+        Add("op_GreaterThan", _bool, 2, arguments => DecimalComparison(TokenKind.Greater, arguments));
+        Add("op_GreaterThanOrEqual", _bool, 2, arguments => DecimalComparison(TokenKind.GreaterEquals, arguments));
         type.ToStringOverride = Add("ToString", _string, 0, _ => new BoundDecimalOp
         {
             Op = DecimalOp.ToText, Arguments = [new BoundThis { Type = type }], Type = _string
@@ -86,6 +79,13 @@ sealed partial class RoslynLowering
         FinishLayout(type, fields, members);
         return type;
     }
+
+    private BoundExpr DecimalComparison(TokenKind op, List<BoundExpr> arguments) => new BoundBinary
+    {
+        Op = op, Kind = BinKind.IntCmp, Type = _bool,
+        Left = new BoundDecimalOp { Op = DecimalOp.Compare, Arguments = arguments, Type = _int },
+        Right = new BoundLiteral { Type = _int, LitKind = LiteralKind.Int }
+    };
 
     private MethodSymbol? DecimalBinaryMethod(BinaryOperatorKind kind) => FindDecimalMethod(kind switch
     {

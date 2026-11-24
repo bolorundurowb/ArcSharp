@@ -302,6 +302,11 @@ sealed partial class RoslynLowering
             return type.IsReferenceType ? PatternNullCheck(input, op) : PatternResult(false);
         }
 
+        if (type == _decimal && constantValue is decimal amount)
+        {
+            return DecimalComparison(op, [input, DecimalConstant(amount)]);
+        }
+
         var kind = type switch
         {
             _ when type == _string => BinKind.StrEq,
@@ -385,7 +390,7 @@ sealed partial class RoslynLowering
             return input.Type.IsReferenceType ? PatternNullCheck(input, TokenKind.BangEquals) : PatternResult(true);
         }
 
-        if (input.Type.IsReferenceType && type.Kind is BoundKind.Class or BoundKind.Struct)
+        if (input.Type.IsReferenceType && type.Kind is BoundKind.Class or BoundKind.Struct or BoundKind.Interface)
         {
             var descriptor = type.Kind == BoundKind.Struct ? StructBox(type).Owner : type;
             return new BoundIs { Operand = input, TestType = descriptor, Type = _bool };
