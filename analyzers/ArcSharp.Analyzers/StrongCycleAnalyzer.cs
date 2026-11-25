@@ -47,6 +47,16 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
         var classes = new List<INamedTypeSymbol>();
         Collect(context.Compilation.Assembly.GlobalNamespace, classes);
 
+        // Event storage can use a framework delegate such as System.Action.
+        var eventDelegates = classes.SelectMany(type => type.GetMembers().OfType<IEventSymbol>())
+            .Where(UnsupportedConstructAnalyzer.IsSupportedEvent)
+            .Select(symbol => symbol.Type)
+            .OfType<INamedTypeSymbol>()
+            .Where(type => !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, context.Compilation.Assembly))
+            .Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default)
+            .ToList();
+        classes.AddRange(eventDelegates);
+
         var bySymbol = new Dictionary<INamedTypeSymbol, List<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
         var known = new HashSet<INamedTypeSymbol>(classes, SymbolEqualityComparer.Default);
         foreach (var c in classes)
@@ -130,8 +140,7 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
                 Type: INamedTypeSymbol type,
                 Target: IAnonymousFunctionOperation { Syntax: LambdaExpressionSyntax syntax } lambda
             }
-            || lambda.Symbol.IsAsync || syntax.Ancestors().Any(node => node is LambdaExpressionSyntax)
-            || !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, context.Compilation.Assembly))
+            || lambda.Symbol.IsAsync || syntax.Ancestors().Any(node => node is LambdaExpressionSyntax))
         {
             return;
         }
@@ -175,12 +184,14 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
     {
         foreach (var member in type.GetMembers())
         {
-            if (member is not IFieldSymbol field || field.IsImplicitlyDeclared)
+            if (member is IFieldSymbol { IsImplicitlyDeclared: false } field)
             {
-                continue;
+                AddTarget(field.Type, known, into, visitedStructs);
             }
-
-            AddTarget(field.Type, known, into, visitedStructs);
+            else if (member is IEventSymbol @event && UnsupportedConstructAnalyzer.IsSupportedEvent(@event))
+            {
+                AddTarget(@event.Type, known, into, visitedStructs);
+            }
         }
     }
 

@@ -70,6 +70,25 @@ public sealed class StrongCycleTests
     }
 
     [Fact]
+    public async Task Event_subscription_can_close_a_cycle()
+    {
+        var d = await SingleWarning(
+            "class Source { public event System.Action Changed; int value; void Subscribe() { Changed += () => value++; } }");
+
+        Ensure.Must(d.GetMessage()).Contain("Source");
+        Ensure.Must(d.GetMessage()).Contain("Action");
+    }
+
+    [Fact]
+    public async Task Event_with_a_noncapturing_handler_is_clean()
+    {
+        var diagnostics = await Analyze(
+            "class Source { public event System.Action Changed; void Subscribe() { Changed += () => { }; } }");
+
+        Ensure.Must<Diagnostic>(diagnostics).NotContain(d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
+    }
+
+    [Fact]
     public async Task Weak_reference_breaks_a_cycle()
     {
         var diagnostics = await Analyze(

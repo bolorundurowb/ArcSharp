@@ -4,8 +4,7 @@ ArcSharp supports delegate types, single and multicast. A delegate is an
 ordinary heap object under ARC, so it keeps its target alive and releases it
 when the delegate itself dies.
 
-A delegate can hold a method group or a [lambda](lambdas.md). Events are still
-rejected with `ARC3001`, and they are step 3 of M7.
+A delegate can hold a method group or a [lambda](lambdas.md). Field-like events on classes use the same delegate representation. See [Events](events.md).
 
 This program compiles and runs with the current compiler. It prints
 `second a`, then `ab`:
@@ -138,7 +137,7 @@ position has the same target and function.
 
 ## Limits
 
-- **Events are not supported.** They are step 3 of M7 and report `ARC3001`.
+- **Custom event accessors and virtual events** report `ARC3001`. See [Events](events.md) for supported declarations.
 - **Anonymous methods, nested lambdas and `async` lambdas** report `ARC3001`.
   See [Lambdas and captures](lambdas.md#limits).
 - **A delegate cannot bind to a library method**, such as `Console.WriteLine`.

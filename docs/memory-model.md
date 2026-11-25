@@ -505,12 +505,10 @@ It does not prove that a program is free of leaks when it is switched off, and
 a static `ARC3100` warning still cannot prove that a cycle will happen at run
 time. Allocation stacks are not part of the report yet.
 
-Future closures will preserve C# strong captures. Capturing an object alone
-does not form a cycle, but a strong path back to the closure can do so. The
-cycle decision is closed: `ARC3100` warns, the cycle stays legal, and an
-ignored warning leaks, including inside a library. `WeakReference<T>` is how a
-back-edge is broken. There is no tracing collector. Closures,
-events, and async wait until the lifetime pass exists.
+Closures preserve C# strong captures. A strong path back to the closure can
+form a cycle, for example when a publisher's event holds a handler that captures
+the publisher. `ARC3100` warns, the cycle stays legal, and an intact cycle leaks,
+including inside a library. `WeakReference<T>` can break a back-edge.
 
 Atomic counts alone will not make threading safe. Loading a shared pointer
 and then retaining it can race with its final release. Threading also requires
