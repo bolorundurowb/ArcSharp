@@ -1,7 +1,7 @@
 <#
   End-to-end verification on Windows x64: builds the compiler, compiles every
   sample to a native .exe via clang (which consumes the generated LLVM IR
-  directly), runs it, and checks both program output and ARC accounting
+  directly), runs it, and checks the exit code, program output and ARC accounting
   (the `[arc] alloc=.. dead=.. freed=.. live=..` line printed to stderr).
 
   Usage:
@@ -67,7 +67,8 @@ try {
             [string]   $Name,
             [string]   $Accounting,
             [string]   $Want,
-            [string[]] $Sources
+            [string[]] $Sources,
+            [int]      $ExpectedExitCode = 0
         )
         $srcs = @($Sources | ForEach-Object { Join-Path $root "samples/$_.cs" })
         $outBase = Join-Path $build "out/$Name"
@@ -76,7 +77,7 @@ try {
         $out = $run.Out
         $err = $run.Err
         $arc = ($err -split "`r?`n" | Where-Object { $_ -match '\[arc\] alloc=' }) -join ""
-        $ok = ($arc -ceq "[arc] $Accounting") -and ($out -match [regex]::Escape($Want)) -and ($err -notmatch '\[arc-check\]')
+        $ok = ($run.ExitCode -eq $ExpectedExitCode) -and ($arc -ceq "[arc] $Accounting") -and ($out -match [regex]::Escape($Want)) -and ($err -notmatch '\[arc-check\]')
         if ($ok) {
             Write-Host "PASS  $Name  ($arc; output ok)"
             $err -split "`r?`n" | Where-Object { $_ -match '^\[arc-stats\]' } | ForEach-Object {
@@ -85,7 +86,7 @@ try {
             $script:pass++
         }
         else {
-            Write-Host "FAIL  $Name  want='[arc] $Accounting' got='$arc' want_out='$Want' got_out='$out'"
+            Write-Host "FAIL  $Name  want_exit=$ExpectedExitCode got_exit=$($run.ExitCode) want='[arc] $Accounting' got='$arc' want_out='$Want' got_out='$out'"
             Write-Host $err
             $script:fail++
         }
@@ -260,7 +261,7 @@ try {
     Invoke-Sample inherit       "alloc=5 dead=5 freed=5 live=0" "sum=42"                     @("inherit")
     Invoke-Sample interface     "alloc=8 dead=8 freed=8 live=0" "circle=75"                  @("interface")
     Invoke-Sample refarray      "alloc=7 dead=7 freed=7 live=0" "refarray sum=5"             @("refarray")
-    Invoke-Sample statics       "alloc=3 dead=3 freed=3 live=0" "count=3"                    @("statics")
+    Invoke-Sample statics       "alloc=3 dead=3 freed=3 live=0" "count=3"                    @("statics") -ExpectedExitCode 3
     Invoke-Sample fib           "alloc=22 dead=22 freed=22 live=0" "fib(10)=55"                 @("fib")
     Invoke-Sample floats        "alloc=7 dead=7 freed=7 live=0" "area=19.6349"               @("floats")
     Invoke-Sample weak_null     "alloc=4 dead=4 freed=4 live=0" "PASS"                       @("weak_null")
@@ -301,6 +302,7 @@ try {
     Invoke-Sample finaliser_cycle "alloc=5 dead=3 freed=3 live=2" "cycle finalised 0" @("finaliser_cycle")                # a strong cycle never finalises
     Invoke-Sample exceptions_basic "alloc=16 dead=16 freed=16 live=0" "outer caught inner" @("exceptions_basic")          # try, catch, finally, throw
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
+    Invoke-Sample exceptions_abandoned_return "alloc=13 dead=13 freed=13 live=0" "abandoned returns PASS" @("exceptions_abandoned_return")
     Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
     Invoke-Sample variance "alloc=5 dead=5 freed=5 live=0" "variance PASS" @("variance")

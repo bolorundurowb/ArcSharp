@@ -8,8 +8,8 @@ See [Getting started](getting-started.md) for the prerequisites.
 The harness builds the compiler with the .NET 11 SDK selected by `global.json`,
 compiles each sample in `samples/` to LLVM IR, uses `clang` to lower the IR and
 link it with `runtime/arc_runtime.c` into a native Windows x64 `.exe`
-(`x86_64-pc-windows-msvc`), runs it, and checks both program output **and** ARC
-accounting. It runs every sample with [ARC checking](features/arc-checking-mode.md)
+(`x86_64-pc-windows-msvc`), runs it, and checks program output, exit status,
+and ARC accounting. It runs every sample with [ARC checking](features/arc-checking-mode.md)
 enabled. It also compiles the must-fail samples, checks the `ARC3100` cycle
 warnings, runs the analyser unit tests, and checks the reference assembly
 surface. The compiler can also emit the Linux
@@ -28,14 +28,12 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (86 samples, Windows x64, 24 November 2026)
+## Results (87 samples, Windows x64, 25 November 2026)
 
-`tools\verify.ps1` reported **164 passed, 0 failed** with the .NET 11.0.100 SDK:
-86 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 58 must-fail
+`tools\verify.ps1` reported **165 passed, 0 failed** with the .NET 11.0.100 SDK:
+87 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 58 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 7 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests (84 xUnit tests), and one
-reference-surface check. `live=0` means every object was reclaimed.
-2 `ARC3200` checks, one run of the analyser unit tests, and one
 reference-surface check. `live=0` means every object was reclaimed.
 `byref` allocates nothing because it uses only value types, and `numerics` allocates only the strings of one concatenation check.
 `cycle_strong`, `cycle_struct`, `finaliser_cycle` and `lambda_cycle` are the leaks the harness
@@ -46,9 +44,9 @@ asserts on purpose.
 | `inherit` | single inheritance, `virtual`/`override`, `: base(...)`, arrays, `for`, string concat | alloc=5 dead=5 freed=5 **live=0** | `25`, `sum=42` |
 | `interface` | interface declaration and dispatch through an interface-typed variable (itable) | alloc=8 dead=8 freed=8 **live=0** | `rect=12`, `circle=75` |
 | `refarray` | `T[]` of reference elements; per-element release on array teardown | alloc=7 dead=7 freed=7 **live=0** | `refarray sum=5` |
-| `statics` | static fields and static methods, `int Main()` exit code | alloc=3 dead=3 freed=3 **live=0** | `count=3` |
+| `statics` | static fields and static methods, `int Main()` returns exit code 3 | alloc=3 dead=3 freed=3 **live=0** | `count=3` |
 | `fib` | recursion, `long` return, `while`, `Console.Write` | alloc=22 dead=22 freed=22 **live=0** | `fib(10)=55` |
-| `floats` | `float`/`double` literals, arithmetic, comparisons, string concat | alloc=7 dead=7 freed=7 **live=0** | `area=19.6349` |
+| `floats` | `float`/`double` literals, arithmetic, comparisons including NaN, and string concatenation | alloc=7 dead=7 freed=7 **live=0** | `area=19.6349` |
 | `weak_null` | a `WeakReference<T>` whose target is destroyed, so `TryGetTarget` returns false | alloc=4 dead=4 freed=4 **live=0** | `weak-after-death is null: PASS` |
 | `cycle_weak` | parent/child graph broken with `WeakReference<T>` | alloc=4 dead=4 freed=4 **live=0** | `done (weak cycle)` |
 | `cycle_weakref` | the same cycle, also broken with `WeakReference<T>` | alloc=4 dead=4 freed=4 **live=0** | `done (WeakReference cycle)` |
@@ -92,6 +90,7 @@ asserts on purpose.
 | `finaliser_cycle` | a strong cycle never reaches zero, so its finalisers never run, and the leak is deliberate | alloc=5 dead=3 freed=3 **live=2** | `cycle finalised 0` |
 | `exceptions_basic` | `try`, `catch`, `finally`, a `throw` caught in the same method and one caught across a call, a runtime division by zero, and a catch clause that does not match | alloc=16 dead=16 freed=16 **live=0** | `outer caught inner` |
 | `exceptions_unwind` | cleanup on every unwind path: argument temporaries, locals across frames, a throwing constructor, a store that throws, a concatenation that throws, `return` through `finally`, nested `finally`, rethrow, a `finally` that replaces an exception, and a thrown stored exception | alloc=97 dead=97 freed=97 **live=0** | `exceptions unwind PASS` |
+| `exceptions_abandoned_return` | finalisation before the handler runs when a throwing `finally` cancels a reference or struct return | alloc=13 dead=13 freed=13 **live=0** | `abandoned returns PASS` |
 | `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, `throw null`, and a base-class catch | alloc=53 dead=53 freed=53 **live=0** | `exceptions runtime PASS` |
 | `variance` | Covariant and contravariant slots, generic defaults, and unmanaged, notnull, enum and nullable reference constraints | alloc=5 dead=5 freed=5 **live=0** | `variance PASS` |
 | `nullable_values` | Lifted operations, nullable conversions and coalescing, presence tests, and a nullable struct's owned reference | alloc=4 dead=4 freed=4 **live=0** | `nullable values PASS` |
