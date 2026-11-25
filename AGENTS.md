@@ -397,6 +397,8 @@ Follow `.editorconfig`. The points that matter most:
 - `var` when the type is apparent; keyword types (`int`, `string`) instead of
   BCL names.
 - Private fields are `_camelCase`. Interfaces start with `I`.
+- Name C# test methods in PascalCase and describe the scenario and expected
+  behaviour, for example `ReportsArc3100WhenEventHandlerCapturesPublisher`.
 - Nullable reference types are enabled. Do not suppress warnings with `!`
   unless the value is guaranteed non-null.
 - Target C# 12 and .NET 11. Do not use C# syntax newer than C# 12.
