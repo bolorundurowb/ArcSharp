@@ -188,7 +188,7 @@ public sealed class UnsupportedConstructTests
     [InlineData("interface C { event System.Action Changed; }", true)]
     [InlineData("struct C { public event System.Action Changed; }", true)]
     [InlineData("class C { public event System.Action Changed { add { } remove { } } }", true)]
-    public async Task Checks_event_declarations(string source, bool unsupported)
+    public async Task ReportsArc3001OnlyForUnsupportedEventDeclarations(string source, bool unsupported)
     {
         var diagnostics = await AnalyzerTestHost.AnalyzeAsync(new UnsupportedConstructAnalyzer(), source);
         Ensure.Must(diagnostics.Any(d => d.Id == DiagnosticCatalog.UnsupportedConstructId)).Be(unsupported);

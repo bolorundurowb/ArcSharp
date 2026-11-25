@@ -70,7 +70,7 @@ public sealed class StrongCycleTests
     }
 
     [Fact]
-    public async Task Event_subscription_can_close_a_cycle()
+    public async Task ReportsArc3100WhenEventHandlerCapturesPublisher()
     {
         var d = await SingleWarning(
             "class Source { public event System.Action Changed; int value; void Subscribe() { Changed += () => value++; } }");
@@ -80,7 +80,7 @@ public sealed class StrongCycleTests
     }
 
     [Fact]
-    public async Task Event_with_a_noncapturing_handler_is_clean()
+    public async Task DoesNotReportArc3100ForNonCapturingEventHandler()
     {
         var diagnostics = await Analyze(
             "class Source { public event System.Action Changed; void Subscribe() { Changed += () => { }; } }");
