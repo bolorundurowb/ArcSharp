@@ -323,10 +323,11 @@ enclosing method because bound nodes do not carry source positions.
 `tools/verify.ps1` is the only test gate. GitHub Actions runs it on Windows x64
 for pull requests targeting `master`. The harness builds the compiler and
 compiles every sample with clang. It runs each executable and
-checks two things:
+checks three things:
 
 1. The program's stdout contains an expected substring.
 2. The complete `[arc]` line matches the expected `alloc`, `dead`, `freed`, and `live` counts.
+3. The executable returns the expected exit code, which defaults to zero.
 
 It also compiles the must-fail samples and checks the expected diagnostic code,
 checks that `ARC3100` appears for the leaking cycle samples and not for the

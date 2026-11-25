@@ -63,6 +63,9 @@ Integer arithmetic wraps on overflow by default. In a `checked` context,
 arithmetic overflow and out-of-range numeric conversions raise `OverflowException`.
 An `unchecked` context restores the default arithmetic behaviour.
 
+For `float` and `double`, a comparison involving NaN returns true for `!=`
+and false for `==`, `<`, `<=`, `>`, and `>=`.
+
 Value types never live on the heap on their own and never take part in
 reference counting until boxed. Struct and nullable values are stored inline
 in the local, field, array element, or parameter that holds them. Enums use
