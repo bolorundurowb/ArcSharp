@@ -16,7 +16,15 @@ class Program
         float area = pi * r * r;
         Console.WriteLine(area);
 
-        Console.WriteLine("area=" + area + " pi=" + pi);
+        float singleZero = 0.0f;
+        double doubleZero = 0.0;
+        float singleNaN = singleZero / singleZero;
+        double doubleNaN = doubleZero / doubleZero;
+        if (singleNaN != singleZero && doubleNaN != doubleZero
+            && !(singleNaN == singleZero) && !(doubleNaN == doubleZero))
+        {
+            Console.WriteLine("area=" + area + " pi=" + pi);
+        }
 
         bool gt = area > 10.0f;
         Console.WriteLine(gt);

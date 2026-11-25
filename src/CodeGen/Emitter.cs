@@ -1197,24 +1197,25 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var mark = _stmtTemps.Count;
         var smark = _stmtStructTemps.Count;
 
-        // Cleanups run after the value is evaluated and before it is returned.
-        // One of them can throw into a handler in this same method, and the
-        // method then carries on. An owned value waiting in %retval would be
-        // overwritten and lost, so it waits in a hidden slot instead, which is
-        // released at func.exit whichever way control leaves.
-        string? held = null;
+        var type = _curMethod.ReturnType;
+        string? reference = null;
+        Action? abandonReturn = null;
         if (r.Value != null)
         {
             var v = EmitR(r.Value);
-            var type = _curMethod.ReturnType;
             if (type.Kind == TypeKind.Struct)
             {
                 CopyStruct(type, "%struct.result", v);
+                abandonReturn = () =>
+                {
+                    Do($"call void @{type.Name}__drop({type.LlvmType}* %struct.result)");
+                    Do($"store {type.LlvmType} zeroinitializer, {type.LlvmType}* %struct.result");
+                };
             }
-            else if (type.IsReferenceType && _regions.Exists(region => region.Cleanup != null))
+            else if (type.IsReferenceType)
             {
-                held = NewHiddenSlot();
-                Do($"store i8* {v}, i8** {held}");
+                reference = v;
+                abandonReturn = () => Do($"call void @arc_release(i8* {v})");
             }
             else
             {
@@ -1224,17 +1225,15 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         ReleaseTemps(mark);
         ReleaseStructTemps(smark);
-        EmitRegionCleanups(0);
+        EmitRegionCleanups(0, abandonReturn);
         if (_terminated)
         {
             return;
         }
 
-        if (held != null)
+        if (reference != null)
         {
-            var v = Inst($"load i8*, i8** {held}");
-            Do($"store i8* null, i8** {held}");
-            StoreRet(v, _curMethod.ReturnType);
+            StoreRet(reference, type);
         }
 
         Term("br label %func.exit");
@@ -1244,7 +1243,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     // mirroring how C# finally blocks run before control leaves. While one
     // cleanup is emitted, the regions it was inside are closed, so an exception
     // it throws goes to the enclosing handler.
-    private void EmitRegionCleanups(int depth)
+    private void EmitRegionCleanups(int depth, Action? abandonReturn = null)
     {
         for (var i = _regions.Count - 1; i >= depth && !_terminated; i--)
         {
@@ -1256,7 +1255,35 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
             var closed = _regions.GetRange(i, _regions.Count - i);
             _regions.RemoveRange(i, _regions.Count - i);
-            region.Cleanup();
+            if (abandonReturn == null)
+            {
+                region.Cleanup();
+            }
+            else
+            {
+                // Intercept only exceptions that escape this cleanup. Each
+                // cleanup has its own enclosing unwind target.
+                var failure = new Region { Label = L("return.abandoned") };
+                _regions.Add(failure);
+                region.Cleanup();
+                _regions.RemoveAt(_regions.Count - 1);
+                if (failure.Used)
+                {
+                    var resume = _terminated ? null : L("return.resume");
+                    if (resume != null)
+                    {
+                        Term($"br label %{resume}");
+                    }
+
+                    Lbl(failure.Label);
+                    abandonReturn();
+                    Term($"br label %{UnwindTarget()}");
+                    if (resume != null)
+                    {
+                        Lbl(resume);
+                    }
+                }
+            }
             _regions.AddRange(closed);
         }
     }
@@ -2556,7 +2583,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     private static string FloatCmpOp(TokenKind op) => op switch
     {
         TokenKind.EqualsEquals => "oeq",
-        TokenKind.BangEquals => "one",
+        TokenKind.BangEquals => "une",
         TokenKind.Less => "olt",
         TokenKind.LessEquals => "ole",
         TokenKind.Greater => "ogt",

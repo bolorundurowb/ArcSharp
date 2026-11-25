@@ -74,7 +74,7 @@ is owned at that point needs an owner.
 | The operand of a class cast | The cast's own unwind path, because the cast failing has no statement to belong to yet |
 | A local or parameter | `func.exit`, as always. The unwind block branches there |
 | A catch variable, and the exception a `catch` block is handling | Hidden slots that are released at `func.exit` |
-| A return value that has to wait for a `finally` block | A hidden slot, so a `finally` block that throws does not lose or leak it |
+| A return value that has to wait for a `finally` block | The emitted reference value or the struct result slot. If cleanup cancels the return, the unwind path releases the reference or drops and clears the struct before branching to the enclosing handler |
 
 The hidden slots are ordinary stack slots, created in the entry block and
 initialised to null. Releasing a null is allowed, so the same cleanup is right
@@ -87,8 +87,9 @@ emitted by one routine. It emits the cleanup code once for each way out of the
 protected code:
 
 1. Falling off the end of the block.
-2. A `return`. The return value waits in a hidden slot while the cleanups run,
-   innermost first.
+2. A `return`. The return value stays owned while the cleanups run, innermost
+   first. An exception that escapes a cleanup releases that value before
+   control reaches the enclosing handler.
 3. An exception. The exception is set aside while the cleanup runs, so a
    `finally` block does not see it as its own, and it is put back afterwards.
    If the cleanup throws, the new exception replaces the one that was set
@@ -199,6 +200,7 @@ with `live=0`.
 |---|---|
 | `try`, `catch`, `finally`, nested handlers, and the order of clauses | `exceptions_basic` |
 | Cleanup of temporaries, locals, constructor arguments, stores, concatenation, `return` through `finally`, rethrow, and a `finally` that replaces an exception | `exceptions_unwind` |
+| Finalisation of abandoned reference and struct return values before the handler runs, including repeated execution of the same return statement | `exceptions_abandoned_return` |
 | Each runtime check, caught | `exceptions_runtime` |
 | `Dispose()` while unwinding, and a `Dispose()` that throws | `exceptions_using` |
 | A throwing finaliser, alone and during an unwind | `exceptions_finaliser` |

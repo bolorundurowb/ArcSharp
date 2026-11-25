@@ -381,9 +381,10 @@ This section records only how the subset is lowered.
   branches to the nearest handler, or to `func.unwind` and then `func.exit` when
   there is none. `try` and `using` build regions on a stack in the emitter, and a
   `finally` block or a `Dispose()` call is emitted once for each way out of its
-  region. Hidden stack slots hold the exception a `catch` block is handling and
-  a return value that waits for a `finally` block. The exception classes are the
-  C# source in `corelib/Exceptions.cs`. See [Exceptions](features/exceptions.md).
+  region. Hidden stack slots hold the exception a `catch` block is handling.
+  If an exception escapes a cleanup during a return, the cleanup's unwind path
+  releases the pending return value. The exception classes are the C# source
+  in `corelib/Exceptions.cs`. See [Exceptions](features/exceptions.md).
 - **Runtime checks that raise exceptions:** `arc_null_check` before a member
   access, call, `.Length`, or element access on a possibly null reference,
   `arc_bounds_check`, `arc_cast_check`, `arc_div_check` for `/` and `%`, and
