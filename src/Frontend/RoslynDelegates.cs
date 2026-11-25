@@ -203,6 +203,19 @@ sealed partial class RoslynLowering
             return ErrorExpr();
         }
 
+        if (reference.Method.MethodKind == MethodKind.LocalFunction)
+        {
+            if (GetLocalFunction(reference.Method) is not { } function)
+            {
+                return ErrorExpr();
+            }
+
+            function.Method.Owner.LambdaDelegateTypes.Add(type);
+            var environment = LocalFunctionTarget(function, syntax);
+            return NewDelegateObject(type, function.Method,
+                environment ?? new BoundLiteral { Type = _object, LitKind = LiteralKind.Null }, syntax);
+        }
+
         var method = MapMethod(reference.Method, syntax.GetLocation());
         if (method == null)
         {
@@ -230,7 +243,7 @@ sealed partial class RoslynLowering
         }
         else
         {
-            target = reference.Instance == null ? new BoundThis { Type = _currentType } : LowerExpr(reference.Instance);
+            target = reference.Instance == null ? SourceReceiver() : LowerExpr(reference.Instance);
         }
 
         return NewDelegateObject(type, method, target, syntax);

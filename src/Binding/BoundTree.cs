@@ -70,6 +70,7 @@ public sealed class BoundFunctionAddress : BoundExpr
 
 public sealed class BoundNewObject : BoundExpr
 {
+    public bool CapturesArguments { get; init; }
     public string Site = "";
     public MethodSymbol? Ctor;
     public List<BoundExpr> Arguments = [];

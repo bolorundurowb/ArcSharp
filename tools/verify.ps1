@@ -270,6 +270,7 @@ try {
     Invoke-Sample weakref_get   "alloc=4 dead=4 freed=4 live=0" "PASS under ARC"             @("weakref_get")
     Invoke-Sample cycle_strong  "alloc=3 dead=1 freed=1 live=2" "done (strong cycle)"        @("cycle_strong")   # intentional leak without weak
     Invoke-Sample lambdas       "alloc=14 dead=14 freed=14 live=0" "lambdas PASS"           @("lambdas")
+    Invoke-Sample nested_closures "alloc=43 dead=43 freed=43 live=0" "nested closures ok" @("nested_closures")
     Invoke-Sample event_cycle "alloc=4 dead=1 freed=1 live=3" "event capture cycle" @("event_cycle")
     Invoke-Sample lambda_cycle  "alloc=4 dead=1 freed=1 live=3" "lambda capture cycle"     @("lambda_cycle")
     Invoke-Sample cycle_struct  "alloc=3 dead=1 freed=1 live=2" "done (struct cycle)"        @("cycle_struct")   # strong cycle through an inline struct field

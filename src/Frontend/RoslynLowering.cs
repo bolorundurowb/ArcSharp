@@ -195,6 +195,12 @@ sealed partial class RoslynLowering
                 return substituted;
             }
 
+            if (parameter.ContainingSymbol is IMethodSymbol { MethodKind: MethodKind.LocalFunction }
+                && _localTypeArguments.TryGetValue(LocalTypeParameterKey(parameter), out var localArgument))
+            {
+                return localArgument;
+            }
+
             Report(location, $"type parameter '{parameter.Name}' is not instantiated", "ARC2013");
             return _error;
         }

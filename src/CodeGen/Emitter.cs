@@ -293,7 +293,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
             else if (f.Type.IsReferenceType)
             {
-                parts.Add($"%ArcSlot {{ i64 {f.ByteOffset}, i32 1, i32 0, i8* null }}");
+                parts.Add($"%ArcSlot {{ i64 {f.ByteOffset}, i32 1, i32 {(t.IsLocalFunctionEnvironment ? 1 : 0)}, i8* null }}");
             }
         }
 

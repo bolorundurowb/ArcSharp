@@ -160,13 +160,15 @@ sealed partial class RoslynLowering
                 case SyntaxKind.AnonymousMethodExpression:
                     Reject(node, "anonymous methods are not supported");
                     break;
-                case SyntaxKind.LocalFunctionStatement:
-                    Reject(node, "local functions are not supported");
+                case SyntaxKind.LocalFunctionStatement when node is LocalFunctionStatementSyntax function
+                    && (function.ReturnType is RefTypeSyntax || function.Modifiers.Any(SyntaxKind.AsyncKeyword)
+                        || function.Modifiers.Any(SyntaxKind.ExternKeyword)):
+                    Reject(node, "async, extern and ref-returning local functions are not supported");
                     break;
                 case SyntaxKind.ArrowExpressionClause when node.Parent is not
                     (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
                         or ConversionOperatorDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
-                        or AccessorDeclarationSyntax):
+                        or AccessorDeclarationSyntax or LocalFunctionStatementSyntax):
                     Reject(node, "this expression-bodied member is not supported");
                     break;
                 case SyntaxKind.QueryExpression:

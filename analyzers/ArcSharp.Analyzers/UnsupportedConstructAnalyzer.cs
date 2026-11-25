@@ -172,7 +172,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    // A lambda must be synchronous, not nested in another lambda, and have a
+    // A lambda must be synchronous and have a
     // by-value signature. A delegate can bind to a method declared in the program.
     // A library method has no body to call, and a struct instance method would
     // need the struct boxed.
@@ -181,11 +181,11 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         var creation = (IDelegateCreationOperation)context.Operation;
         if (creation.Target is IAnonymousFunctionOperation { Syntax: LambdaExpressionSyntax } lambda)
         {
-            if (lambda.Symbol.IsAsync || lambda.Syntax.Ancestors().Any(node => node is LambdaExpressionSyntax)
+            if (lambda.Symbol.IsAsync
                 || creation.Type is not INamedTypeSymbol type || !HasByValueSignature(type))
             {
                 context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, creation.Syntax.GetLocation(),
-                    "only non-nested synchronous lambdas with by-value delegate signatures are supported"));
+                    "only synchronous lambdas with by-value delegate signatures are supported"));
             }
 
             return;
@@ -202,7 +202,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
                 creation.Syntax.GetLocation(), "a delegate cannot bind to a library method"));
         }
-        else if (!method.IsStatic && method.ContainingType.TypeKind == TypeKind.Struct)
+        else if (method.MethodKind != MethodKind.LocalFunction && !method.IsStatic && method.ContainingType.TypeKind == TypeKind.Struct)
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
                 creation.Syntax.GetLocation(),
@@ -294,11 +294,14 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.AttributeList => "attributes are not supported",
         SyntaxKind.EventDeclaration => "only non-virtual field-like events on classes are supported",
         SyntaxKind.RecordStructDeclaration => "record structs are not supported: declare a record class",
-        SyntaxKind.LocalFunctionStatement => "local functions are not supported",
+        SyntaxKind.LocalFunctionStatement when node is LocalFunctionStatementSyntax local
+            && ModifierMessage(local.Modifiers) is { } message => message,
+        SyntaxKind.LocalFunctionStatement when node is LocalFunctionStatementSyntax function
+            && function.ReturnType is RefTypeSyntax => "ref-returning local functions are not supported",
         SyntaxKind.ArrowExpressionClause when node.Parent is not
             (MethodDeclarationSyntax or ConstructorDeclarationSyntax or OperatorDeclarationSyntax
                 or ConversionOperatorDeclarationSyntax or PropertyDeclarationSyntax or IndexerDeclarationSyntax
-                or AccessorDeclarationSyntax) => "this expression-bodied member is not supported",
+                or AccessorDeclarationSyntax or LocalFunctionStatementSyntax) => "this expression-bodied member is not supported",
         SyntaxKind.CollectionExpression => "collection expressions ('[...]') are not supported",
         SyntaxKind.ImplicitArrayCreationExpression => "array initialisers are not supported: use 'new T[n]'",
         _ => null

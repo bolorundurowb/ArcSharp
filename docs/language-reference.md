@@ -372,7 +372,7 @@ error.
 | `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
 Not supported: tuple, extension-method and indexer patterns, list patterns on types other than arrays, `goto`,
-`lock`, `yield`, `unsafe`, `fixed`, and local functions.
+`lock`, `yield`, `unsafe`, and `fixed`.
 
 ### Exceptions
 
@@ -529,11 +529,15 @@ interpolated strings (`$"..."`).
 
 Expression and block lambdas can target any delegate type in the program,
 generic or not, and `System.Action`, `System.Func` and `System.Predicate<T>`.
-Their parameters and results are by value. A lambda can capture an initialised
-ordinary local, a by-value parameter, or a class receiver. Captured variables
-are shared and remain available after the method returns. A lambda creates a
-delegate, so it combines and compares like any other. See
-[Lambdas and captures](features/lambdas.md) for the current restrictions.
+Their parameters and results are by value. Lambdas can be nested and can
+capture ordinary locals, array `foreach` iteration variables, by-value
+parameters and class receivers. Captured variables are shared and remain
+available after the method returns.
+
+Synchronous local functions can call one another recursively or convert to
+delegates. They support generic specialisation and by-reference parameters.
+See [Nested closures and local functions](features/nested-closures.md) for
+the capture rules and current limits.
 
 ### Conversions
 
@@ -607,7 +611,7 @@ items that target marks as full and items it marks as limited.
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
 - Custom, virtual, abstract, override, extern, interface and struct events, and delegates bound to library methods or to struct instance methods. Record structs, generic records, and records with a struct or array member are also rejected.
-- Nested or async lambdas, lambdas with `ref` parameters or results, anonymous methods, local functions, `async`, `await`, and iterators.
+- Async lambdas, lambdas with `ref` parameters or results, anonymous methods, ref-returning local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
   counts are not atomic.

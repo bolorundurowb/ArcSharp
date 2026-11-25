@@ -41,7 +41,8 @@ public sealed class TypeSymbol
     public bool IsAbstract;
     // The delegate type that a lambda closure implements the call of, when this
     // type is such a closure.
-    public TypeSymbol? LambdaDelegate;
+    public HashSet<TypeSymbol> LambdaDelegateTypes { get; } = [];
+    public bool IsLocalFunctionEnvironment;
     public int DeclarationLine;
     public string SourceFile = "";
     public string? GenericDefinition;

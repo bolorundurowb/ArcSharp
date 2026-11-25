@@ -265,6 +265,27 @@ M5 on every row.
 The churn sampler saw both .NET pauses in all five runs. The median of the
 longest pause in each run was 18.049 ms, and the median total was 23.239 ms.
 ArcSharp has no collector, so it has no pause to report.
+## M7 medians (25 November 2026)
+
+The five-run comparison used Windows x64, .NET SDK 11.0.100 and clang
+22.1.8. All checksums matched and all ArcSharp runs reported `live=0`.
+
+| Workload | Runtime | Wall time | Peak working set | Peak private commit |
+|---|---|---:|---:|---:|
+| baseline | ArcSharp | 25.5 ms | 3.8 MiB | 0.6 MiB |
+| baseline | .NET | 62.5 ms | 23.1 MiB | 6.2 MiB |
+| retained | ArcSharp | 99.9 ms | 25.1 MiB | 23.4 MiB |
+| retained | .NET | 89.8 ms | 35.4 MiB | 18.6 MiB |
+| churn | ArcSharp | 175.3 ms | 35.8 MiB | 34.7 MiB |
+| churn | .NET | 120.5 ms | 61.1 MiB | 44.1 MiB |
+
+ARC traffic matched M6. Retained recorded 3,200,351 retains and 3,600,456
+releases per run. Churn recorded 9,200,856 retains and 10,601,216 releases.
+The workloads do not exercise nested closures or local functions.
+
+The .NET churn sampler observed two pauses in each run. Across the five runs,
+the median longest pause was 18.447 ms and the median total was 23.716 ms.
+
 ## What the original numbers support
 
 **The empty process is smaller.** The ArcSharp baseline commits 0.6 MiB and

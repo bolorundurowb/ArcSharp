@@ -33,13 +33,13 @@ class Program
 ## Captures
 
 Roslyn identifies each captured variable before the enclosing body is lowered.
-An initialised ordinary local or a by-value parameter gets an ARC-managed cell.
+An ordinary local, an array `foreach` iteration variable, or a by-value parameter gets an ARC-managed cell.
 The enclosing method and the lambda both read and write that cell, so a
 mutation is visible to both, including after the method returns. A class
 receiver that the lambda uses is held directly by the closure.
 
-A captured local without an initialiser, and a `ref` or `out` parameter, cannot
-be captured. Those lambdas are rejected with `ARC3001`.
+Nested lambdas and local functions can share the same cells across multiple
+frames. See [Nested closures and local functions](nested-closures.md).
 
 ## Representation
 
@@ -62,21 +62,18 @@ closure that it creates, so a delegate stored in a field of the object it
 captures forms a cycle that `ARC3100` reports. The program still compiles, and
 the cycle leaks as the warning says. Break it with a `WeakReference<T>`.
 
-A method-group delegate has no such edge. See [Delegates](delegates.md#limits).
+Delegates created from local functions have the same capture edges.
 
 ## Limits
 
 - Anonymous methods (`delegate { ... }`) are rejected with `ARC3001`.
-- A lambda inside another lambda is rejected with `ARC3001`.
 - An `async` lambda is rejected with `ARC3001`.
 - A lambda whose delegate has a `ref` or `out` parameter, or a `ref` result, is
   rejected with `ARC3001`.
 - A lambda in a struct method cannot capture `this`, and a lambda in a finaliser
   cannot capture the object being finalised. Both are rejected with `ARC3001`.
-- Local functions are pending in M7.
-- The lifetime pass does not yet classify captures. Every capture is an ordinary
-  strong reference, so a closure that outlives its method keeps its captures
-  alive until it dies.
+- Captures keep their own ARC ownership when the lifetime pass cannot prove
+  they stay within the frame.
 
 ## Verification
 

@@ -34,28 +34,35 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
         context.EnableConcurrentExecution();
         context.RegisterCompilationStartAction(start =>
         {
-            var captures = new ConcurrentBag<(INamedTypeSymbol Delegate, ITypeSymbol Capture)>();
-            start.RegisterOperationAction(operation => CollectCaptures(operation, captures), OperationKind.DelegateCreation);
-            start.RegisterCompilationEndAction(end => Analyze(end, captures));
+            var creations = new ConcurrentBag<IDelegateCreationOperation>();
+            var functions = new ConcurrentDictionary<IMethodSymbol, IBlockOperation>(SymbolEqualityComparer.Default);
+            start.RegisterOperationAction(operation =>
+                creations.Add((IDelegateCreationOperation)operation.Operation), OperationKind.DelegateCreation);
+            start.RegisterOperationAction(operation =>
+            {
+                if (operation.Operation is ILocalFunctionOperation { Body: { } body } function)
+                {
+                    functions.TryAdd(function.Symbol, body);
+                }
+            }, OperationKind.LocalFunction);
+            start.RegisterCompilationEndAction(end =>
+                Analyze(end, creations.SelectMany(creation => CollectCaptures(creation, functions)).ToList()));
         });
     }
 
     private static void Analyze(
         CompilationAnalysisContext context,
-        ConcurrentBag<(INamedTypeSymbol Delegate, ITypeSymbol Capture)> captures)
+        List<(INamedTypeSymbol Delegate, ITypeSymbol Capture)> captures)
     {
         var classes = new List<INamedTypeSymbol>();
         Collect(context.Compilation.Assembly.GlobalNamespace, classes);
 
-        // Event storage can use a framework delegate such as System.Action.
-        var eventDelegates = classes.SelectMany(type => type.GetMembers().OfType<IEventSymbol>())
-            .Where(UnsupportedConstructAnalyzer.IsSupportedEvent)
-            .Select(symbol => symbol.Type)
-            .OfType<INamedTypeSymbol>()
+        // Framework delegates can be stored in fields and events.
+        var frameworkDelegates = captures.Select(capture => capture.Delegate)
             .Where(type => !SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, context.Compilation.Assembly))
             .Distinct<INamedTypeSymbol>(SymbolEqualityComparer.Default)
             .ToList();
-        classes.AddRange(eventDelegates);
+        classes.AddRange(frameworkDelegates);
 
         var bySymbol = new Dictionary<INamedTypeSymbol, List<INamedTypeSymbol>>(SymbolEqualityComparer.Default);
         var known = new HashSet<INamedTypeSymbol>(classes, SymbolEqualityComparer.Default);
@@ -131,35 +138,77 @@ public sealed class StrongCycleAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static void CollectCaptures(
-        OperationAnalysisContext context,
-        ConcurrentBag<(INamedTypeSymbol Delegate, ITypeSymbol Capture)> captures)
+    private static IEnumerable<(INamedTypeSymbol Delegate, ITypeSymbol Capture)> CollectCaptures(
+        IDelegateCreationOperation creation, ConcurrentDictionary<IMethodSymbol, IBlockOperation> functions)
     {
-        if (context.Operation is not IDelegateCreationOperation
-            {
-                Type: INamedTypeSymbol type,
-                Target: IAnonymousFunctionOperation { Syntax: LambdaExpressionSyntax syntax } lambda
-            }
-            || lambda.Symbol.IsAsync || syntax.Ancestors().Any(node => node is LambdaExpressionSyntax))
+        if (creation.Type is not INamedTypeSymbol { TypeKind: TypeKind.Delegate } type)
         {
-            return;
+            yield break;
         }
 
-        foreach (var operation in lambda.Body.DescendantsAndSelf())
+        var (method, body) = creation.Target switch
+        {
+            IAnonymousFunctionOperation { Syntax: LambdaExpressionSyntax, Symbol.IsAsync: false } lambda =>
+                (lambda.Symbol, lambda.Body),
+            IMethodReferenceOperation { Method.MethodKind: MethodKind.LocalFunction } reference =>
+                (reference.Method.OriginalDefinition, GetBody(reference.Method)),
+            _ => (null, null)
+        };
+        if (method == null || body == null)
+        {
+            yield break;
+        }
+
+        var scopes = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        for (var scope = method.ContainingSymbol as IMethodSymbol; scope != null;
+             scope = scope.ContainingSymbol as IMethodSymbol)
+        {
+            scopes.Add(scope);
+        }
+
+        foreach (var operation in CaptureOperations(body))
         {
             var capturedType = operation switch
             {
                 ILocalReferenceOperation local when !local.Local.IsConst
-                    && !SymbolEqualityComparer.Default.Equals(local.Local.ContainingSymbol, lambda.Symbol) => local.Type,
-                IParameterReferenceOperation parameter
-                    when !SymbolEqualityComparer.Default.Equals(parameter.Parameter.ContainingSymbol, lambda.Symbol) => parameter.Type,
+                    && scopes.Contains(local.Local.ContainingSymbol) => local.Type,
+                IParameterReferenceOperation parameter when scopes.Contains(parameter.Parameter.ContainingSymbol) =>
+                    parameter.Type,
                 IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance } =>
-                    lambda.Symbol.ContainingType,
+                    method.ContainingType,
                 _ => null
             };
             if (capturedType != null)
             {
-                captures.Add((type, capturedType));
+                yield return (type, capturedType);
+            }
+        }
+
+        IBlockOperation? GetBody(IMethodSymbol symbol) =>
+            functions.TryGetValue(symbol.OriginalDefinition, out var localBody) ? localBody : null;
+
+        IEnumerable<IOperation> CaptureOperations(IBlockOperation initial)
+        {
+            var pending = new Stack<IBlockOperation>();
+            var seen = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+            pending.Push(initial);
+            while (pending.Count != 0)
+            {
+                foreach (var operation in pending.Pop().DescendantsAndSelf())
+                {
+                    yield return operation;
+                    var target = operation switch
+                    {
+                        IInvocationOperation invocation => invocation.TargetMethod,
+                        IMethodReferenceOperation reference => reference.Method,
+                        _ => null
+                    };
+                    if (target?.MethodKind == MethodKind.LocalFunction && seen.Add(target.OriginalDefinition)
+                        && GetBody(target) is { } dependency)
+                    {
+                        pending.Push(dependency);
+                    }
+                }
             }
         }
     }

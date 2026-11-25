@@ -80,6 +80,41 @@ public sealed class StrongCycleTests
     }
 
     [Fact]
+    public async Task ReportsArc3100WhenLocalFunctionCallsAnotherThatCapturesPublisher()
+    {
+        await SingleWarning("""
+            class Source
+            {
+                public event System.Action Changed;
+                int value;
+                void Subscribe()
+                {
+                    void Tick() => value++;
+                    void Handler() => Tick();
+                    Changed += Handler;
+                }
+            }
+            """);
+    }
+
+    [Fact]
+    public async Task ReportsArc3100WhenNestedLambdaCapturesPublisher()
+    {
+        await SingleWarning("""
+            class Source
+            {
+                System.Action handler;
+                int value;
+                void Subscribe()
+                {
+                    System.Func<System.Action> factory = () => () => value++;
+                    handler = factory();
+                }
+            }
+            """);
+    }
+
+    [Fact]
     public async Task DoesNotReportArc3100ForNonCapturingEventHandler()
     {
         var diagnostics = await Analyze(

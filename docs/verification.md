@@ -53,6 +53,7 @@ asserts on purpose.
 | `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 freed=4 **live=0** | `false (PASS under ARC)` |
 | `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 freed=1 **live=2** | `done (strong cycle)` |
 | `lambdas` | Shared local and parameter capture, escaping receiver, static lambda and catchable null invocation | alloc=14 dead=14 freed=14 **live=0** | `lambdas PASS` |
+| `nested_closures` | Escaping nested lambdas, fresh iteration cells, mutual recursion, generic specialisation, `ref` arguments and local-function delegate equality and removal | alloc=43 dead=43 freed=43 **live=0** | `nested closures ok` |
 | `event_cycle` | An event handler captures its publisher. `ARC3100` warns about the intentional leak | alloc=4 dead=1 freed=1 **live=3** | `event capture cycle` |
 | `lambda_cycle` | A delegate field holds a lambda that captures the same receiver. `ARC3100` warns about the intentional leak | alloc=4 dead=1 freed=1 **live=3** | `lambda capture cycle` |
 | `cycle_struct` | a **strong** cycle that runs through an inline struct field | alloc=3 dead=1 freed=1 **live=2** | `done (struct cycle)` |

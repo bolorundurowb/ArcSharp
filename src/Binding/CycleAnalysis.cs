@@ -36,7 +36,7 @@ public static class CycleAnalysis
             // run through the closures that the delegate creates. A method group has
             // no closure and therefore no outgoing edge.
             edges[c] = c.IsDelegate
-                ? classes.Where(candidate => candidate.LambdaDelegate == c).ToList()
+                ? classes.Where(candidate => candidate.LambdaDelegateTypes.Contains(c)).ToList()
                 : StrongTargets(c, names);
         }
 
