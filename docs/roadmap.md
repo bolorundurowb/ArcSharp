@@ -138,7 +138,7 @@ results are in [Verification](verification.md).
   handles very deep graphs, and rejected resurrection. See
   [Deterministic finalisers](features/finalisers.md).
 - The M6 ordinary C# surface. Statements, operators, member forms, enums, struct storage and calls, patterns, generics with virtual and static abstract members, record classes, object initialisers, nullable values with boxing and updates, and `decimal`. See [Records](features/records.md), [Object initialisers](features/object-initialisers.md), [Generic dispatch](features/generic-dispatch.md), [Nullable values](features/nullable-values.md) and [Decimal](features/decimal.md).
-- M7, first chunk: delegates. Single and multicast delegates over method groups, with `+`, `-`, `==`, `?.Invoke` and the `Action`, `Func` and `Predicate<T>` types. Lambdas, closures, local functions and events are the remaining M7 chunks. See [Delegates](features/delegates.md).
+- M7 so far: single and multicast delegates over method groups and lambdas, with shared capture cells, `+`, `-`, `==`, `?.Invoke` and the `Action`, `Func` and `Predicate<T>` types. `ARC3100` covers a delegate field whose lambda captures its owner. See [Delegates](features/delegates.md) and [Lambdas and captures](features/lambdas.md).
 - The M5 exceptions. `try`, `catch`, `finally`, and `throw`, a small `System`
   exception library, `using` disposal while unwinding, runtime checks that
   raise catchable exceptions, an unhandled-exception exit with code 70, and a
@@ -448,8 +448,10 @@ ordinary ARC objects.
 
 **Status.** Steps 1 and 2 are done. Single and multicast delegates over method
 groups and lambdas are described in [Delegates](features/delegates.md) and
-[Lambdas and captures](features/lambdas.md). Steps 3, 4 and 5 remain, and the
-milestone is not finished, so the benchmark comparison is not re-run yet.
+[Lambdas and captures](features/lambdas.md). Step 5 covers the delegate-field
+capture cycle exercised by `lambda_cycle`. Events, nested lambdas, local
+functions and capture escape analysis remain. The benchmark comparison is
+due when M7 is complete.
 
 **Steps.**
 
@@ -461,9 +463,10 @@ milestone is not finished, so the benchmark comparison is not re-run yet.
 3. Add events as delegate fields with `add` and `remove` accessors.
 4. Teach the lifetime pass that a capture is an escape unless it is proved not
    to outlive the frame.
-5. Extend `ARC3100` to the cycles a capture makes visible, such as a handler
-   that captures `this` and is stored in a field of the same object. The
-   program stays legal.
+5. Extend `ARC3100` to cycles introduced by captures. The compiler and
+   analyser cover a lambda stored in a delegate field of its captured owner.
+   Apply the capture-cycle check to event subscriptions when events land.
+   The program stays legal.
 
 **Done when.** Samples cover capture, multicast invocation, event subscription
 and removal, and a capture cycle that warns and leaks as documented.
