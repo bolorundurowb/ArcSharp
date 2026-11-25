@@ -460,6 +460,7 @@ Two lists. The first is inherent in the memory model. The second is inside the
   queue.   `GC.Collect` and `GC.WaitForPendingFinalizers` are no-ops that report info
   `ARC3200`. `GC.ReRegisterForFinalize` is rejected. User finalisers are
   accepted. See [Deterministic finalisers](features/finalisers.md).
+- **Field-like events.** Roslyn event symbols lower to strong backing fields and synthesised subscription and removal methods. The methods use the same delegate combine and remove operations as delegate fields. Access to an event as a value inside its declaring class uses the backing field directly. See [Events](features/events.md).
 - **Lambda captures.** Shared capture cells and lambda closures are ordinary ARC objects. A lambda creates a closure that owns its capture cells and any captured receiver, and a delegate that holds the closure as its target. The cycle graph follows a delegate to the closures it creates. See [Lambdas and captures](features/lambdas.md) and [Delegates](features/delegates.md).
 - **`async`/`await`.** In the [compatibility target](roadmap.md#compatibility-target). A suspended local is an ARC-managed object, and strong captures stay strong, the same as a lambda capture. It is not built yet.
 
@@ -524,7 +525,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Verification baseline                                 | Exact ARC accounting and destruction-point checks on Windows x64 |
 | Generics | Monomorphisation, inference, virtual and interface generic methods, static abstract members, variance and constraints; remaining limits in Section 7 |
 | Record classes, `with`, deconstruction, object initialisers | Implemented for classes. See [Record classes](features/records.md) |
-| Delegates over method groups and lambdas, multicast, `?.Invoke` | Implemented. See [Delegates](features/delegates.md). Events are not supported |
+| Delegates over method groups and lambdas, multicast, `?.Invoke` | Implemented. See [Delegates](features/delegates.md). See [Events](features/events.md) for field-like events on classes |
 | Nullable values | Implemented, including lifted updates, user-defined lifted operators and nullable struct boxing |
 | `decimal` | Implemented as a synthesised struct with `arc_dec_*` runtime support. See [Decimal](features/decimal.md) |
 | Leak report (`ARC_LEAKS=1`) | Implemented: survivor list, static roots, unreachable cycles |

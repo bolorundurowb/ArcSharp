@@ -504,8 +504,8 @@ sealed partial class RoslynLowering
                     type.HasExplicitStaticConstructor = !method.IsImplicitlyDeclared;
                     Queue(initialiser, method);
                     break;
-                case IEventSymbol:
-                    Report(member.Locations.FirstOrDefault(), "events are not supported yet", DiagnosticCatalog.UnsupportedConstructId);
+                case IEventSymbol @event:
+                    CreateEvent(type, @event, declaredFields, declaredMethods);
                     break;
             }
         }

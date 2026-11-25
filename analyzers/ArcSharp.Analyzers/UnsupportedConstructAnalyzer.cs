@@ -41,6 +41,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeObjectCreation, SyntaxKind.ObjectCreationExpression);
         context.RegisterSyntaxNodeAction(AnalyzeInvocation, SyntaxKind.InvocationExpression);
         context.RegisterOperationAction(AnalyzeDelegateCreation, OperationKind.DelegateCreation);
+        context.RegisterSyntaxNodeAction(AnalyzeEventField, SyntaxKind.EventFieldDeclaration);
         context.RegisterOperationAction(AnalyzeConditionalAccess, OperationKind.ConditionalAccess);
     }
 
@@ -77,7 +78,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.GlobalStatement,
         SyntaxKind.AttributeList,
         SyntaxKind.EventDeclaration,
-        SyntaxKind.EventFieldDeclaration,
         SyntaxKind.RecordStructDeclaration,
         SyntaxKind.LocalFunctionStatement,
         SyntaxKind.ArrowExpressionClause,
@@ -103,6 +103,24 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.OperatorDeclaration,
         SyntaxKind.ConversionOperatorDeclaration
     };
+
+    internal static bool IsSupportedEvent(IEventSymbol symbol) =>
+        symbol is { IsAbstract: false, IsVirtual: false, IsOverride: false, AddMethod: { IsExtern: false }, RemoveMethod: { IsExtern: false } }
+        && symbol.ContainingType.TypeKind == TypeKind.Class
+        && symbol.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax()
+            is VariableDeclaratorSyntax { Parent.Parent: EventFieldDeclarationSyntax };
+
+    private static void AnalyzeEventField(SyntaxNodeAnalysisContext context)
+    {
+        var declaration = (EventFieldDeclarationSyntax)context.Node;
+        if (declaration.Declaration.Variables.Any(variable =>
+            context.SemanticModel.GetDeclaredSymbol(variable, context.CancellationToken) is IEventSymbol symbol
+            && !IsSupportedEvent(symbol)))
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, declaration.GetLocation(),
+                "only non-virtual field-like events on classes are supported"));
+        }
+    }
 
     private static void AnalyzeNode(SyntaxNodeAnalysisContext context)
     {
@@ -274,7 +292,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.TupleExpression or SyntaxKind.TupleType => "tuples are not supported",
         SyntaxKind.GlobalStatement => "top-level statements are not supported: declare a class with 'static void Main()'",
         SyntaxKind.AttributeList => "attributes are not supported",
-        SyntaxKind.EventDeclaration or SyntaxKind.EventFieldDeclaration => "events are not supported",
+        SyntaxKind.EventDeclaration => "only non-virtual field-like events on classes are supported",
         SyntaxKind.RecordStructDeclaration => "record structs are not supported: declare a record class",
         SyntaxKind.LocalFunctionStatement => "local functions are not supported",
         SyntaxKind.ArrowExpressionClause when node.Parent is not

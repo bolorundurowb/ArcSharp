@@ -94,6 +94,7 @@ reclaimed.
 - `try`, `catch`, `finally`, and `throw`, with a small `System` exception
   library. Every unwind path releases the references it owns, and the runtime
   checks (null reference, index, cast, division) raise catchable exceptions.
+- Non-virtual field-like events on classes, including static events. See [Events](docs/features/events.md).
 - Synchronous lambdas with captured variables, and delegates over method groups and lambdas, single and multicast, with `+`, `-`, `==`, `?.Invoke`, and `System.Action`, `Func` and `Predicate<T>`.
 - Cycle breaking with the standard `System.WeakReference<T>`.
 - Finalisers (`~T()`) that run at the last strong release, derived class
@@ -105,7 +106,7 @@ reclaimed.
 - A Roslyn analyser in `analyzers/ArcSharp.Analyzers` that reports the same
   `ARC3001`, `ARC3100` and `ARC3200` rules inside an ordinary `dotnet build`.
 
-Exception filters, events, and the .NET class
+Exception filters, custom event accessors, and the .NET class
 library are not supported yet. The [Language reference](docs/language-reference.md)
 has the full list, the differences from .NET, and the known issues. The
 [compatibility target](docs/roadmap.md#compatibility-target) is the language

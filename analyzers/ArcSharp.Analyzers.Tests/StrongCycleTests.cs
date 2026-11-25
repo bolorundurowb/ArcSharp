@@ -70,6 +70,25 @@ public sealed class StrongCycleTests
     }
 
     [Fact]
+    public async Task ReportsArc3100WhenEventHandlerCapturesPublisher()
+    {
+        var d = await SingleWarning(
+            "class Source { public event System.Action Changed; int value; void Subscribe() { Changed += () => value++; } }");
+
+        Ensure.Must(d.GetMessage()).Contain("Source");
+        Ensure.Must(d.GetMessage()).Contain("Action");
+    }
+
+    [Fact]
+    public async Task DoesNotReportArc3100ForNonCapturingEventHandler()
+    {
+        var diagnostics = await Analyze(
+            "class Source { public event System.Action Changed; void Subscribe() { Changed += () => { }; } }");
+
+        Ensure.Must<Diagnostic>(diagnostics).NotContain(d => d.Id == DiagnosticCatalog.PossibleStrongCycleId);
+    }
+
+    [Fact]
     public async Task Weak_reference_breaks_a_cycle()
     {
         var diagnostics = await Analyze(

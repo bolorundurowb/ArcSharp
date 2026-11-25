@@ -181,13 +181,26 @@ sealed partial class RoslynLowering
                 case SyntaxKind.RecordDeclaration when node is RecordDeclarationSyntax { TypeParameterList: not null }:
                     Reject(node, "generic records are not supported");
                     break;
-                case SyntaxKind.EventDeclaration:
-                case SyntaxKind.EventFieldDeclaration:
-                    Reject(node, "events are not supported");
-                    break;
             }
 
             base.Visit(node);
+        }
+
+        public override void VisitEventDeclaration(EventDeclarationSyntax node)
+        {
+            Reject(node, UnsupportedEvent);
+            base.VisitEventDeclaration(node);
+        }
+
+        public override void VisitEventFieldDeclaration(EventFieldDeclarationSyntax node)
+        {
+            if (node.Declaration.Variables.Any(variable =>
+                _model.GetDeclaredSymbol(variable) is IEventSymbol symbol && !HasEventStorage(symbol)))
+            {
+                Reject(node, UnsupportedEvent);
+            }
+
+            base.VisitEventFieldDeclaration(node);
         }
 
         public override void VisitMethodDeclaration(MethodDeclarationSyntax node)

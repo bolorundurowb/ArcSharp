@@ -183,6 +183,18 @@ public sealed class UnsupportedConstructTests
     };
 
     [Theory]
+    [InlineData("class C { public event System.Action Changed; }", false)]
+    [InlineData("class C { public virtual event System.Action Changed; }", true)]
+    [InlineData("interface C { event System.Action Changed; }", true)]
+    [InlineData("struct C { public event System.Action Changed; }", true)]
+    [InlineData("class C { public event System.Action Changed { add { } remove { } } }", true)]
+    public async Task ReportsArc3001OnlyForUnsupportedEventDeclarations(string source, bool unsupported)
+    {
+        var diagnostics = await AnalyzerTestHost.AnalyzeAsync(new UnsupportedConstructAnalyzer(), source);
+        Ensure.Must(diagnostics.Any(d => d.Id == DiagnosticCatalog.UnsupportedConstructId)).Be(unsupported);
+    }
+
+    [Theory]
     [MemberData(nameof(UnsupportedSources))]
     public async Task Reports_arc3001_for_unsupported_construct(string name, string source)
     {

@@ -28,15 +28,15 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (87 samples, Windows x64, 25 November 2026)
+## Results (89 samples, Windows x64, 25 November 2026)
 
-`tools\verify.ps1` reported **165 passed, 0 failed** with the .NET 11.0.100 SDK:
-87 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 58 must-fail
-diagnostics, 2 run-time abort checks, 3 command-line checks, 7 cycle checks,
-2 `ARC3200` checks, one run of the analyser unit tests (84 xUnit tests), and one
+`tools\verify.ps1` reported **170 passed, 0 failed** with the .NET 11.0.100 SDK:
+89 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 59 must-fail
+diagnostics, 2 run-time abort checks, 3 command-line checks, 9 cycle checks,
+2 `ARC3200` checks, one run of the analyser unit tests (91 xUnit tests), and one
 reference-surface check. `live=0` means every object was reclaimed.
 `byref` allocates nothing because it uses only value types, and `numerics` allocates only the strings of one concatenation check.
-`cycle_strong`, `cycle_struct`, `finaliser_cycle` and `lambda_cycle` are the leaks the harness
+`cycle_strong`, `cycle_struct`, `finaliser_cycle`, `lambda_cycle` and `event_cycle` are the leaks the harness
 asserts on purpose.
 
 | Sample | Exercises | ARC accounting | Output |
@@ -53,6 +53,7 @@ asserts on purpose.
 | `weakref_get` | `WeakReference<T>.TryGetTarget(out var)` after the target died | alloc=4 dead=4 freed=4 **live=0** | `false (PASS under ARC)` |
 | `cycle_strong` | the same graph with a **strong** back-reference | alloc=3 dead=1 freed=1 **live=2** | `done (strong cycle)` |
 | `lambdas` | Shared local and parameter capture, escaping receiver, static lambda and catchable null invocation | alloc=14 dead=14 freed=14 **live=0** | `lambdas PASS` |
+| `event_cycle` | An event handler captures its publisher. `ARC3100` warns about the intentional leak | alloc=4 dead=1 freed=1 **live=3** | `event capture cycle` |
 | `lambda_cycle` | A delegate field holds a lambda that captures the same receiver. `ARC3100` warns about the intentional leak | alloc=4 dead=1 freed=1 **live=3** | `lambda capture cycle` |
 | `cycle_struct` | a **strong** cycle that runs through an inline struct field | alloc=3 dead=1 freed=1 **live=2** | `done (struct cycle)` |
 | `multifile` | `mf_main.cs` and `mf_lib.cs` compiled together; `Greeter` is declared in one file and used from the other | alloc=4 dead=4 freed=4 **live=0** | `twice=42` |
@@ -111,6 +112,7 @@ asserts on purpose.
 | `decimals` | `decimal` scale and rounding, remainder, limits and overflow, comparisons, conversions to and from integers, `double` and `float`, updates, class and struct members, arrays and `decimal?` | alloc=292 dead=292 freed=292 **live=0** | `decimals PASS` |
 | `object_initialisers` | Member initialisers, nested initialisers and evaluation order | alloc=24 dead=24 freed=24 **live=0** | `object initialisers PASS` |
 | `records` | Record classes: positional members, equality, hashing, formatting, `with`, deconstruction and inheritance | alloc=197 dead=197 freed=197 **live=0** | `records PASS` |
+| `events` | Event initialisation, subscription, ordered invocation, removal, clearing and static events. A handler factory clears the event before subscription reads the backing field | alloc=9 dead=9 freed=9 **live=0** | `events PASS` |
 | `delegates_basic` | Delegate declarations, method groups and `new D(...)`, static and instance targets | alloc=17 dead=17 freed=17 **live=0** | `delegates basic PASS` |
 | `delegates_multicast` | Combine and remove (the last occurrence, an absent handler, and removing every handler), equality, the value of the last handler, `?.Invoke`, and a null call that raises `NullReferenceException` | alloc=127 dead=127 freed=127 **live=0** | `delegates multicast PASS` |
 | `delegates_targets` | Virtual and interface targets, `ref` and `out` parameters, struct arguments, generic methods taking `Func`, and `Action` | alloc=72 dead=72 freed=72 **live=0** | `delegates targets PASS` |
@@ -261,7 +263,7 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 55 programs that must fail (`samples/negative/`) and
+The harness also compiles 59 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, including ref
 locals, ref returns, shift operators, exception filters, throw expressions and
 `GC.ReRegisterForFinalize`, `CS0029` for throwing a value that is not an
@@ -274,7 +276,7 @@ unsatisfied constraints report Roslyn `CS` codes. The harness also
 checks that `-o` with no value, and a missing `clang` or `llc`, are reported
 as errors and exit with code 2. It checks
 `ARC3100` in both directions: `cycle_strong`, `cycle_struct` and
-`finaliser_cycle` warn, while `cycle_weak` and `cycle_weakref` stay clean.
+`finaliser_cycle` warn, and `event_cycle` warns when a handler captures its publisher. The `events`, `cycle_weak` and `cycle_weakref` samples stay clean.
 
 A finaliser that hides a resurrection behind a method call cannot be seen by
 the compiler. `finaliser_resurrect_call` compiles, and the harness checks that

@@ -613,6 +613,8 @@ sealed partial class RoslynLowering
         IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ImplicitReceiver } => _initialiserTargets.Peek(),
         IInstanceReferenceOperation => SourceReceiver(),
         IFieldReferenceOperation field => LowerField(field),
+        IEventReferenceOperation @event => LowerEventReference(@event),
+        IEventAssignmentOperation assignment => LowerEventAssignment(assignment),
         IPropertyReferenceOperation property => LowerProperty(property),
         IInvocationOperation invocation => LowerInvocation(invocation),
         IObjectCreationOperation creation => LowerCreation(creation),
@@ -1563,7 +1565,7 @@ sealed partial class RoslynLowering
     private BoundExpr? LowerUpdateTarget(IOperation operation)
     {
         if (operation is ILocalReferenceOperation or IParameterReferenceOperation
-            or IFieldReferenceOperation or IArrayElementReferenceOperation)
+            or IFieldReferenceOperation or IEventReferenceOperation or IArrayElementReferenceOperation)
         {
             return LowerExpr(operation);
         }

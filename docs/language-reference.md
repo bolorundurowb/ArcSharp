@@ -489,6 +489,8 @@ interface slots. See [Base interfaces](features/base-interfaces.md).
 
 A `delegate` declaration, generic or not, creates a delegate type. A method group converts to it, and `+`, `-`, `+=`, `-=`, `==` and `!=` work on delegates, as does `?.Invoke(...)`. A multicast call returns the value of its last handler. The delegate holds its target strongly. `System.Action`, `System.Func` and `System.Predicate<T>` are available. A method group or a lambda can be the handler. See [Delegates](features/delegates.md) for the limits, including that `ARC3100` cannot see a cycle that runs through a method-group delegate.
 
+A class can declare a non-virtual field-like event, including a static event. Use `+=` to subscribe and `-=` to unsubscribe. The declaring class can read, invoke or assign the backing delegate. Event storage owns its handlers strongly, and `ARC3100` can warn when a subscribed lambda captures its publisher. See [Events](features/events.md).
+
 ## Expressions and operators
 
 User-defined unary, binary and conversion operators work with supported
@@ -604,7 +606,7 @@ items that target marks as full and items it marks as limited.
 - Generic features outside the subset described under [Generics](#generics).
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
-- Events, and delegates bound to library methods or to struct instance methods. Record structs, generic records, and records with a struct or array member are also rejected.
+- Custom, virtual, abstract, override, extern, interface and struct events, and delegates bound to library methods or to struct instance methods. Record structs, generic records, and records with a struct or array member are also rejected.
 - Nested or async lambdas, lambdas with `ref` parameters or results, anonymous methods, local functions, `async`, `await`, and iterators.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
