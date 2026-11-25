@@ -70,7 +70,7 @@ and threads are not targets.
 | Classes, structs, records | Full | Classes, structs, and record classes. Record structs and generic records are rejected. | [Shipped](#where-we-are) | Ordinary C# semantics, including the member forms, statements, and operators that come with them. |
 | Interfaces, inheritance | Full | Single inheritance, transitive base interfaces, virtual tables, and interface tables. | [Shipped](#where-we-are) | Native dispatch tables. |
 | Generics | Full | Monomorphisation, inference, virtual and interface generic methods, static abstract members, variance, and constraints. | [Shipped](#where-we-are) | Each closed type is specialised ahead of time. A single shared representation for all type arguments is not the plan. |
-| Delegates, events | Full | Single and multicast delegates over method groups and lambdas, with captures, and `Action`, `Func` and `Predicate<T>`. Non-virtual field-like events on classes support subscription and removal. | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
+| Delegates, events | Full | Single and multicast delegates over method groups, local functions and nested lambdas, with captures, and `Action`, `Func` and `Predicate<T>`. Non-virtual field-like events on classes support subscription and removal. | [M7](#m7--delegates-lambdas-and-events) | The capture is an ARC object. Strong captures stay strong, and `ARC3100` still applies. |
 | LINQ | Full | Rejected. | [M8](#m8--core-library-iterators-and-linq) | A library written against delegates, generics, iterators, and the core collections. Query syntax lowers to those methods. |
 | `async` / `await` | Full | Rejected. | [M9](#m9--async-and-await) | A state machine whose suspended locals follow the ARC rules. Continuations run on one thread. |
 | Exceptions | Full | `try`, `catch`, `finally`, `throw`, and a small `System` exception library. Exception filters and throw expressions are rejected. | [Shipped](#where-we-are) | Every unwind path releases live references. Finalisation and `using` both run on that path. |
@@ -138,7 +138,10 @@ results are in [Verification](verification.md).
   handles very deep graphs, and rejected resurrection. See
   [Deterministic finalisers](features/finalisers.md).
 - The M6 ordinary C# surface. Statements, operators, member forms, enums, struct storage and calls, patterns, generics with virtual and static abstract members, record classes, object initialisers, nullable values with boxing and updates, and `decimal`. See [Records](features/records.md), [Object initialisers](features/object-initialisers.md), [Generic dispatch](features/generic-dispatch.md), [Nullable values](features/nullable-values.md) and [Decimal](features/decimal.md).
-- M7 so far: single and multicast delegates over method groups and lambdas, with shared capture cells, `+`, `-`, `==`, `?.Invoke` and the `Action`, `Func` and `Predicate<T>` types. `ARC3100` covers delegate fields and field-like events whose lambda captures their owner. See [Events](features/events.md). See [Delegates](features/delegates.md) and [Lambdas and captures](features/lambdas.md).
+- M7 delegates, nested lambdas, local functions and field-like events. Escaping
+  captures keep their own ARC ownership. `ARC3100` covers cycles through
+  captures. See [Nested closures and local functions](features/nested-closures.md),
+  [Delegates](features/delegates.md) and [Events](features/events.md).
 - The M5 exceptions. `try`, `catch`, `finally`, and `throw`, a small `System`
   exception library, `using` disposal while unwinding, runtime checks that
   raise catchable exceptions, an unhandled-exception exit with code 70, and a
@@ -446,22 +449,20 @@ lists it as supported.
 **Goal.** Delegates, lambdas, local functions, and events, with captures as
 ordinary ARC objects.
 
-**Status.** Single and multicast delegates, ordinary lambdas and
-[non-virtual field-like events on classes](features/events.md) are implemented.
-`ARC3100` covers the capture cycles exercised by `lambda_cycle` and
-`event_cycle`. Nested lambdas, local functions and capture escape analysis
-remain. The benchmark comparison is due when M7 is complete.
+**Status.** Complete. See [Verification](verification.md) and the
+[M7 benchmark medians](features/gc-comparison.md#m7-medians-25-november-2026).
 
 **Steps.**
 
-1. [Lambda lowering](features/lambdas.md) uses shared ARC capture cells and
-   owns captured receivers. Nested lambdas and local functions are pending.
+1. [Nested lambdas and local functions](features/nested-closures.md) share ARC
+   capture cells and own captured receivers.
 2. Lambdas and method groups are delegates with a handler list, so they share
    single-cast and multicast invocation, combine, remove and equality. Caching
    non-capturing lambda instances is a later optimisation.
 3. Non-virtual field-like events on classes use delegate fields with synthesised `add` and `remove` accessors.
-4. Teach the lifetime pass that a capture is an escape unless it is proved not
-   to outlive the frame.
+4. The lifetime pass conservatively treats a capture as an escape. Borrowing
+   inside a confined capture environment can be considered when a lifetime
+   proof preserves destruction timing.
 5. Extend `ARC3100` to cycles introduced by captures. The compiler and
    analyser cover a lambda stored in a delegate field of its captured owner.
    The same check covers field-like event subscriptions.

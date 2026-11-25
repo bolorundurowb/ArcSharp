@@ -45,7 +45,7 @@ typedef struct ObjHeader {
 typedef struct ArcSlot {
     intptr_t  offset;
     int32_t   kind;
-    int32_t   pad;
+    int32_t   flags;
     TypeInfo* nested;
 } ArcSlot;
 
@@ -1106,8 +1106,23 @@ static DelegateNode* delegate_copy_onto(DelegateNode** nodes, size_t count, Dele
     return tail;
 }
 
+#define ARC_SLOT_LOCAL_FUNCTION_CAPTURE 1
+
 static int delegate_same_node(const DelegateNode* a, const DelegateNode* b) {
-    return a->target == b->target && a->function == b->function;
+    if (a->function != b->function) return 0;
+    if (a->target == b->target) return 1;
+    if (!a->target || !b->target) return 0;
+
+    /* Separate conversions can build separate environments for the same
+       local function. The captured cells and receiver identify the target. */
+    TypeInfo* type = ((ObjHeader*)a->target)->type;
+    if (type != ((ObjHeader*)b->target)->type || type->slotCount == 0 ||
+        !(type->slots[0].flags & ARC_SLOT_LOCAL_FUNCTION_CAPTURE)) return 0;
+    for (intptr_t i = 0; i < type->slotCount; i++) {
+        intptr_t offset = type->slots[i].offset;
+        if (*(void**)((char*)a->target + offset) != *(void**)((char*)b->target + offset)) return 0;
+    }
+    return 1;
 }
 
 void* arc_delegate_combine(void* first, void* second) {

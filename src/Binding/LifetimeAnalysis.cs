@@ -51,10 +51,14 @@ public sealed class LifetimeAnalysis
             var exposedLocals = unstable.OfType<BoundLocal>().Select(local => local.Symbol).ToHashSet();
             exposedLocals.UnionWith(nodes.OfType<BoundUsing>().Select(scope => scope.Resource));
             var exposedParams = unstable.OfType<BoundParam>().Select(param => param.Symbol).ToHashSet();
+            // A closure can outlive the call that built it. Its captures must
+            // keep their own ARC ownership even when the source slot is stable.
+            var captures = nodes.OfType<BoundNewObject>().Where(allocation => allocation.CapturesArguments)
+                .SelectMany(allocation => allocation.Arguments.SelectMany(Walk)).OfType<BoundExpr>().ToHashSet();
 
             // The walk is post-order, so a conversion inherits stability
             // only after its operand has been checked.
-            foreach (var value in nodes.OfType<BoundExpr>().Where(unique.Contains))
+            foreach (var value in nodes.OfType<BoundExpr>().Where(value => unique.Contains(value) && !captures.Contains(value)))
             {
                 var stable = value.Type.IsReferenceType && value switch
                 {

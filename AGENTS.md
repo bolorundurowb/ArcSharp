@@ -136,7 +136,7 @@ honoured, and a namespace is part of a type's identity. A global
 `using System` is added so `Console` resolves without one.
 
 The verification baseline, the lifetime pass, deterministic finalisers, and
-exceptions have landed, and so has M6, the ordinary C# surface. The next milestone is M7 in the [Roadmap](docs/roadmap.md). A defect in
+exceptions have landed, and so has M6, the ordinary C# surface. M7 has landed. The next milestone is M8 in the [Roadmap](docs/roadmap.md). A defect in
 the emitter or the runtime may still be fixed. A defect in binding is fixed in
 the Roslyn lowering.
 
@@ -466,7 +466,7 @@ The [compatibility target](docs/roadmap.md#compatibility-target) is the language
 - Boxing a primitive, an enum or a nullable primitive, and `??=` (`ARC3001`)
 - Non-virtual field-like events on classes and delegates over method groups and lambdas work. Custom accessors, virtual, abstract, override and extern events, and events on interfaces or structs report `ARC3001`.
 - A delegate cannot bind to a library method or a struct instance method (`ARC3001`), and a lambda cannot take a `ref` or `out` parameter (`ARC3001`)
-- Anonymous methods, nested or `async` lambdas, local functions, `async`, `await`, iterators, and LINQ
+- Anonymous methods, `async` lambdas, ref-returning local functions, `async`, `await`, iterators, and LINQ
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, `WeakReference<T>`,

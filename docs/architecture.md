@@ -161,7 +161,7 @@ just a pointer to the header; field/element access adds the field offset.
 typedef struct ArcSlot {
     intptr_t  offset;             // byte offset from the object, or from the struct
     int32_t   kind;               // 1 = strong reference, 2 = inline struct
-    int32_t   pad;
+    int32_t   flags;              // local-function environment capture flag
     TypeInfo* nested;             // struct TypeInfo when kind is 2
 } ArcSlot;
 
@@ -461,7 +461,7 @@ Two lists. The first is inherent in the memory model. The second is inside the
   `ARC3200`. `GC.ReRegisterForFinalize` is rejected. User finalisers are
   accepted. See [Deterministic finalisers](features/finalisers.md).
 - **Field-like events.** Roslyn event symbols lower to strong backing fields and synthesised subscription and removal methods. The methods use the same delegate combine and remove operations as delegate fields. Access to an event as a value inside its declaring class uses the backing field directly. See [Events](features/events.md).
-- **Lambda captures.** Shared capture cells and lambda closures are ordinary ARC objects. A lambda creates a closure that owns its capture cells and any captured receiver, and a delegate that holds the closure as its target. The cycle graph follows a delegate to the closures it creates. See [Lambdas and captures](features/lambdas.md) and [Delegates](features/delegates.md).
+- **Closure captures.** Shared capture cells and closure environments are ordinary ARC objects. An environment owns its capture cells and any captured receiver. A delegate holds the environment as its target, and the cycle graph follows that edge. See [Lambdas and captures](features/lambdas.md) and [Delegates](features/delegates.md).
 - **`async`/`await`.** In the [compatibility target](roadmap.md#compatibility-target). A suspended local is an ARC-managed object, and strong captures stay strong, the same as a lambda capture. It is not built yet.
 
 - **Interior references.** Calls pin the heap owner of a managed reference for
@@ -497,7 +497,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Binder: classes, inheritance, fields, methods, statics | Implemented                           |
 | Type checking (core)                                   | Implemented (lightweight)             |
 | Base interface lists and explicit implementations       | Transitive interface slots with inherited virtual overrides |
-| Lambdas | Implemented. Shared ARC-managed captures, invoked through the delegate's handler list. See [Lambdas and captures](features/lambdas.md) |
+| Lambdas and local functions | Implemented. Nested callables share ARC-managed captures. Local functions can be invoked directly or through a delegate. See [Nested closures and local functions](features/nested-closures.md) |
 | Virtual / override dispatch (vtables)                  | Implemented                           |
 | ARC: retain/release/deinit, statement & scope cleanup  | Implemented                           |
 | `WeakReference<T>` fields, locals, and generic arguments | Implemented |

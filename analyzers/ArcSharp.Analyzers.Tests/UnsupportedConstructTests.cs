@@ -31,7 +31,7 @@ public sealed class UnsupportedConstructTests
         { "lambda with a by-ref parameter", "delegate void R(ref int x); class C { static void Main() { R r = (ref int x) => { }; } }" },
         { "record struct", "record struct R(int X); class C { }" },
         { "generic record", "record R<T>(T X); class C { }" },
-        { "local function", "class C { static void Main() { void F() { } F(); } }" },
+        { "ref-returning local function", "class C { static int x; static void Main() { ref int F() => ref x; F(); } }" },
         { "expression body", "interface I { int One => 1; }" },
         { "generic static abstract method", "interface I { static abstract T Make<T>(); }" },
         { "generic interface method on a struct", "interface I { T M<T>(T value); } struct S : I { public T M<T>(T value) { return value; } }" },

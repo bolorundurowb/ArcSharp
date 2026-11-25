@@ -138,7 +138,7 @@ position has the same target and function.
 ## Limits
 
 - **Custom event accessors and virtual events** report `ARC3001`. See [Events](events.md) for supported declarations.
-- **Anonymous methods, nested lambdas and `async` lambdas** report `ARC3001`.
+- **Anonymous methods and `async` lambdas** report `ARC3001`.
   See [Lambdas and captures](lambdas.md#limits).
 - **A delegate cannot bind to a library method**, such as `Console.WriteLine`.
   It reports `ARC3001`.

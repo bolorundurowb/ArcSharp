@@ -27,6 +27,9 @@ sealed partial class RoslynLowering
         _methodLocals = [];
         _locals.Clear();
         _captureCells.Clear();
+        _localFunctions.Clear();
+        _localFunctionCount = 0;
+        _canCaptureReceiver = !method.IsStatic && !method.IsFinaliser && method.Owner.Kind != BoundKind.Struct;
         _localId = 0;
         var saved = new Dictionary<ITypeSymbol, TypeSymbol>(_substitution, SymbolEqualityComparer.Default);
         _substitution.Clear();
@@ -45,7 +48,7 @@ sealed partial class RoslynLowering
         var syntax = roslyn.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
         if (syntax != null)
         {
-            PrepareCaptures(syntax, block);
+            PrepareCaptures(roslyn, syntax, block);
         }
 
         var synthesised = TryLowerRecordBody(method, roslyn, block);
@@ -273,6 +276,7 @@ sealed partial class RoslynLowering
         ISwitchOperation selection => LowerSwitch(selection),
         IBranchOperation { BranchKind: BranchKind.Break or BranchKind.Continue } branch =>
             new BoundBranch { IsContinue = branch.BranchKind == BranchKind.Continue },
+        ILocalFunctionOperation function => LowerLocalFunctionDeclaration(function),
         IUsingOperation usingOperation => LowerUsing(usingOperation),
         ITryOperation tryOperation => LowerTry(tryOperation),
         IThrowOperation thrown => new BoundThrow
@@ -347,9 +351,9 @@ sealed partial class RoslynLowering
     private BoundLocalDecl LowerDeclarator(IVariableDeclaratorOperation declarator)
     {
         var initialiser = declarator.Initializer == null ? null : LowerExpr(declarator.Initializer.Value);
-        if (!_inLambda && _captureCells.TryGetValue(declarator.Symbol, out var cell) && initialiser != null)
+        if (_captureCells.TryGetValue(declarator.Symbol, out var cell))
         {
-            return InitialiseCapture(cell, initialiser);
+            return InitialiseCapture(cell, initialiser ?? DefaultValue(cell.Value.Type));
         }
 
         var local = Local(declarator.Symbol);
@@ -478,23 +482,25 @@ sealed partial class RoslynLowering
             }
         };
 
-        var iteration = Local(variable.Symbol);
+        _captureCells.TryGetValue(variable.Symbol, out var cell);
+        var iteration = cell?.Local ?? Local(variable.Symbol);
+        var itemType = cell?.Value.Type ?? iteration.Type;
         BoundExpr item = new BoundIndex { Receiver = Read(array), Index = Read(index), Type = elementType };
-        if (iteration.Type != elementType)
+        if (itemType != elementType)
         {
             item = new BoundConversion
             {
                 Operand = item,
-                Type = iteration.Type,
+                Type = itemType,
                 CastCheck = conversion is { IsReference: true, IsImplicit: false }
-                    && iteration.Type.Kind == BoundKind.Class && iteration.Type != _object
+                    && itemType.Kind == BoundKind.Class && itemType != _object
             };
         }
 
         var body = new BoundBlock
         {
             Statements = [
-                new BoundLocalDecl { Symbol = iteration, Initializer = item },
+                cell == null ? new BoundLocalDecl { Symbol = iteration, Initializer = item } : InitialiseCapture(cell, item),
                 LowerStmt(loop.Body)
             ]
         };
@@ -846,6 +852,11 @@ sealed partial class RoslynLowering
     private BoundExpr LowerInvocation(IInvocationOperation call)
     {
         var target = call.TargetMethod;
+        if (target.MethodKind == MethodKind.LocalFunction)
+        {
+            return LowerLocalFunctionCall(call);
+        }
+
         if (IsConsole(target))
         {
             return LowerConsole(call);
