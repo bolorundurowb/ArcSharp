@@ -164,6 +164,10 @@ namespace System
         public ArgumentOutOfRangeException() : base("Specified argument was out of the range of valid values.")
         {
         }
+
+        public ArgumentOutOfRangeException(string message) : base(message)
+        {
+        }
     }
 
     public class FormatException : SystemException

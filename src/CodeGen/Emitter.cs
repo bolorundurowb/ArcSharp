@@ -169,6 +169,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                      "declare i64 @arc_str_length(i8*)",
                      "declare i8* @arc_str_concat(i8*, i8*)",
                      "declare i32 @arc_str_equal(i8*, i8*)",
+                     "declare i32 @arc_str_hash(i8*)",
+                     "declare i32 @arc_identity_hash(i8*)",
                      "declare i32 @arc_str_index(i8*, i32)",
                      "declare i8* @arc_str_substring(i8*, i32, i32, i32)",
                      "declare i32 @arc_str_find(i8*, i8*, i32)",
@@ -1720,6 +1722,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundConversion cv: return EmitConversion(cv);
             case BoundIs i: return EmitIs(i);
             case BoundUnbox unbox: return EmitUnbox(unbox);
+            case BoundIdentityHash identity: return EmitIdentityHash(identity);
             case BoundPatternTest pattern: return EmitPatternTest(pattern);
             case BoundChoice choice: return EmitChoice(choice);
             case BoundSwitchFailure failure: return EmitSwitchFailure(failure);
@@ -2101,6 +2104,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 var equal = Inst($"call i32 @arc_str_equal(i8* {left}, i8* {right})");
                 return Inst($"icmp ne i32 {equal}, 0");
             }
+            case StringOp.Hash:
+                return Inst($"call i32 @arc_str_hash(i8* {arguments[0]})");
             case StringOp.Substring:
             {
                 var count = arguments.Length == 2 ? arguments[1] : "0";
@@ -3498,6 +3503,13 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var copy = NewStructTemp(unbox.Type);
         CopyStruct(unbox.Type, copy, source);
         return copy;
+    }
+
+    private string EmitIdentityHash(BoundIdentityHash identity)
+    {
+        var value = EmitR(identity.Operand);
+        TrackReferenceTemp(identity.Operand, value);
+        return Inst($"call i32 @arc_identity_hash(i8* {value})");
     }
 
     private string EmitIs(BoundIs i)

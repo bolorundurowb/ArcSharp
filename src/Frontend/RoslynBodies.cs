@@ -869,6 +869,11 @@ sealed partial class RoslynLowering
             return LowerLocalFunctionCall(call);
         }
 
+        if (IsElementEquality(target))
+        {
+            return LowerElementCall(call);
+        }
+
         if (IsConsole(target))
         {
             return LowerConsole(call);

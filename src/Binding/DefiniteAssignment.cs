@@ -481,6 +481,7 @@ public static class DefiniteAssignment
                 case BoundUnary u: VisitExpr(u.Operand, assigned); break;
                 case BoundConversion cv: VisitExpr(cv.Operand, assigned); break;
                 case BoundUnbox unbox: VisitExpr(unbox.Operand, assigned); break;
+                case BoundIdentityHash identity: VisitExpr(identity.Operand, assigned); break;
                 case BoundChoice choice:
                     VisitExpr(choice.Condition, assigned);
                     var whenTrue = new HashSet<int>(assigned);
