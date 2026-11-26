@@ -163,6 +163,26 @@ class Program
 
         try
         {
+            int[] negative = new int[MinusOne];
+            Console.WriteLine("not reached");
+        }
+        catch (OverflowException)
+        {
+            Console.WriteLine("negative array length");
+        }
+
+        try
+        {
+            string[] negative = new string["x".Length * MinusOne];
+            Console.WriteLine("not reached");
+        }
+        catch (OverflowException)
+        {
+            Console.WriteLine("negative reference array length");
+        }
+
+        try
+        {
             throw null;
         }
         catch (NullReferenceException)

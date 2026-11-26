@@ -290,6 +290,7 @@ try {
     Invoke-Sample charprint      "alloc=5 dead=5 freed=5 live=0" "concat=B direct=A"          @("charprint")        # char prints as a character
     Invoke-Sample staticprop     "alloc=3 dead=3 freed=3 live=0" "count=4"                    @("staticprop")       # static auto-property
     Invoke-Sample leaks          "alloc=7 dead=1 freed=1 live=6" "leaks reported"             @("leaks")            # static root plus unreachable cycles; ARC_LEAKS report checked below
+    Invoke-Sample leaks_deep     "alloc=20001 dead=1 freed=1 live=20000" "deep leaks built"   @("leaks_deep")       # a 10000-link static chain and a 10000-link cycle; ARC_LEAKS report checked below
     Invoke-Sample owners         "alloc=33 dead=33 freed=33 live=0" "owners=4,7,5,6,5,2"         @("owners")           # interior refs stay valid when the callee drops the owner
     Invoke-Sample destruction_points "alloc=3 dead=3 freed=3 live=0" "destruction points PASS" @("destruction_points")
     Invoke-Sample m2_dispatch_logic "alloc=6 dead=6 freed=6 live=0" "dispatch and logic PASS" @("m2_dispatch_logic")
@@ -306,7 +307,8 @@ try {
     Invoke-Sample exceptions_basic "alloc=16 dead=16 freed=16 live=0" "outer caught inner" @("exceptions_basic")          # try, catch, finally, throw
     Invoke-Sample exceptions_unwind "alloc=97 dead=97 freed=97 live=0" "exceptions unwind PASS" @("exceptions_unwind")    # cleanup on every unwind path
     Invoke-Sample exceptions_abandoned_return "alloc=13 dead=13 freed=13 live=0" "abandoned returns PASS" @("exceptions_abandoned_return")
-    Invoke-Sample exceptions_runtime "alloc=53 dead=53 freed=53 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
+    Invoke-Sample exceptions_runtime "alloc=60 dead=60 freed=60 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
+    Invoke-Sample arrays_wide_index "alloc=39 dead=39 freed=39 live=0" "arrays wide index PASS" @("arrays_wide_index") # long, uint and ulong array lengths and indices
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
     Invoke-Sample variance "alloc=5 dead=5 freed=5 live=0" "variance PASS" @("variance")
     Invoke-Sample nullable_values "alloc=4 dead=4 freed=4 live=0" "nullable values PASS" @("nullable_values")
@@ -372,6 +374,11 @@ Invoke-Sample delegates_lambdas "alloc=70 dead=70 freed=70 live=0" "delegates la
         "\[arc\] cycle Owner -> Owner -> Owner"
     ) @("root=static")
     Invoke-LeakCheck cycle_weak 0 "done (weak cycle)" @("cycle_weak") @() @("\[arc\] survivor")
+    Invoke-LeakCheck leaks_deep 20000 "deep leaks built" @("leaks_deep") @(
+        "type=Link .*root=static",
+        "type=Ring .*root=unreachable",
+        "\[arc\] cycle Ring -> Ring"
+    ) @("type=Link .*root=unreachable", "type=Ring .*root=static")
 
     Write-Host "--- unsupported constructs must be rejected (ARC3001 / CS / ARC2011 / ARC2012 / ARC2013 / ARC2015 / ARC2016) ---"
     Invoke-MustFail do_while_condition "CS0029" @("do_while_condition")
@@ -470,6 +477,7 @@ Invoke-MustFail lambda_ref_parameter "ARC3001" @("lambda_ref_parameter")
     Invoke-Warns cycle_weak    "ARC3100" $false @("cycle_weak")
     Invoke-Warns cycle_weakref "ARC3100" $false @("cycle_weakref")
     Invoke-Warns finaliser_cycle "ARC3100" $true @("finaliser_cycle")
+    Invoke-Warns leaks_deep    "ARC3100" $true  @("leaks_deep")
 
     Write-Host "--- GC calls that do nothing (ARC3200) ---"
     Invoke-Warns finaliser_suppress "ARC3200" $true  @("finaliser_suppress")
