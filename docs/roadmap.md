@@ -124,6 +124,9 @@ results are in [Verification](verification.md).
 - UTF-16 strings, common string methods, primitive text conversion,
   interpolation, composite formatting, and `StringBuilder`. See
   [Strings and formatting](features/strings.md).
+- `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`, `Queue<T>`, and
+  `Stack<T>`, with element equality and hashing lowered per element type. See
+  [Collections](features/collections.md).
 - `using` with an explicit `Dispose()` on the normal completion path.
 - `WeakReference<T>`, the `ARC3100` cycle warning, and the opt-in leak report
   (`ARC_LEAKS=1`).
@@ -488,8 +491,9 @@ C# against the ARC rules. The rest of the .NET base class library is not built.
    so metadata consumers see the exception and delegate declarations.
 2. **Done.** Common string methods, primitive `ToString()`, formatting,
    and `StringBuilder`. See [Strings and formatting](features/strings.md).
-3. Collections: `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`,
-   `Queue<T>`, and `Stack<T>`.
+3. **Done.** Collections: `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`,
+   `Queue<T>`, and `Stack<T>`. Element equality and hashing are lowered for each
+   closed element type. See [Collections](features/collections.md).
 4. Iterators: `yield`, `IEnumerable<T>`, and `foreach` over any enumerable.
    The state machine is an ARC object. Its lowering is the base for `async` in
    M9.

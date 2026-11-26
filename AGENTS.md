@@ -470,7 +470,8 @@ The [compatibility target](docs/roadmap.md#compatibility-target) is the language
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, the strings and formatting APIs
-  listed in the language reference, `WeakReference<T>`,
+ listed in the language reference, `WeakReference<T>`, the collections in
+ `corelib/Collections` (no enumeration yet),
   `decimal` arithmetic and conversions (no parsing, rounding methods or format
   strings), the exception types in `corelib`, and the `GC` calls
   `SuppressFinalize`, `Collect` and `WaitForPendingFinalizers`
