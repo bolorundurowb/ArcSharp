@@ -12,7 +12,8 @@ link it with `runtime/arc_runtime.c` into a native Windows x64 `.exe`
 and ARC accounting. It runs every sample with [ARC checking](features/arc-checking-mode.md)
 enabled. It also compiles the must-fail samples, checks the `ARC3100` cycle
 warnings, runs the analyser unit tests, and checks the reference assembly
-surface. The compiler can also emit the Linux
+surface, including the exception and delegate APIs from `corelib/`. The
+compiler can also emit the Linux
 x64 triple (`x86_64-pc-linux-gnu`); the table below is a Windows x64 run. On
 Linux only the triple, data layout, and the C runtime build differ.
 
@@ -28,10 +29,10 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (89 samples, Windows x64, 25 November 2026)
+## Results (89 samples, Windows x64, 26 November 2026)
 
-`tools\verify.ps1` reported **170 passed, 0 failed** with the .NET 11.0.100 SDK:
-89 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 59 must-fail
+`tools\verify.ps1` reported **171 passed, 0 failed** with the .NET 11.0.100 SDK:
+89 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 60 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 9 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests (91 xUnit tests), and one
 reference-surface check. `live=0` means every object was reclaimed.

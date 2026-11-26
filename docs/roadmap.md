@@ -480,8 +480,9 @@ C# against the ARC rules. The rest of the .NET base class library is not built.
 
 **Steps.**
 
-1. Create `corelib/`, compiled with every program, and extend the reference
-   surface from M1 to match it.
+1. **Done.** Embed the sources under `corelib/` in the compiler and compile them
+   with every program. Build the same sources into the reference assembly
+   so metadata consumers see the exception and delegate declarations.
 2. Strings: the common methods, `ToString()` for the primitive types,
    formatting, and `StringBuilder`.
 3. Collections: `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`,

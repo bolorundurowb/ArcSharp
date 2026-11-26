@@ -22,7 +22,7 @@
     <Compile Remove="ref/**/*.cs" />
     <None Include="ref/**/*.cs" />
     <Compile Remove="corelib/**/*.cs" />
-    <EmbeddedResource Include="corelib/**/*.cs" LogicalName="corelib/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="corelib/**/*.cs" LogicalName="corelib/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
