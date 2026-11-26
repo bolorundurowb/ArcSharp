@@ -248,7 +248,7 @@ the symbols, and the runtime.
 | Class instance | Field `i` at `24 + 8 * i` (`FieldSymbol.ByteOffset`) |
 | Struct value | Field at `ByteOffset` (`8 * i` when no earlier field is a struct; a nested struct spans several slots); size is `HeapSize` bytes (whole 8-byte slots) |
 | Array | Length at 24, element `TypeInfo*` at 32, elements at 40 in 8-byte slots |
-| String | Length at 24, UTF-8 bytes at 32, NUL-terminated |
+| String | UTF-16 code-unit count at 24, length-delimited UTF-16 code units at 32 |
 | `WeakReference<T>` | One weak slot at 24 |
 | Delegate | One handler node: target at 24, function address at 32, next node at 40. A multicast delegate is an immutable list of nodes |
 
@@ -469,7 +469,8 @@ The [compatibility target](docs/roadmap.md#compatibility-target) is the language
 - Anonymous methods, `async` lambdas, ref-returning local functions, `async`, `await`, iterators, and LINQ
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
-- Any BCL beyond `Console.Write` and `WriteLine`, `.Length`, `WeakReference<T>`,
+- Any BCL beyond `Console.Write` and `WriteLine`, the strings and formatting APIs
+  listed in the language reference, `WeakReference<T>`,
   `decimal` arithmetic and conversions (no parsing, rounding methods or format
   strings), the exception types in `corelib`, and the `GC` calls
   `SuppressFinalize`, `Collect` and `WaitForPendingFinalizers`

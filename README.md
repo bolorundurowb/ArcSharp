@@ -80,6 +80,9 @@ reclaimed.
 - `int`, `long`, `uint`, `ulong`, `float`, `double`, `decimal`, `bool`, `char`, and
   `string`, enums, nullable values (with updates, user-defined operators and
   struct boxing), and single-dimensional arrays.
+- UTF-16 strings with indexing, search and replacement, primitive
+  `ToString()`, interpolation, composite formatting, and
+  `System.Text.StringBuilder`. See [Strings and formatting](docs/features/strings.md).
 - Record classes with value equality, `with` and deconstruction, and object
   initialisers on classes.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept

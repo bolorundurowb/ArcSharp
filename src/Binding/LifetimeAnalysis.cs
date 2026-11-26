@@ -312,6 +312,7 @@ public sealed class LifetimeAnalysis
         BoundSameType same => [same.Left, same.Right],
         BoundDecimalOp decimalOp => decimalOp.Arguments,
         BoundLength length => [length.Receiver],
+        BoundStringOp text => [text.Receiver, .. text.Arguments],
         BoundConsoleCall call => [call.Argument],
         BoundGcCall call => [call.Argument],
         BoundLiteral or BoundLocal or BoundParam or BoundThis or BoundFunctionAddress => [],

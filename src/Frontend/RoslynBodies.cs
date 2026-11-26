@@ -623,6 +623,7 @@ sealed partial class RoslynLowering
         IEventAssignmentOperation assignment => LowerEventAssignment(assignment),
         IPropertyReferenceOperation property => LowerProperty(property),
         IInvocationOperation invocation => LowerInvocation(invocation),
+        IInterpolatedStringOperation interpolated => LowerInterpolatedString(interpolated),
         IObjectCreationOperation creation => LowerCreation(creation),
         IWithOperation with => LowerWith(with),
         ITypeParameterObjectCreationOperation { Initializer: not null } creation => UnsupportedExpr(creation),
@@ -814,6 +815,17 @@ sealed partial class RoslynLowering
     private BoundExpr LowerProperty(IPropertyReferenceOperation operation)
     {
         var property = operation.Property;
+        if (property.IsStatic && property.Name == "NewLine" && property.ContainingType.ToDisplayString() == "System.Environment")
+        {
+            return StringOperation(StringOp.NewLine, _string, null, []);
+        }
+
+        if (property.IsIndexer && property.ContainingType.SpecialType == SpecialType.System_String)
+        {
+            return StringOperation(StringOp.Index, _char, LowerExpr(operation.Instance!),
+                operation.Arguments.Select(argument => LowerExpr(argument.Value)).ToList());
+        }
+
         if (property.Name == "Length"
             && (property.ContainingType.SpecialType == SpecialType.System_String
                 || operation.Instance?.Type is IArrayTypeSymbol))
@@ -875,6 +887,11 @@ sealed partial class RoslynLowering
         if (IsGc(target))
         {
             return LowerGc(call);
+        }
+
+        if (LowerStringCall(call) is { } text)
+        {
+            return text;
         }
 
         if (target.ContainingType.SpecialType == SpecialType.System_Object
@@ -1009,9 +1026,14 @@ sealed partial class RoslynLowering
             }
         }
 
+        return JoinText(parts, call.Syntax);
+    }
+
+    private BoundExpr JoinText(List<BoundExpr> parts, SyntaxNode syntax)
+    {
         if (parts.Count == 0)
         {
-            return new BoundLiteral { Type = _string, LitKind = LiteralKind.String, StringValue = "", Site = Site(call.Syntax) };
+            return new BoundLiteral { Type = _string, LitKind = LiteralKind.String, StringValue = "", Site = Site(syntax) };
         }
 
         var folded = parts[0];

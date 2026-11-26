@@ -21,7 +21,6 @@ public sealed class UnsupportedConstructTests
         { "conditional access with a value result", "class C { static void Main() { string s = null; int n = s?.Length ?? 0; } }" },
         { "conditional access on a value receiver", "struct S { public string Name; } class C { static void Main() { S? s = null; string n = s?.Name; } }" },
         { "coalescing assignment", "class C { static void Main() { string s = null; s ??= \"x\"; } }" },
-        { "interpolated string", "class C { static void Main() { System.Console.WriteLine($\"x\"); } }" },
         { "target-typed new", "class C { static void Main() { C c = new(); } }" },
         { "struct object initializer", "struct S { public int X; } class C { static void Main() { S s = new S { X = 1 }; } }" },
         { "collection initializer", "class B : System.Collections.IEnumerable { public void Add(int x) { } public System.Collections.IEnumerator GetEnumerator() { return null; } } class C { static void Main() { B b = new B { 1 }; } }" },
@@ -65,6 +64,7 @@ public sealed class UnsupportedConstructTests
         },
         { "class object initializer", "class N { public int X; } class C { static void Main() { N n = new N { X = 1 }; } }" },
         { "plain program", "class Program { static void Main() { System.Console.WriteLine(\"hi\"); } }" },
+        { "interpolated string", "class C { static string Format(int value) => $\"[{value,4:D2}]\"; }" },
         {
             "try, catch, finally and throw",
             "class Program { static void Main() { try { throw new System.InvalidOperationException(\"x\"); } " +

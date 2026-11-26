@@ -75,7 +75,7 @@ their underlying integer representation. See [Nullable values](features/nullable
 
 - **Classes** you declare.
 - **Record classes**, with the members C# writes for them. Record structs and generic records are not supported. See [Record classes](features/records.md).
-- **`string`**, an immutable sequence of UTF-8 bytes.
+- **`string`**, an immutable sequence of UTF-16 code units.
 - **Single-dimensional arrays** `T[]` of supported value and reference types.
   Multi-dimensional and jagged array syntax
   (`int[,]`, `int[][]`) is not supported.
@@ -412,11 +412,13 @@ compiler adds it to every program, so no reference is needed:
 | `DivideByZeroException`, `OverflowException` | `ArithmeticException` |
 | `IndexOutOfRangeException`, `InvalidCastException`, `NullReferenceException`, `ArrayTypeMismatchException`, `InvalidOperationException`, `NotSupportedException`, `NotImplementedException`, `ArgumentException`, `TypeInitializationException` | `SystemException` |
 | `ArgumentNullException` | `ArgumentException` |
+| `ArgumentOutOfRangeException` | `ArgumentException` |
+| `FormatException` | `SystemException` |
 
-Each type has a parameterless constructor, which sets a default message, and a
-constructor that takes a `string` message. `Message` is a read-only property.
-You can derive your own exception classes from any of these, and a derived
-class may add fields.
+Most of these types have a parameterless constructor that sets a default
+message and a constructor that takes a `string` message.
+`ArgumentOutOfRangeException` and `FormatException` expose the parameterless
+constructor. `Message` is read-only. A derived exception class can add fields.
 
 The runtime raises these exceptions itself: `NullReferenceException` for a
 member access, call, `.Length`, element access, or `throw null` on a null
@@ -522,8 +524,8 @@ A nullable value also accepts compound assignment, `++` and `--`, user-defined l
 `decimal` supports the arithmetic, comparison, increment and conversion operators, including on `decimal?`.
 The null-conditional operator `?.` works on a reference receiver when the result is a reference or the expression is a statement, such as `handler?.Invoke(1);`.
 Not supported: `??=`, `?.` with a value result, `typeof`, `sizeof`,
-`nameof`, anonymous types, tuples, tuple and indexer patterns, collection initialisers, object initialisers on structs, and
-interpolated strings (`$"..."`).
+`nameof`, anonymous types, tuples, tuple and indexer patterns, collection
+initialisers, and object initialisers on structs.
 
 ### Lambdas
 
@@ -572,32 +574,34 @@ four hex digits, and `\U` followed by eight hex digits work in character and
 string literals. `"\u0041"` is `A`. A `\u` or `\U` sequence that is not valid
 hex, or a code point above U+10FFFF, is Roslyn error `CS1009`. A character literal
 cannot hold a code point above U+FFFF. Hexadecimal and binary literals, digit
-separators (`1_000`), exponents (`1e6`), verbatim strings (`@"..."`), raw
-strings, and interpolated strings are not supported.
+separators (`1_000`), exponents (`1e6`), verbatim strings (`@"..."`), and raw
+strings are not supported. Ordinary interpolated strings support alignment and
+the numeric formats described under [Strings and formatting](features/strings.md).
 
 Comments use `//` and `/* ... */`.
 
 ## Built-in library
 
-ArcSharp has no base class library. The compiler recognises these members
-directly:
+ArcSharp provides a small library for console output, strings, weak references
+and exceptions.
 
 | Member | Notes |
 |---|---|
 | `Console.Write(x)`, `Console.WriteLine(x)` | `x` is a `string`, `bool`, `char`, integer, `float`, or `double`. A `char` prints as the character. `Console.WriteLine()` with no argument prints an empty line. |
 | `decimal.Zero`, `One`, `MinusOne`, `MaxValue`, `MinValue` | Constants of `decimal`. `Console.Write`, `Console.WriteLine`, string concatenation and `ToString()` print a decimal |
 | `array.Length` | Number of elements |
-| `str.Length` | Number of **bytes** in the UTF-8 encoding |
+| `str.Length`, `str[index]` | Count and access UTF-16 code units |
+| `Substring`, `Equals`, `Contains`, `IndexOf`, `StartsWith`, `EndsWith`, `Replace`, `Trim` | String search and comparison use ordinal code-unit matching |
+| `string.Concat`, `string.IsNullOrEmpty`, `string.IsNullOrWhiteSpace` | `Concat` accepts two to four string arguments |
+| `ToString()`, numeric `ToString(format)`, `string.Format` | See the supported formats and argument types in [Strings and formatting](features/strings.md) |
+| `System.Text.StringBuilder` | Constructors with no arguments or a string, `Length`, `Append`, `AppendLine`, `Clear` and `ToString` |
 | `new WeakReference<T>(target)` | |
 | `weak.TryGetTarget(out T target)` | Returns `true` and a strong reference if the target is alive |
 | `weak.SetTarget(target)` | |
 
-The compiler that runs today recognises the simple names and reports `System`
-as an unknown name, so `System.Console` does not compile yet. The reference
-assembly declares these types in `System`, so `System.Console.WriteLine`,
-`System.WeakReference<T>`, and the same calls after `using System` bind when
-Roslyn uses that assembly. Nothing else from .NET exists: no collections, no
-`Math`, no string methods, no `ToString()`, and no file or network access.
+The reference assembly provides these types under their standard `System`
+names. Collections and general-purpose file and network APIs are outside the
+currently implemented library.
 
 ## Not supported
 
@@ -641,7 +645,8 @@ says so. The finalisation contract is the runtime's compatibility profile.
 | `Dispose` and finalisation | Often paired by convention. The finaliser is a backstop | Separate. A finaliser does not call `Dispose`. `using` is an explicit call |
 | Reference cycles | Collected. Finalisers of cyclic objects may still run | Permitted. `ARC3100` warns when the type graph can form one. An ignored warning, including in a library, leaks, and a finaliser in the cycle does not run. `WeakReference<T>` breaks the cycle |
 | `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false`. The weak reference does not keep the object alive |
-| `string.Length` | UTF-16 code units | UTF-8 bytes. `"héllo".Length` is 6, not 5. |
+| String searches | Some overloads use the current culture | Search and comparison use ordinal UTF-16 code units |
+| Numeric formatting | Standard and custom format strings and culture providers | A subset of invariant standard formats |
 | `(decimal)` of a `double` | The exact binary value, rounded to 28 digits, in current .NET | The same. Older .NET versions rounded to 15 digits |
 | Formatting a `decimal` | `ToString` takes formats and a culture | `ToString()` and string concatenation only. The result is digits, an optional minus sign and a point |
 | Formatting a `double` or `float` | Shortest round-trippable form, such as `0.3333333333333333` | Six significant digits, such as `0.333333` |
