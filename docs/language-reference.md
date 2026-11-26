@@ -424,7 +424,9 @@ The runtime raises these exceptions itself: `NullReferenceException` for a
 member access, call, `.Length`, element access, or `throw null` on a null
 reference, `IndexOutOfRangeException` for an array index outside the array,
 `InvalidCastException` for a failed class cast, `DivideByZeroException` for `/`
-and `%` by zero, `OverflowException` for the minimum value divided by -1, and
+and `%` by zero, `OverflowException` for the minimum value divided by -1 and
+for an array created with a negative length or a `ulong` length above
+`long.MaxValue`, and
 `ArrayTypeMismatchException` for a store into a covariant array that the
 element type does not accept.
 
@@ -509,7 +511,7 @@ use the declared truth operator to decide whether to evaluate the right operand.
 | Assignment | `=`, `+=`, `-=`. Assignment can be used as an expression. |
 | String | `+` concatenates a string with a string, number, or `bool` |
 | Type tests and patterns | `x is T`, `x as T`, casts `(T)x`, and supported constant, relational, declaration, logical, property, positional and array list patterns. Interface patterns on reference inputs test the runtime type. Constant and relational patterns support `decimal` and non-null `decimal?` values. |
-| Object creation | `new T(args)`, `new T { Member = value }` on classes, `new T[n]`, `new WeakReference<T>(x)`, and `with` on records. See [Object initialisers](features/object-initialisers.md) |
+| Object creation | `new T(args)`, `new T { Member = value }` on classes, `new T[n]` with an `int`, `uint`, `long` or `ulong` length (the same types index an array), `new WeakReference<T>(x)`, and `with` on records. See [Object initialisers](features/object-initialisers.md) |
 | Access | Fields, properties, static members, `this`, `base` constructor calls, array indexing `a[i]` |
 | Choice | `condition ? first : second` and `switch` expressions with supported patterns |
 | Grouping | Parentheses |

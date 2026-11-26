@@ -79,7 +79,7 @@ When the program is run, its exit codes include:
 |---|---|
 | `0` | `Main` returned normally, or `static int Main()` returned `0`. |
 | Any value | The value returned by `static int Main()`. |
-| `70` | An [exception that nothing caught](features/exceptions.md#unhandled-exceptions) (including the ones the runtime raises, such as an array index out of range, a null reference, an invalid cast, an array type mismatch, or a division by zero), a finaliser that resurrected its object (`ResurrectionException`), or an [ARC checking mode](features/arc-checking-mode.md) violation. The `[arc]` line is printed first. |
+| `70` | An [exception that nothing caught](features/exceptions.md#unhandled-exceptions) (including the ones the runtime raises, such as an array index out of range, a null reference, an invalid cast, an array type mismatch, or a division by zero), a finaliser that resurrected its object (`ResurrectionException`), an allocation that failed (`OutOfMemoryException`), or an [ARC checking mode](features/arc-checking-mode.md) violation. The `[arc]` line is printed first, except after a failed allocation or a checking-mode violation. |
 | `-1073741819` (`0xC0000005`) | Access violation. A null reference is now an exception, so this points at a defect or at `--no-bounds` with a bad index. |
 
 ## Examples

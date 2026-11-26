@@ -78,14 +78,19 @@ static long long g_retain = 0;  /* strong-count increments after allocation   */
 static long long g_release = 0; /* strong-count decrements                     */
 
 /* Registry of objects with storage still owned by ARC. Nodes are plain
-   malloc blocks and do not count towards ARC accounting. */
+   malloc blocks and do not count towards ARC accounting. Checking mode looks
+   an object up on every retain and release, so the registry is a hash table
+   keyed by address: a list made each check cost one step per live object. */
 typedef struct ArcRec {
     ObjHeader*    obj;
     const char*   site;
-    struct ArcRec* next;
+    struct ArcRec* next;      /* next record in the same bucket, or in the quarantine */
+    int           leak_index; /* position in the leak report, or -1 */
 } ArcRec;
 
-static ArcRec* g_recs = 0;
+static ArcRec** g_rec_buckets = 0;
+static size_t g_rec_capacity = 0;   /* a power of two, or 0 before the first record */
+static size_t g_rec_count = 0;
 static ArcRec* g_quarantine = 0;
 static int g_leaks = -1; /* -1 unknown, 0 off, 1 on */
 static int g_checks = -1;
@@ -119,25 +124,85 @@ static int checks_on(void) {
     return g_checks;
 }
 
+/* Allocations are 16-byte aligned, so the low bits carry no information. The
+   multiply spreads the rest across the bucket index. */
+static size_t rec_bucket(const void* p, size_t capacity) {
+    uint64_t key = (uint64_t)(uintptr_t)p >> 4;
+    key ^= key >> 33;
+    key *= 0xff51afd7ed558ccdULL;
+    key ^= key >> 33;
+    return (size_t)key & (capacity - 1);
+}
+
+static ArcRec* rec_find(const void* p) {
+    ArcRec* r;
+    if (!g_rec_capacity) return 0;
+    for (r = g_rec_buckets[rec_bucket(p, g_rec_capacity)]; r; r = r->next) {
+        if (r->obj == p) return r;
+    }
+    return 0;
+}
+
+/* Returns 0 when the table cannot grow. */
+static int rec_insert(ArcRec* rec) {
+    size_t bucket;
+    if (g_rec_count >= g_rec_capacity) {
+        size_t capacity = g_rec_capacity ? g_rec_capacity * 2 : 1024;
+        ArcRec** buckets = (ArcRec**)calloc(capacity, sizeof(ArcRec*));
+        size_t i;
+        if (!buckets) return 0;
+        for (i = 0; i < g_rec_capacity; i++) {
+            ArcRec* r = g_rec_buckets[i];
+            while (r) {
+                ArcRec* next = r->next;
+                size_t target = rec_bucket(r->obj, capacity);
+                r->next = buckets[target];
+                buckets[target] = r;
+                r = next;
+            }
+        }
+        free(g_rec_buckets);
+        g_rec_buckets = buckets;
+        g_rec_capacity = capacity;
+    }
+    bucket = rec_bucket(rec->obj, g_rec_capacity);
+    rec->next = g_rec_buckets[bucket];
+    g_rec_buckets[bucket] = rec;
+    g_rec_count++;
+    return 1;
+}
+
+static ArcRec* rec_remove(const void* p) {
+    ArcRec** pp;
+    if (!g_rec_capacity) return 0;
+    for (pp = &g_rec_buckets[rec_bucket(p, g_rec_capacity)]; *pp; pp = &(*pp)->next) {
+        if ((*pp)->obj == p) {
+            ArcRec* found = *pp;
+            *pp = found->next;
+            found->next = 0;
+            g_rec_count--;
+            return found;
+        }
+    }
+    return 0;
+}
+
 static void check_header(const char* operation, const ObjHeader* h, int needs_live) {
     if (!checks_on()) {
         return;
     }
-    for (ArcRec* r = g_recs; r; r = r->next) {
-        if (r->obj == h) {
-            if (h->strong < 0) {
-                check_fail(operation, "negative strong count");
-            }
-            if (needs_live && h->strong == 0) {
-                check_fail(operation, "dead object");
-            }
-            if (WEAK_COUNT(h) == 0) {
-                check_fail(operation, "non-positive weak count");
-            }
-            return;
-        }
+    if (!rec_find(h)) {
+        check_fail(operation, "freed or untracked object");
     }
-    check_fail(operation, "freed or untracked object");
+    if (h->strong < 0) {
+        check_fail(operation, "negative strong count");
+    }
+    if (needs_live && h->strong == 0) {
+        check_fail(operation, "dead object");
+    }
+    if (WEAK_COUNT(h) == 0) {
+        check_fail(operation, "non-positive weak count");
+    }
 }
 
 static int leaks_on(void) {
@@ -164,35 +229,31 @@ static void track(ObjHeader* h, const char* site) {
         return;
     }
     r = (ArcRec*)malloc(sizeof(ArcRec));
-    if (!r) {
-        if (checks_on()) {
-            check_fail("allocation", "cannot track object");
+    if (r) {
+        r->obj = h;
+        r->site = site ? site : "-";
+        r->next = 0;
+        r->leak_index = -1;
+        if (rec_insert(r)) {
+            return;
         }
-        return;
+        free(r);
     }
-    r->obj = h;
-    r->site = site ? site : "-";
-    r->next = g_recs;
-    g_recs = r;
+    if (checks_on()) {
+        check_fail("allocation", "cannot track object");
+    }
 }
 
 static void retire(ObjHeader* h) {
-    ArcRec** pp;
-    pp = &g_recs;
-    while (*pp) {
-        if ((*pp)->obj == h) {
-            ArcRec* dead = *pp;
-            *pp = dead->next;
-            if (checks_on()) {
-                /* Prevent address reuse from making a stale pointer appear valid. */
-                dead->next = g_quarantine;
-                g_quarantine = dead;
-                return;
-            }
-            free(dead);
-            break;
+    ArcRec* dead = rec_remove(h);
+    if (dead) {
+        if (checks_on()) {
+            /* Prevent address reuse from making a stale pointer appear valid. */
+            dead->next = g_quarantine;
+            g_quarantine = dead;
+            return;
         }
-        pp = &(*pp)->next;
+        free(dead);
     }
     free(h);
 }
@@ -214,8 +275,19 @@ void arc_report(void) {
 long long arc_live_count(void) { return g_alloc - g_dead; }
 
 /* ---- core retain / release ------------------------------------------- */
+/* Out of memory ends the program. OutOfMemoryException is not raised, because
+   raising it would itself need an allocation. */
+static void* arc_zalloc(size_t size, const char* what) {
+    void* p = calloc(1, size);
+    if (!p) {
+        fprintf(stderr, "OutOfMemoryException: cannot allocate %s\n", what);
+        exit(70);
+    }
+    return p;
+}
+
 void* arc_alloc(TypeInfo* type, const char* site) {
-    ObjHeader* h = (ObjHeader*)calloc(1, (size_t)type->instanceSize);
+    ObjHeader* h = (ObjHeader*)arc_zalloc((size_t)type->instanceSize, "an object");
     h->strong = 1;
     h->weak   = 1;
     h->type   = type;
@@ -1223,10 +1295,22 @@ static TypeInfo arc_array_struct_ti = { "<struct[]>", 0, arc_array_struct_deinit
 
 enum { ARC_ARRAY_VALUE, ARC_ARRAY_REFERENCE, ARC_ARRAY_STRUCT };
 
+/* A negative length raises OverflowException, as .NET does, and returns null.
+   The compiled code checks arc_exception afterwards. A length whose byte size
+   does not fit in intptr_t would wrap to a small block, so it ends the program
+   like any other failed allocation. */
 void* arc_array_new(intptr_t length, int elementKind, TypeInfo* elemType, const char* site) {
     intptr_t stride = elementKind == ARC_ARRAY_STRUCT ? arc_struct_stride(elemType) : 8;
-    intptr_t size = 40 + stride * (length < 0 ? 0 : length);
-    ObjHeader* h = (ObjHeader*)calloc(1, (size_t)size);
+    ObjHeader* h;
+    if (length < 0) {
+        arc_raise(ARC_EXC_OVERFLOW, "Arithmetic operation resulted in an overflow.");
+        return 0;
+    }
+    if (length > (INTPTR_MAX - 40) / stride) {
+        fprintf(stderr, "OutOfMemoryException: array is too large\n");
+        exit(70);
+    }
+    h = (ObjHeader*)arc_zalloc((size_t)(40 + stride * length), "an array");
     h->strong = 1; h->weak = 1;
     h->type = elementKind == ARC_ARRAY_STRUCT ? &arc_array_struct_ti
         : elementKind == ARC_ARRAY_REFERENCE ? &arc_array_ref_ti : &arc_array_val_ti;
@@ -1286,11 +1370,7 @@ static void* arc_str_alloc(intptr_t len, const char* site) {
         fprintf(stderr, "OutOfMemoryException: string is too long\n");
         exit(70);
     }
-    ObjHeader* h = (ObjHeader*)calloc(1, 32 + (size_t)len * sizeof(uint16_t));
-    if (!h) {
-        fprintf(stderr, "OutOfMemoryException: cannot allocate a string\n");
-        exit(70);
-    }
+    ObjHeader* h = (ObjHeader*)arc_zalloc(32 + (size_t)len * sizeof(uint16_t), "a string");
     h->strong = 1; h->weak = 1; h->type = &arc_str_ti;
     *(intptr_t*)((char*)h + 24) = len;
     g_alloc++;
@@ -1785,7 +1865,7 @@ static void arc_weakref_deinit(void* p) {
 static TypeInfo arc_weakref_ti = { "WeakReference", 32, arc_weakref_deinit, 0, 0, 0, 0 };
 
 void* arc_weakref_new(void* target, const char* site) {
-    ObjHeader* h = (ObjHeader*)calloc(1, 32);
+    ObjHeader* h = (ObjHeader*)arc_zalloc(32, "a weak reference");
     h->strong = 1; h->weak = 1; h->type = &arc_weakref_ti;
     void** slot = (void**)((char*)h + 24);
     arc_store_weak(slot, target);      /* weak-retain target */
@@ -1829,11 +1909,27 @@ typedef struct LeakObj {
     int color;
 } LeakObj;
 
+/* One object on the cycle search path. Its children occupy
+   children[start, end), and next is the first one not yet visited. */
+typedef struct LeakFrame {
+    int    node;
+    size_t start;
+    size_t next;
+    size_t end;
+} LeakFrame;
+
+/* The walks use explicit stacks, so a long chain of survivors cannot
+   overflow the C stack. */
 typedef struct LeakWalk {
     LeakObj* objs;
     int n;
-    int* stack;
+    int* stack;          /* the cycle search path, or the marking work list */
     int top;
+    LeakFrame* frames;
+    int* children;
+    size_t child_len;
+    size_t child_cap;
+    int incomplete;      /* an edge was skipped because memory ran out */
     char** seen;
     int seen_count;
 } LeakWalk;
@@ -1843,12 +1939,10 @@ static const char* leak_type_name(ObjHeader* h) {
     return "?";
 }
 
-static int leak_find(LeakObj* objs, int n, void* p) {
-    int i;
-    for (i = 0; i < n; i++) {
-        if (objs[i].obj == p) return i;
-    }
-    return -1;
+/* The survivor's position in the report, or -1 for an object that is not one. */
+static int leak_find(void* p) {
+    ArcRec* r = rec_find(p);
+    return r ? r->leak_index : -1;
 }
 
 static void leak_each(ObjHeader* h, void (*fn)(void*, void*), void* ctx);
@@ -1894,12 +1988,22 @@ static void leak_each(ObjHeader* h, void (*fn)(void*, void*), void* ctx) {
     leak_slots((char*)h, t->slots, t->slotCount, fn, ctx);
 }
 
-static void leak_mark(void* p, void* ctx) {
+/* Each survivor is marked before it is pushed, so the work list never holds
+   more than n entries. */
+static void leak_mark_push(void* p, void* ctx) {
     LeakWalk* w = (LeakWalk*)ctx;
-    int i = leak_find(w->objs, w->n, p);
+    int i = leak_find(p);
     if (i < 0 || w->objs[i].from_root) return;
     w->objs[i].from_root = 1;
-    leak_each(w->objs[i].obj, leak_mark, w);
+    w->stack[w->top++] = i;
+}
+
+static void leak_mark_root(LeakWalk* w, void* root) {
+    leak_mark_push(root, w);
+    while (w->top > 0) {
+        int u = w->stack[--w->top];
+        leak_each(w->objs[u].obj, leak_mark_push, w);
+    }
 }
 
 static int leak_seen(LeakWalk* w, const char* key) {
@@ -1964,25 +2068,54 @@ static void leak_report_cycle(LeakWalk* w, int back) {
     free(path);
 }
 
-static void leak_consider(void* p, void* ctx);
-
-static void leak_dfs(LeakWalk* w, int u) {
-    w->objs[u].color = 1;
-    w->stack[w->top++] = u;
-    leak_each(w->objs[u].obj, leak_consider, w);
-    w->top--;
-    w->objs[u].color = 2;
+static void leak_collect(void* p, void* ctx) {
+    LeakWalk* w = (LeakWalk*)ctx;
+    int j = leak_find(p);
+    if (j < 0 || w->objs[j].from_root) return;
+    if (w->child_len == w->child_cap) {
+        size_t cap = w->child_cap ? w->child_cap * 2 : 256;
+        int* grown = (int*)realloc(w->children, cap * sizeof(int));
+        if (!grown) {
+            w->incomplete = 1;
+            return;
+        }
+        w->children = grown;
+        w->child_cap = cap;
+    }
+    w->children[w->child_len++] = j;
 }
 
-static void leak_consider(void* p, void* ctx) {
-    LeakWalk* w = (LeakWalk*)ctx;
-    int j = leak_find(w->objs, w->n, p);
-    if (j < 0 || w->objs[j].from_root) return;
-    if (w->objs[j].color == 1) {
-        leak_report_cycle(w, j);
-        return;
+/* Each survivor is entered once, so the path never holds more than n frames. */
+static void leak_enter(LeakWalk* w, int u) {
+    LeakFrame* f = &w->frames[w->top];
+    w->objs[u].color = 1;
+    w->stack[w->top++] = u;
+    f->node = u;
+    f->start = w->child_len;
+    leak_each(w->objs[u].obj, leak_collect, w);
+    f->next = f->start;
+    f->end = w->child_len;
+}
+
+/* Visits children in field order and reports a back edge to a node on the
+   path, which is the order and the result of a recursive search. */
+static void leak_dfs(LeakWalk* w, int u) {
+    leak_enter(w, u);
+    while (w->top > 0) {
+        LeakFrame* f = &w->frames[w->top - 1];
+        if (f->next < f->end) {
+            int j = w->children[f->next++];
+            if (w->objs[j].color == 1) {
+                leak_report_cycle(w, j);
+            } else if (w->objs[j].color == 0) {
+                leak_enter(w, j);
+            }
+        } else {
+            w->objs[f->node].color = 2;
+            w->child_len = f->start;
+            w->top--;
+        }
     }
-    if (w->objs[j].color == 0) leak_dfs(w, j);
 }
 
 static int leak_cmp(const void* a, const void* b) {
@@ -1999,11 +2132,15 @@ static int leak_cmp(const void* a, const void* b) {
 
 static void arc_report_leaks(void) {
     int n = 0, i;
+    size_t b;
     ArcRec* r;
     LeakObj* objs;
     LeakWalk walk;
-    for (r = g_recs; r; r = r->next) {
-        if (r->obj && r->obj->strong > 0) n++;
+    for (b = 0; b < g_rec_capacity; b++) {
+        for (r = g_rec_buckets[b]; r; r = r->next) {
+            r->leak_index = -1;
+            if (r->obj && r->obj->strong > 0) n++;
+        }
     }
     if (n == 0) return;
     objs = (LeakObj*)calloc((size_t)n, sizeof(LeakObj));
@@ -2012,30 +2149,36 @@ static void arc_report_leaks(void) {
         return;
     }
     i = 0;
-    for (r = g_recs; r; r = r->next) {
-        if (r->obj && r->obj->strong > 0) {
-            objs[i].obj = r->obj;
-            objs[i].site = r->site ? r->site : "-";
-            i++;
+    for (b = 0; b < g_rec_capacity; b++) {
+        for (r = g_rec_buckets[b]; r; r = r->next) {
+            if (r->obj && r->obj->strong > 0) {
+                objs[i].obj = r->obj;
+                objs[i].site = r->site ? r->site : "-";
+                i++;
+            }
         }
     }
     n = i;
     qsort(objs, (size_t)n, sizeof(LeakObj), leak_cmp);
+    for (i = 0; i < n; i++) {
+        rec_find(objs[i].obj)->leak_index = i;
+    }
+    memset(&walk, 0, sizeof walk);
     walk.objs = objs;
     walk.n = n;
     walk.stack = (int*)calloc((size_t)n, sizeof(int));
-    walk.top = 0;
-    walk.seen = 0;
-    walk.seen_count = 0;
-    if (!walk.stack) {
+    walk.frames = (LeakFrame*)calloc((size_t)n, sizeof(LeakFrame));
+    if (!walk.stack || !walk.frames) {
         fprintf(stderr, "[arc] leak detector could not allocate its report\n");
+        free(walk.stack);
+        free(walk.frames);
         free(objs);
         return;
     }
     if (g_roots) {
         for (i = 0; i < g_root_count; i++) {
             void* root = g_roots[i] ? *g_roots[i] : 0;
-            if (root) leak_mark(root, &walk);
+            if (root) leak_mark_root(&walk, root);
         }
     }
     for (i = 0; i < n; i++) {
@@ -2048,8 +2191,13 @@ static void arc_report_leaks(void) {
     for (i = 0; i < n; i++) {
         if (!objs[i].from_root && objs[i].color == 0) leak_dfs(&walk, i);
     }
+    if (walk.incomplete) {
+        fprintf(stderr, "[arc] leak detector ran out of memory; the cycle list is incomplete\n");
+    }
     for (i = 0; i < walk.seen_count; i++) free(walk.seen[i]);
     free(walk.seen);
+    free(walk.children);
+    free(walk.frames);
     free(walk.stack);
     free(objs);
 }

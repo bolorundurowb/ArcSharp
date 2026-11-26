@@ -148,6 +148,7 @@ also stores the original cause. See [Static constructors](static-constructors.md
 | `/` or `%` by zero | `arc_div_check`. The emitter skips it when the divisor is a constant other than 0 and -1 | `DivideByZeroException` |
 | The minimum value divided by -1 | `arc_div_check` | `OverflowException` |
 | Store of the wrong type into a covariant array | `arc_array_store_check` | `ArrayTypeMismatchException` |
+| `new T[n]` with a negative `n`, or a `ulong` `n` above `long.MaxValue` | `arc_array_new` | `OverflowException` |
 | `throw null` | `arc_throw` | `NullReferenceException` |
 
 Before this change each of these printed a message and exited with code 70, and

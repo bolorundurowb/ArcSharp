@@ -1864,7 +1864,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 var arr = EmitR(ix.Receiver);
                 _stmtTemps.Add(arr);
                 PinOwner(pins, arr);
-                var idx = EmitR(ix.Index);
+                var idx = EmitArrayIndex(ix.Index);
                 return ElemAddr(arr, idx, ix.Type);
             }
         }
@@ -2516,13 +2516,13 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
     private string EmitNewArray(BoundNewArray a)
     {
-        var size = EmitR(a.Size);
-        var s64 = Inst($"sext i32 {size} to i64");
+        var s64 = EmitArrayIndex(a.Size);
         var elementKind = a.ElementType.IsReferenceType ? 1 : a.ElementType.Kind == TypeKind.Struct ? 2 : 0;
         var elemTi = a.ElementType.Kind is TypeKind.Class or TypeKind.Struct
             ? $"%TypeInfo* @{a.ElementType.Name}__ti"
             : "%TypeInfo* null";
         var array = Inst($"call i8* @arc_array_new(i64 {s64}, i32 {elementKind}, {elemTi}, i8* {SiteOperand(a.Site)})");
+        EmitPendingCheck();
         if (a.Initializers.Count == 0)
         {
             return array;
@@ -2577,8 +2577,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         Lbl(body);
         var sourceIndex = Inst($"add i32 {start}, {index}");
         var element = slice.ElementType;
-        var source = ElemAddr(array, sourceIndex, element, checkBounds: false);
-        var destination = ElemAddr(result, index, element, checkBounds: false);
+        var source = ElemAddr(array, Inst($"sext i32 {sourceIndex} to i64"), element, checkBounds: false);
+        var destination = ElemAddr(result, Inst($"sext i32 {index} to i64"), element, checkBounds: false);
         if (element.Kind == TypeKind.Struct)
         {
             CopyStruct(element, destination, source);
@@ -2604,9 +2604,19 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         return result;
     }
 
-    private string ElemAddr(string arr, string idx, TypeSymbol elem, bool checkBounds = true)
+    private string EmitArrayIndex(BoundExpr index)
     {
-        var i64 = Inst($"sext i32 {idx} to i64");
+        var value = EmitR(index);
+        if (index.Type.LlvmType == "i64")
+        {
+            return value;
+        }
+
+        return Inst($"{(index.Type.IsUnsignedInteger ? "zext" : "sext")} {index.Type.LlvmType} {value} to i64");
+    }
+
+    private string ElemAddr(string arr, string i64, TypeSymbol elem, bool checkBounds = true)
+    {
         if (checkBounds && _boundsChecks)
         {
             Do($"call void @arc_bounds_check(i8* {arr}, i64 {i64})");
@@ -2623,7 +2633,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
     {
         var arr = EmitR(ix.Receiver);
         TrackReferenceTemp(ix.Receiver, arr);
-        var idx = EmitR(ix.Index);
+        var idx = EmitArrayIndex(ix.Index);
         var addr = ElemAddr(arr, idx, ix.Type);
         if (ix.Type.Kind == TypeKind.Struct)
         {
@@ -2933,7 +2943,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             array = EmitR(element.Receiver);
             _stmtTemps.Add(array);
             PinOwner(pins, array);
-            index = EmitR(element.Index);
+            index = EmitArrayIndex(element.Index);
             address = ElemAddr(array, index, element.Type);
         }
         else
@@ -2966,8 +2976,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             {
                 var pending = _stmtTemps.Count;
                 _stmtTemps.Add(after);
-                var wideIndex = Inst($"sext i32 {index} to i64");
-                Do($"call void @arc_array_store_check(i8* {array}, i64 {wideIndex}, i8* {after})");
+                Do($"call void @arc_array_store_check(i8* {array}, i64 {index}, i8* {after})");
                 EmitPendingCheck();
                 UntrackInFlight(pending);
             }
@@ -3132,11 +3141,10 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             {
                 var arr = EmitR(ix.Receiver);
                 _stmtTemps.Add(arr);
-                var idx = EmitR(ix.Index);
-                var i64 = Inst($"sext i32 {idx} to i64");
+                var idx = EmitArrayIndex(ix.Index);
                 if (ix.Type.IsReferenceType)
                 {
-                    Do($"call void @arc_array_store_check(i8* {arr}, i64 {i64}, i8* {value})");
+                    Do($"call void @arc_array_store_check(i8* {arr}, i64 {idx}, i8* {value})");
                     EmitPendingCheck();
                     var addr = ElemAddr(arr, idx, ix.Type, checkBounds: false);
                     var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
@@ -3751,7 +3759,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
                 _stmtTemps.Add(value);
                 var arr = EmitR(ix.Receiver);
                 _stmtTemps.Add(arr);
-                var idx = EmitR(ix.Index);
+                var idx = EmitArrayIndex(ix.Index);
                 var addr = ElemAddr(arr, idx, ix.Type);
                 var pp = Inst($"bitcast {ix.Type.LlvmType}* {addr} to i8**");
                 UntrackInFlight(inFlight);
