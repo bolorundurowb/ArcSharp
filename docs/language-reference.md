@@ -582,8 +582,8 @@ Comments use `//` and `/* ... */`.
 
 ## Built-in library
 
-ArcSharp provides a small library for console output, strings, weak references
-and exceptions.
+ArcSharp provides a small library for console output, strings, weak references,
+collections and exceptions.
 
 | Member | Notes |
 |---|---|
@@ -598,10 +598,11 @@ and exceptions.
 | `new WeakReference<T>(target)` | |
 | `weak.TryGetTarget(out T target)` | Returns `true` and a strong reference if the target is alive |
 | `weak.SetTarget(target)` | |
+| `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`, `Queue<T>`, `Stack<T>` | Count, indexers and the members listed in [Collections](features/collections.md). No enumeration yet |
 
 The reference assembly provides these types under their standard `System`
-names. Collections and general-purpose file and network APIs are outside the
-currently implemented library.
+names. General-purpose file and network APIs are outside the currently
+implemented library.
 
 ## Not supported
 
@@ -646,6 +647,7 @@ says so. The finalisation contract is the runtime's compatibility profile.
 | Reference cycles | Collected. Finalisers of cyclic objects may still run | Permitted. `ARC3100` warns when the type graph can form one. An ignored warning, including in a library, leaks, and a finaliser in the cycle does not run. `WeakReference<T>` breaks the cycle |
 | `WeakReference<T>.TryGetTarget` after the last strong reference is gone | Usually still `true`, until a collection runs | Always `false`. The weak reference does not keep the object alive |
 | String searches | Some overloads use the current culture | Search and comparison use ordinal UTF-16 code units |
+| Null dictionary keys | `Dictionary<TKey, TValue>` throws `ArgumentNullException` | Accepted. A null key equals only null and hashes to 0. See [Collections](features/collections.md#null-elements-and-keys) |
 | Numeric formatting | Standard and custom format strings and culture providers | A subset of invariant standard formats |
 | `(decimal)` of a `double` | The exact binary value, rounded to 28 digits, in current .NET | The same. Older .NET versions rounded to 15 digits |
 | Formatting a `decimal` | `ToString` takes formats and a culture | `ToString()` and string concatenation only. The result is digits, an optional minus sign and a point |

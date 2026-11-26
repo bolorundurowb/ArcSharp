@@ -75,6 +75,7 @@ before you rely on it for anything beyond experiments.
 - [Events](features/events.md)
 - [Core library sources](features/core-library.md)
 - [Strings and formatting](features/strings.md)
+- [Collections](features/collections.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo

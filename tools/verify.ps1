@@ -347,6 +347,7 @@ Invoke-Sample delegates_lambdas "alloc=70 dead=70 freed=70 live=0" "delegates la
     Invoke-Sample do_while "alloc=1 dead=1 freed=1 live=0" "do while PASS" @("do_while")
     Invoke-Sample exceptions_using "alloc=74 dead=74 freed=74 live=0" "exceptions using PASS" @("exceptions_using")       # Dispose runs while unwinding
     Invoke-Sample exceptions_finaliser "alloc=32 dead=32 freed=32 live=0" "exceptions finaliser PASS" @("exceptions_finaliser") # a throwing finaliser is reported and teardown continues
+    Invoke-Sample collections "alloc=270 dead=270 freed=270 live=0" "collections PASS" @("collections") # List, Dictionary, HashSet, Queue, Stack; element equality and hashing; removal releases at once
 
     Write-Host "--- leak detector (ARC_LEAKS=1) ---"
     Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(
@@ -433,6 +434,10 @@ Invoke-MustFail lambda_ref_parameter "ARC3001" @("lambda_ref_parameter")
     Invoke-MustFail ref_owner       "ARC2015" @("ref_owner")
     Invoke-MustFail finaliser_resurrect "ARC2016" @("finaliser_resurrect")
     Invoke-MustFail gc_reregister   "ARC3001" @("gc_reregister")
+    Invoke-MustFail collection_float_element "ARC3001" @("collection_float_element")
+    Invoke-MustFail collection_object_key "ARC3001" @("collection_object_key")
+    Invoke-MustFail collection_struct_no_equals "must declare Equals(Plain)" @("collection_struct_no_equals")
+    Invoke-MustFail collection_struct_no_hash "must declare GetHashCode()" @("collection_struct_no_hash")
 
     Write-Host "--- a finaliser that resurrects its object aborts the process ---"
     Invoke-RuntimeAbort finaliser_resurrect_call "ResurrectionException" @("finaliser_resurrect_call")

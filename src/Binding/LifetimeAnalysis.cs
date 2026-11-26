@@ -303,6 +303,7 @@ public sealed class LifetimeAnalysis
         BoundConversion conversion => [conversion.Operand],
         BoundIs test => [test.Operand],
         BoundUnbox unbox => [unbox.Operand],
+        BoundIdentityHash identity => [identity.Operand],
         BoundPatternTest pattern => [pattern.Value, pattern.Test],
         BoundPatternBinding binding => [binding.Test, binding.Value],
         BoundPatternInput => [],

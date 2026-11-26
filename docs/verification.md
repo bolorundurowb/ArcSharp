@@ -29,10 +29,10 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (90 samples, Windows x64, 26 November 2026)
+## Results (91 samples, Windows x64, 26 November 2026)
 
-`tools\verify.ps1` reported **173 passed, 0 failed** with the .NET 11.0.100 SDK:
-90 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 61 must-fail
+`tools\verify.ps1` reported **178 passed, 0 failed** with the .NET 11.0.100 SDK:
+91 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 65 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 9 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests (93 xUnit tests), and one
 reference-surface check. `live=0` means every object was reclaimed.
@@ -133,6 +133,7 @@ asserts on purpose.
 | `do_while` | Body runs before the condition and repeats until it becomes false | alloc=1 dead=1 freed=1 **live=0** | `do while PASS` |
 | `exceptions_using` | `Dispose()` while an exception unwinds, a `Dispose()` that throws after the body and during an unwind, `return` from `using`, and `using` inside `try` with `finally` | alloc=74 dead=74 freed=74 **live=0** | `exceptions using PASS` |
 | `exceptions_finaliser` | a finaliser that throws is reported and ignored, the object's children are still finalised, an exception already unwinding survives it, and a finaliser that catches its own exception | alloc=32 dead=32 freed=32 **live=0** | `exceptions finaliser PASS` |
+| `collections` | `List<T>`, `Dictionary<TKey, TValue>` (including `KeyNotFoundException`), `HashSet<T>`, `Queue<T>` and `Stack<T>`, with int, string, `long`, class, `record` and struct keys. A `WeakReference<T>` shows that each removal, replacement, dequeue, pop and clear releases its element at that statement | alloc=270 dead=270 freed=270 **live=0** | `collections PASS` |
 
 The two new generic samples were also built and run with the normal .NET 8
 compiler, producing the same stdout. The generic identity example in the
@@ -266,8 +267,8 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 61 programs that must fail (`samples/negative/`) and
-checks the expected code: `ARC3001` for unsupported constructs, including ref
+The harness also compiles 65 programs that must fail (`samples/negative/`) and
+checks the expected code: `ARC3001` for unsupported constructs, including collection element types with no equality or hash (`collection_float_element`, `collection_object_key`, and two struct elements that lack a method, `collection_struct_no_equals` and `collection_struct_no_hash`), ref
 locals, ref returns, shift operators, exception filters, throw expressions and
 `GC.ReRegisterForFinalize`, `CS0029` for throwing a value that is not an
 exception, `CS1009`

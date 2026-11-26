@@ -83,6 +83,9 @@ reclaimed.
 - UTF-16 strings with indexing, search and replacement, primitive
   `ToString()`, interpolation, composite formatting, and
   `System.Text.StringBuilder`. See [Strings and formatting](docs/features/strings.md).
+- `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`, `Queue<T>` and `Stack<T>`,
+  with element equality taken from `Equals` and `GetHashCode`. See
+  [Collections](docs/features/collections.md).
 - Record classes with value equality, `with` and deconstruction, and object
   initialisers on classes.
 - `ref`, `out`, and `in` parameters. A reference into a heap object is kept

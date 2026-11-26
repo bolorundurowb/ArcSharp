@@ -1351,6 +1351,27 @@ int arc_str_equal(void* a, void* b) {
     return len == arc_str_length(b) && memcmp(arc_str_data(a), arc_str_data(b), (size_t)len * sizeof(uint16_t)) == 0;
 }
 
+// FNV-1a over the code units. A null string hashes to zero, which is the hash
+// the collections give a null element.
+int arc_str_hash(void* s) {
+    if (!s) return 0;
+    intptr_t length = arc_str_length(s);
+    const uint16_t* data = arc_str_data(s);
+    uint32_t hash = 2166136261u;
+    for (intptr_t i = 0; i < length; i++) {
+        hash ^= data[i];
+        hash *= 16777619u;
+    }
+    return (int)hash;
+}
+
+// Objects do not move, so the address identifies an object for its lifetime.
+// The shifts drop low bits, which vary little between allocations.
+int arc_identity_hash(void* p) {
+    uintptr_t address = (uintptr_t)p;
+    return (int)((address >> 4) ^ (address >> 32));
+}
+
 void* arc_str_concat(void* a, void* b) {
     intptr_t la = arc_str_length(a), lb = arc_str_length(b);
     void* r = arc_str_alloc(la + lb, "<runtime>");

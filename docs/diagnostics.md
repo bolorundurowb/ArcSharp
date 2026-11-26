@@ -145,8 +145,11 @@ restrictions listed in the [Language reference](language-reference.md#structs).
 Records and `decimal` add a few more: a record struct, a generic record, a record with a struct or array member, a collection initialiser, an object initialiser on a struct, boxing a nullable primitive, `??=`, and `new decimal` with several arguments.
 Delegates, lambdas and `?.` add more: a delegate bound to a library method, a delegate bound to an instance method of a struct, a lambda with a `ref` or `out` parameter, and `?.` with a value result or a value receiver.
 and a value-type argument to `GC.SuppressFinalize`, which would need boxing. A bad Unicode escape is Roslyn's
-`CS1009`. A missing type such as `List<T>`, a wrong generic arity, and a
-failed constraint are Roslyn `CS` codes.
+`CS1009`. A missing type such as `LinkedList<T>`, a wrong generic arity, and a
+failed constraint are Roslyn `CS` codes. A collection element type with no
+equality or hash is `ARC3001` too: `double`, `decimal`, `object`, a delegate,
+or a struct without its own `Equals(T)` or `GetHashCode()`. See
+[Collections](features/collections.md#how-elements-are-compared-and-hashed).
 
 The negative samples under `samples/negative/` exercise this rule.
 `tools/verify.ps1` checks that each one fails with the expected code.

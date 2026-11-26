@@ -314,7 +314,7 @@ public enum StringOp
 {
     ToString, Index, Equals, Substring, IndexOf, IndexOfChar, Contains,
     ContainsChar, StartsWith, EndsWith, IsNullOrEmpty, IsNullOrWhiteSpace,
-    Trim, Replace, ReplaceChar, Concat, NewLine, Format, Align, CompositeFormat
+    Trim, Replace, ReplaceChar, Concat, NewLine, Format, Align, CompositeFormat, Hash
 }
 
 public sealed class BoundStringOp : BoundExpr
@@ -322,6 +322,13 @@ public sealed class BoundStringOp : BoundExpr
     public required StringOp Op { get; init; }
     public BoundExpr? Receiver { get; init; }
     public required List<BoundExpr> Arguments { get; init; }
+}
+
+// The hash of a class instance that has no GetHashCode override. The runtime
+// derives it from the object's address, which does not change while the object lives.
+public sealed class BoundIdentityHash : BoundExpr
+{
+    public required BoundExpr Operand;
 }
 
 public sealed class BoundLength : BoundExpr      // array.Length or string.Length

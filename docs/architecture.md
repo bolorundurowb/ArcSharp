@@ -510,6 +510,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | `WeakReference<T>` fields, locals, and generic arguments | Implemented |
 | Arrays (value & reference element types)               | Implemented                           |
 | Strings + `Console`                                    | UTF-16 indexing, common methods, formatting, and `StringBuilder` |
+| Collections                                            | `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`, `Queue<T>`, `Stack<T>` (corelib, specialised per closed type; no enumeration yet) |
 | Control flow (`if`/`while`/`do`/`for`/`break`/`continue`/`return`, array `foreach`, constant-label `switch`)             | Implemented                           |
 | `float` / `double`                                     | Implemented                           |
 | `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
