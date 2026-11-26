@@ -58,6 +58,28 @@ return 0;
 
 static SurfaceCase[] Cases() =>
 [
+    new("core library exceptions", """
+        class P
+        {
+            static string Describe()
+            {
+                var cause = new System.ArgumentNullException("missing");
+                var failure = new System.TypeInitializationException("P", cause);
+                return failure.InnerException.Message;
+            }
+        }
+        """),
+    new("core library delegates", """
+        class P
+        {
+            static int Apply(System.Func<int, int> transform, System.Predicate<int> matches)
+            {
+                System.Action<int> observe = value => { };
+                observe(1);
+                return matches(1) ? transform(1) : 0;
+            }
+        }
+        """),
     new("decimal arithmetic", """
         class P
         {

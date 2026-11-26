@@ -37,6 +37,9 @@ public static class RoslynFrontend
             {
                 // A trailing '?' is accepted and ignored, matching the current compiler.
                 ["CS8632"] = ReportDiagnostic.Suppress,
+                // Core library declarations are present in metadata for callers of
+                // the reference assembly. ArcSharp binds to their source bodies.
+                ["CS0436"] = ReportDiagnostic.Suppress,
                 ["CS8019"] = ReportDiagnostic.Suppress
             });
         var compilation = CSharpCompilation.Create(
@@ -59,11 +62,11 @@ public static class RoslynFrontend
     private static IEnumerable<SyntaxTree> CoreLibrary(CSharpParseOptions parse)
     {
         var assembly = typeof(RoslynFrontend).Assembly;
-        foreach (var name in assembly.GetManifestResourceNames().Where(name => name.StartsWith("corelib/", StringComparison.Ordinal)).Order())
+        foreach (var name in assembly.GetManifestResourceNames().Where(name => name.StartsWith("corelib/", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
         {
             using var stream = assembly.GetManifestResourceStream(name)!;
             using var reader = new StreamReader(stream);
-            yield return CSharpSyntaxTree.ParseText(reader.ReadToEnd(), parse, path: name);
+            yield return CSharpSyntaxTree.ParseText(reader.ReadToEnd(), parse, path: name.Replace('\\', '/'));
         }
     }
 

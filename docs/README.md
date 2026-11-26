@@ -73,6 +73,7 @@ before you rely on it for anything beyond experiments.
 - [Nested closures and local functions](features/nested-closures.md)
 - [Delegates](features/delegates.md)
 - [Events](features/events.md)
+- [Core library sources](features/core-library.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo

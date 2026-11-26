@@ -115,7 +115,9 @@ call is not a supported library feature. `string` has no equality operator, so
 because the C# compiler cannot emit the assembly without them, so an enum or a
 custom attribute binds here even though the language reference rejects both.
 A `using` on a type that has `Dispose()` but does not implement `IDisposable`
-is rejected. Method bodies in the assembly are never run.
+is rejected. Method bodies in the assembly are never run. The C# files under
+`corelib/` are shared with the reference assembly. ArcSharp binds those types
+to the embedded source it compiles with each program.
 
 Source layout:
 
