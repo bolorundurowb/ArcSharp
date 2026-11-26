@@ -17,8 +17,12 @@ reason to stderr and exits with code 70.
 - When the last weak reference goes away, the runtime removes the allocation
   from the registry and holds it in quarantine until process exit. This
   prevents a reused address from making a stale pointer appear valid. The
-  trade-off is higher peak memory use and a linear registry lookup on
-  checked operations.
+  trade-off is higher peak memory use.
+- The registry is a hash table keyed by address, so each checked retain,
+  release and free costs one bucket lookup. It used to be a list, and a check
+  walked every live object: a program that read the elements of a
+  40,000-element list three times took 0.2 seconds unchecked and 179 seconds
+  checked. With the table it takes under a second in both modes.
 - Destruction still runs at the last strong release. The `freed` counter
   advances when the weak count reaches zero, which is when the unchecked
   runtime frees the allocation. This keeps the accounting comparable and

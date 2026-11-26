@@ -29,11 +29,11 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (91 samples, Windows x64, 26 November 2026)
+## Results (93 samples, Windows x64, 26 November 2026)
 
-`tools\verify.ps1` reported **178 passed, 0 failed** with the .NET 11.0.100 SDK:
-91 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 65 must-fail
-diagnostics, 2 run-time abort checks, 3 command-line checks, 9 cycle checks,
+`tools\verify.ps1` reported **182 passed, 0 failed** with the .NET 11.0.100 SDK:
+93 sample programs, 5 leak-report checks (`ARC_LEAKS=1`), 65 must-fail
+diagnostics, 2 run-time abort checks, 3 command-line checks, 10 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests (93 xUnit tests), and one
 reference-surface check. `live=0` means every object was reclaimed.
 `byref` allocates nothing because it uses only value types, and `numerics` allocates only the strings of one concatenation check.
@@ -74,6 +74,7 @@ asserts on purpose.
 | `charprint` | `Console.WriteLine` of a `char`, and concatenation of a `char` | alloc=5 dead=5 freed=5 **live=0** | `concat=B direct=A` |
 | `staticprop` | a static auto-property, read and written | alloc=3 dead=3 freed=3 **live=0** | `count=4` |
 | `leaks` | a static root, an unreachable class cycle, and an unreachable cycle through a reference array. With `ARC_LEAKS=1` the report marks `Node` as `root=static` and the others as `root=unreachable`, and prints the `Parent`/`Child` and `<ref[]>`/`Cell` cycles | alloc=7 dead=1 freed=1 **live=6** | `leaks reported` |
+| `leaks_deep` | a 10,000-node chain from a static field and an unreachable 10,000-node ring. With `ARC_LEAKS=1` the report marks every `Link` as `root=static` and every `Ring` as `root=unreachable`, and prints one `Ring` cycle, without overflowing the native stack | alloc=20001 dead=1 freed=1 **live=20000** | `deep leaks built` |
 | `generics` | two-file generic classes/interfaces, generic bases and virtual dispatch, methods and inference, recursion, independent statics, arrays and weak references as arguments, constraints, and primitive default construction | alloc=72 dead=72 freed=72 **live=0** | `generic=42,hello`, `dispatch=7,7`, `infer=11,hello,9`, `owners=after,hello,made`, `counts=2,1`, `arrays=11,array`, `weak=made`, `types=True,True`, `generics PASS` |
 | `generic_dispatch` | interface, `virtual`, `abstract` and `override` generic methods, a generic owner, a constrained call, and an instantiation first reached inside an override | alloc=31 dead=31 freed=31 **live=0** | `generic dispatch PASS` |
 | `static_abstract` | `static abstract` and `static virtual` members called through a type parameter: a method, operators, a property with a setter, and a default body, for a class and a struct | alloc=21 dead=21 freed=21 **live=0** | `static abstract PASS` |
@@ -95,7 +96,8 @@ asserts on purpose.
 | `exceptions_basic` | `try`, `catch`, `finally`, a `throw` caught in the same method and one caught across a call, a runtime division by zero, and a catch clause that does not match | alloc=16 dead=16 freed=16 **live=0** | `outer caught inner` |
 | `exceptions_unwind` | cleanup on every unwind path: argument temporaries, locals across frames, a throwing constructor, a store that throws, a concatenation that throws, `return` through `finally`, nested `finally`, rethrow, a `finally` that replaces an exception, and a thrown stored exception | alloc=97 dead=97 freed=97 **live=0** | `exceptions unwind PASS` |
 | `exceptions_abandoned_return` | finalisation before the handler runs when a throwing `finally` cancels a reference or struct return | alloc=13 dead=13 freed=13 **live=0** | `abandoned returns PASS` |
-| `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, `throw null`, and a base-class catch | alloc=53 dead=53 freed=53 **live=0** | `exceptions runtime PASS` |
+| `exceptions_runtime` | each runtime check raises a catchable exception: index out of range, invalid cast, null field read and write, null call, null `.Length`, null element, divide and remainder by zero, `long` division, overflow, array type mismatch, a negative value-array and reference-array length, `throw null`, and a base-class catch | alloc=60 dead=60 freed=60 **live=0** | `exceptions runtime PASS` |
+| `arrays_wide_index` | `long`, `uint` and `ulong` array lengths and indices on value, class and string arrays, a compound assignment through a `long` index, a `long` index out of range, and a `ulong` length above `long.MaxValue` that raises `OverflowException` | alloc=39 dead=39 freed=39 **live=0** | `arrays wide index PASS` |
 | `variance` | Covariant and contravariant slots, generic defaults, and unmanaged, notnull, enum and nullable reference constraints | alloc=5 dead=5 freed=5 **live=0** | `variance PASS` |
 | `nullable_values` | Lifted operations, nullable conversions and coalescing, presence tests, and a nullable struct's owned reference | alloc=4 dead=4 freed=4 **live=0** | `nullable values PASS` |
 | `operator_updates` | Operator results for struct and reference updates, single index evaluation and failed covariant stores | alloc=9 dead=9 freed=9 **live=0** | `operator updates PASS` |
@@ -144,10 +146,12 @@ The generic linked-node type produces the expected conservative `ARC3100`
 warning; its sample creates no cycle and exits with `live=0`.
 
 With `ARC_LEAKS=1`, the harness checks the survivor report for `leaks`,
-`cycle_strong`, `cycle_struct`, and `cycle_weak`. The two strong-cycle programs
-name an unreachable cycle (`Parent -> Child -> Parent`, and
-`Owner -> Owner -> Owner` through the struct field). `cycle_weak` prints no
-survivor lines. The accounting totals above are unchanged when the report is
+`leaks_deep`, `cycle_strong`, `cycle_struct`, and `cycle_weak`. The two
+strong-cycle programs name an unreachable cycle (`Parent -> Child -> Parent`,
+and `Owner -> Owner -> Owner` through the struct field). `cycle_weak` prints no
+survivor lines. `leaks_deep` checks that the root marking and the cycle search
+walk long object chains with an explicit work list. Before that change, the
+recursive walk overflowed the native stack at a chain of about 5,000 objects. The accounting totals above are unchanged when the report is
 off.
 
 ## M2 retain and release baseline

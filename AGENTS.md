@@ -275,8 +275,9 @@ with its chain function `@<Type>__finalisers`.
   object pointers, `i64` for `intptr_t`, `i32` for C `int`. A mismatch compiles
   and links but corrupts arguments at run time.
 - A null dereference, an index out of range, an invalid class cast, a
-  division by zero, and an array type mismatch raise exceptions through
-  `arc_raise`. The classes come from `corelib/Exceptions.cs`, and the order in
+  division by zero, an array type mismatch, and a negative array length raise
+  exceptions through `arc_raise`. A failed allocation prints
+  `OutOfMemoryException` and exits with code 70. The classes come from `corelib/Exceptions.cs`, and the order in
   `Emitter.RuntimeExceptionTypes` must match the `ARC_EXC_*` enum in the
   runtime. An exception that nothing catches prints `Unhandled exception.`,
   calls `arc_report()`, and exits with code 70. A finaliser that resurrected
