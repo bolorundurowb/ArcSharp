@@ -20,14 +20,3 @@ namespace System.Runtime.CompilerServices
     {
     }
 }
-
-namespace System.Text
-{
-    public sealed class StringBuilder
-    {
-        public StringBuilder Append(string value)
-        {
-            return this;
-        }
-    }
-}

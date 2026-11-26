@@ -165,9 +165,22 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             "declare void @arc_bounds_check(i8*, i64)",
             "declare void @arc_array_store_check(i8*, i64, i8*)",
                      "declare i8* @arc_str_lit(i8*, i64, i8*)",
+                     "declare i8* @arc_str_literal(i16*, i64, i8*)",
                      "declare i64 @arc_str_length(i8*)",
                      "declare i8* @arc_str_concat(i8*, i8*)",
                      "declare i32 @arc_str_equal(i8*, i8*)",
+                     "declare i32 @arc_str_index(i8*, i32)",
+                     "declare i8* @arc_str_substring(i8*, i32, i32, i32)",
+                     "declare i32 @arc_str_find(i8*, i8*, i32)",
+                     "declare i32 @arc_str_find_char(i8*, i32)",
+                     "declare i8* @arc_str_trim(i8*)",
+                     "declare i8* @arc_str_replace(i8*, i8*, i8*)",
+                     "declare i8* @arc_str_replace_char(i8*, i32, i32)",
+                     "declare i8* @arc_str_newline()",
+                     "declare i32 @arc_str_is_blank(i8*)",
+                     "declare i8* @arc_str_align(i8*, i32)",
+                     "declare i8* @arc_str_format_value(i64, i32, i8*)",
+                     "declare i8* @arc_str_composite(i8*, i64*, i64)",
                      "declare i8* @arc_str_from_int(i64)",
                      "declare i8* @arc_str_from_uint(i64)",
                      "declare i8* @arc_str_from_char(i32)",
@@ -231,7 +244,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         "System.InvalidCastException",
         "System.DivideByZeroException",
         "System.OverflowException",
-        "System.ArrayTypeMismatchException"
+        "System.ArrayTypeMismatchException",
+        "System.ArgumentNullException",
+        "System.ArgumentOutOfRangeException",
+        "System.FormatException",
+        "System.ArgumentException"
     ];
 
     private void EmitExceptionTypeTable()
@@ -1683,6 +1700,7 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             }
             case BoundFieldAccess fa: return EmitFieldAccess(fa);
             case BoundLength len: return EmitLength(len);
+            case BoundStringOp text: return EmitStringOp(text);
             case BoundCall c: return EmitCall(c);
             case BoundNewObject n: return EmitNewObject(n);
             case BoundNewArray a: return EmitNewArray(a);
@@ -1740,25 +1758,12 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case Syntax.LiteralKind.Null: return "null";
             case Syntax.LiteralKind.String:
             {
-                var bytes = Encoding.UTF8.GetBytes(l.StringValue);
-                var len = bytes.Length;
-                var sb = new StringBuilder();
-                foreach (var bt in bytes)
-                {
-                    if (bt >= 0x20 && bt < 0x7f && bt != (byte)'"' && bt != (byte)'\\')
-                    {
-                        sb.Append((char)bt);
-                    }
-                    else
-                    {
-                        sb.Append("\\" + bt.ToString("X2"));
-                    }
-                }
-
+                var len = l.StringValue.Length;
+                var units = string.Join(", ", l.StringValue.Select(unit => $"i16 {(int)unit}"));
                 var g = $"@.str.{_strId++}";
-                _strings.Add($"{g} = private constant [{len + 1} x i8] c\"{sb}\\00\"");
-                var ptr = Inst($"getelementptr [{len + 1} x i8], [{len + 1} x i8]* {g}, i64 0, i64 0");
-                return Inst($"call i8* @arc_str_lit(i8* {ptr}, i64 {len}, i8* {SiteOperand(l.Site)})");
+                _strings.Add($"{g} = private constant [{len} x i16] [{units}]");
+                var ptr = Inst($"getelementptr [{len} x i16], [{len} x i16]* {g}, i64 0, i64 0");
+                return Inst($"call i8* @arc_str_literal(i16* {ptr}, i64 {len}, i8* {SiteOperand(l.Site)})");
             }
         }
 
@@ -2015,8 +2020,202 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         var recv = EmitR(len.Receiver);
         TrackReferenceTemp(len.Receiver, recv);
         EmitNullCheck(len.Receiver, recv);
-        var l = Inst($"call i64 @arc_array_length(i8* {recv})");
+        var function = len.IsString ? "arc_str_length" : "arc_array_length";
+        var l = Inst($"call i64 @{function}(i8* {recv})");
         return Inst($"trunc i64 {l} to i32");
+    }
+
+    private string EmitStringOp(BoundStringOp text)
+    {
+        if (text.Op == StringOp.ToString && text.Receiver is { Type.Kind: not TypeKind.String } primitive)
+        {
+            return EmitStringOperand(primitive);
+        }
+
+        if (text.Op == StringOp.Align)
+        {
+            var value = EmitStringOperand(text.Receiver!);
+            _stmtTemps.Add(value);
+            var width = EmitR(text.Arguments[0]);
+            return Inst($"call i8* @arc_str_align(i8* {value}, i32 {width})");
+        }
+
+        if (text.Op == StringOp.Format)
+        {
+            var (value, kind) = EmitFormatValue(text.Receiver!);
+            var pattern = EmitR(text.Arguments[0]);
+            TrackReferenceTemp(text.Arguments[0], pattern);
+            var result = Inst($"call i8* @arc_str_format_value(i64 {value}, i32 {kind}, i8* {pattern})");
+            EmitPendingCheck();
+            return result;
+        }
+
+        if (text.Op == StringOp.CompositeFormat)
+        {
+            return EmitCompositeFormat(text.Arguments);
+        }
+
+        string? receiver = null;
+        if (text.Receiver is { } instance)
+        {
+            receiver = EmitR(instance);
+            TrackReferenceTemp(instance, receiver);
+        }
+
+        var arguments = new string[text.Arguments.Count];
+        for (var i = 0; i < text.Arguments.Count; i++)
+        {
+            var argument = text.Arguments[i];
+            var ordinal = i;
+            if (argument is BoundNamedArgument named)
+            {
+                ordinal = named.Ordinal;
+                argument = named.Value;
+            }
+
+            var value = EmitR(argument);
+            TrackReferenceTemp(argument, value);
+            arguments[ordinal] = value;
+        }
+
+        if (text.Receiver is { } checkedReceiver && receiver != null)
+        {
+            EmitNullCheck(checkedReceiver, receiver);
+        }
+
+        switch (text.Op)
+        {
+            case StringOp.ToString:
+                Do($"call void @arc_retain(i8* {receiver})");
+                return receiver!;
+            case StringOp.Index:
+            {
+                var unit = Inst($"call i32 @arc_str_index(i8* {receiver}, i32 {arguments[0]})");
+                EmitPendingCheck();
+                return unit;
+            }
+            case StringOp.Equals:
+            {
+                var left = receiver ?? arguments[0];
+                var right = arguments[^1];
+                var equal = Inst($"call i32 @arc_str_equal(i8* {left}, i8* {right})");
+                return Inst($"icmp ne i32 {equal}, 0");
+            }
+            case StringOp.Substring:
+            {
+                var count = arguments.Length == 2 ? arguments[1] : "0";
+                var hasCount = arguments.Length == 2 ? 1 : 0;
+                var slice = Inst($"call i8* @arc_str_substring(i8* {receiver}, i32 {arguments[0]}, i32 {count}, i32 {hasCount})");
+                EmitPendingCheck();
+                return slice;
+            }
+            case StringOp.IsNullOrEmpty:
+            {
+                var length = Inst($"call i64 @arc_str_length(i8* {arguments[0]})");
+                return Inst($"icmp eq i64 {length}, 0");
+            }
+            case StringOp.Trim:
+                return Inst($"call i8* @arc_str_trim(i8* {receiver})");
+            case StringOp.NewLine:
+                return Inst("call i8* @arc_str_newline()");
+            case StringOp.Replace:
+            {
+                var replaced = Inst($"call i8* @arc_str_replace(i8* {receiver}, i8* {arguments[0]}, i8* {arguments[1]})");
+                EmitPendingCheck();
+                return replaced;
+            }
+            case StringOp.ReplaceChar:
+                return Inst($"call i8* @arc_str_replace_char(i8* {receiver}, i32 {arguments[0]}, i32 {arguments[1]})");
+            case StringOp.Concat:
+            {
+                var result = arguments[0];
+                for (var i = 1; i < arguments.Length; i++)
+                {
+                    result = Inst($"call i8* @arc_str_concat(i8* {result}, i8* {arguments[i]})");
+                    if (i < arguments.Length - 1)
+                    {
+                        _stmtTemps.Add(result);
+                    }
+                }
+
+                return result;
+            }
+            case StringOp.IsNullOrWhiteSpace:
+            {
+                var blank = Inst($"call i32 @arc_str_is_blank(i8* {arguments[0]})");
+                return Inst($"icmp ne i32 {blank}, 0");
+            }
+            case StringOp.IndexOfChar:
+            case StringOp.ContainsChar:
+            {
+                var index = Inst($"call i32 @arc_str_find_char(i8* {receiver}, i32 {arguments[0]})");
+                return text.Op == StringOp.IndexOfChar ? index : Inst($"icmp sge i32 {index}, 0");
+            }
+            case StringOp.Contains:
+            case StringOp.IndexOf:
+            case StringOp.StartsWith:
+            case StringOp.EndsWith:
+            {
+                var mode = text.Op == StringOp.StartsWith ? 1 : text.Op == StringOp.EndsWith ? 2 : 0;
+                var index = Inst($"call i32 @arc_str_find(i8* {receiver}, i8* {arguments[0]}, i32 {mode})");
+                EmitPendingCheck();
+                return text.Op == StringOp.IndexOf ? index : Inst($"icmp sge i32 {index}, 0");
+            }
+            default:
+                throw new InvalidOperationException($"Unknown string operation {text.Op}");
+        }
+    }
+
+    private (string Value, int Kind) EmitFormatValue(BoundExpr operand)
+    {
+        if (operand.Type.IsReferenceType || operand.Type.LlvmType == "i8*" || operand.Type.Name is "char" or "bool")
+        {
+            var text = EmitStringOperand(operand);
+            _stmtTemps.Add(text);
+            return (Inst($"ptrtoint i8* {text} to i64"), 0);
+        }
+
+        var value = EmitR(operand);
+        var type = operand.Type.LlvmType;
+        if (type is "float" or "double")
+        {
+            var single = type == "float";
+            var real = single ? Inst($"fpext float {value} to double") : value;
+            return (Inst($"bitcast double {real} to i64"), single ? 1 : 2);
+        }
+
+        var unsigned = operand.Type.IsUnsignedInteger;
+        var width = int.Parse(type.AsSpan(1), System.Globalization.CultureInfo.InvariantCulture);
+        var integer = width == 64 ? value : Inst($"{(unsigned ? "zext" : "sext")} {type} {value} to i64");
+        return (integer, unsigned ? width : -width);
+    }
+
+    private string EmitCompositeFormat(List<BoundExpr> arguments)
+    {
+        var count = arguments.Count - 1;
+        var slots = T();
+        _entry.Add($"  {slots} = alloca i64, i64 {2 * count}");
+        var pattern = "null";
+        foreach (var argument in arguments.Cast<BoundNamedArgument>())
+        {
+            if (argument.Ordinal == 0)
+            {
+                pattern = EmitR(argument.Value);
+                TrackReferenceTemp(argument.Value, pattern);
+                continue;
+            }
+
+            var (value, kind) = EmitFormatValue(argument.Value);
+            var index = 2 * (argument.Ordinal - 1);
+            var payload = Inst($"getelementptr i64, i64* {slots}, i64 {index}");
+            var tag = Inst($"getelementptr i64, i64* {slots}, i64 {index + 1}");
+            Do($"store i64 {value}, i64* {payload}");
+            Do($"store i64 {kind}, i64* {tag}");
+        }
+
+        var result = Inst($"call i8* @arc_str_composite(i8* {pattern}, i64* {slots}, i64 {count})");
+        EmitPendingCheck();
+        return result;
     }
 
     private string EmitCall(BoundCall c)

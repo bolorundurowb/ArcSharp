@@ -357,16 +357,21 @@ static SurfaceCase[] Cases() =>
             }
         }
         """),
-    new("string-index", """
+    new("string library", """
         class P
         {
             static void M()
             {
                 string s = "hi";
                 char c = s[0];
+                var builder = new System.Text.StringBuilder();
+                builder.Append(c).Append(1.25m).AppendLine(s.Replace("h", "H"));
+                string formatted = string.Format("{0:D3}", 42);
+                string interpolated = $"{formatted}: {1.25:F2}";
+                string hex = ((byte)255).ToString("X");
             }
         }
-        """, "CS0021"),
+        """),
     new("nullable-value", """
         class P
         {

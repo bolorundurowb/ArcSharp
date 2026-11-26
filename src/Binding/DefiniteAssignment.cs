@@ -507,6 +507,10 @@ public static class DefiniteAssignment
                     assigned.Add(binding.Local.Id);
                     break;
                 case BoundLength len: VisitExpr(len.Receiver, assigned); break;
+                case BoundStringOp text:
+                    if (text.Receiver != null) { VisitExpr(text.Receiver, assigned); }
+                    foreach (var argument in text.Arguments) { VisitExpr(argument, assigned); }
+                    break;
                 case BoundSameType same: VisitExpr(same.Left, assigned); VisitExpr(same.Right, assigned); break;
                 case BoundDecimalOp decimalOp:
                     foreach (var argument in decimalOp.Arguments)

@@ -68,7 +68,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.RangeExpression,
         SyntaxKind.ImplicitObjectCreationExpression,
         SyntaxKind.AnonymousObjectCreationExpression,
-        SyntaxKind.InterpolatedStringExpression,
         SyntaxKind.RefExpression,
         SyntaxKind.RefType,
         SyntaxKind.PointerType,
@@ -282,7 +281,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.RangeExpression => "ranges ('..') are not supported",
         SyntaxKind.ImplicitObjectCreationExpression => "target-typed 'new()' is not supported: name the type",
         SyntaxKind.AnonymousObjectCreationExpression => "anonymous types are not supported",
-        SyntaxKind.InterpolatedStringExpression => "interpolated strings are not supported: use concatenation",
         SyntaxKind.RefExpression =>
             "ref locals and ref returns are not supported: a managed reference must not outlive the call",
         SyntaxKind.RefType =>

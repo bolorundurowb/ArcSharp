@@ -10,12 +10,13 @@
  *                                      low 32 bits, then the finalisation flags
  *   offset 16 : TypeInfo* type         type descriptor
  *   offset 24 : first field / array length / string length / WeakReference slot
- *   offset 32 : string bytes, or the element TypeInfo* of an array
+ *   offset 32 : UTF-16 string units, or the element TypeInfo* of an array
  *   offset 40 : array elements (one or more 8-byte slots per element)
  */
 /* getenv is the portable way to read runtime options. The MSVC headers mark it
    deprecated in favour of _dupenv_s, which is not portable. */
 #define _CRT_SECURE_NO_WARNINGS
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -277,6 +278,10 @@ enum {
     ARC_EXC_DIVIDE_BY_ZERO,
     ARC_EXC_OVERFLOW,
     ARC_EXC_ARRAY_TYPE_MISMATCH,
+    ARC_EXC_ARGUMENT_NULL,
+    ARC_EXC_ARGUMENT_OUT_OF_RANGE,
+    ARC_EXC_FORMAT,
+    ARC_EXC_ARGUMENT,
     ARC_EXC_KIND_COUNT
 };
 
@@ -287,6 +292,7 @@ static intptr_t g_exc_count = 0;
 
 void arc_release(void* p);
 static void* arc_str_new(const char* data, intptr_t len, const char* site);
+static void arc_str_write(FILE* stream, void* s);
 
 void arc_set_exception_types(TypeInfo** types, intptr_t count) {
     g_exc_types = types;
@@ -329,7 +335,9 @@ static void arc_print_exception(void* ex) {
     void* message = *(void**)((char*)ex + ARC_EXC_MESSAGE_OFFSET);
     const char* name = (h->type && h->type->name) ? h->type->name : "?";
     if (message) {
-        fprintf(stderr, "%s: %s\n", name, (const char*)message + 32);
+        fprintf(stderr, "%s: ", name);
+        arc_str_write(stderr, message);
+        fputc('\n', stderr);
     } else {
         fprintf(stderr, "%s\n", name);
     }
@@ -1271,19 +1279,67 @@ void arc_array_store_check(void* arr, intptr_t i, void* value) {
 static void arc_str_deinit(void* p) { (void)p; }
 static TypeInfo arc_str_ti = { "string", 0, arc_str_deinit, 0, 0, 0, 0 };
 
-static void* arc_str_new(const char* data, intptr_t len, const char* site) {
-    intptr_t size = 32 + len + 1;
-    ObjHeader* h = (ObjHeader*)calloc(1, (size_t)size);
+static uint16_t* arc_str_data(void* s) { return (uint16_t*)((char*)s + 32); }
+
+static void* arc_str_alloc(intptr_t len, const char* site) {
+    if (len > INT32_MAX) {
+        fprintf(stderr, "OutOfMemoryException: string is too long\n");
+        exit(70);
+    }
+    ObjHeader* h = (ObjHeader*)calloc(1, 32 + (size_t)len * sizeof(uint16_t));
+    if (!h) {
+        fprintf(stderr, "OutOfMemoryException: cannot allocate a string\n");
+        exit(70);
+    }
     h->strong = 1; h->weak = 1; h->type = &arc_str_ti;
     *(intptr_t*)((char*)h + 24) = len;
-    char* buf = (char*)h + 32;
-    if (data) memcpy(buf, data, (size_t)len);
-    buf[len] = 0;
     g_alloc++;
     track(h, site);
     return h;
 }
-static char* arc_str_data(void* s) { return (char*)s + 32; }
+
+void* arc_str_literal(const uint16_t* data, intptr_t len, const char* site) {
+    void* result = arc_str_alloc(len, site);
+    if (len) memcpy(arc_str_data(result), data, (size_t)len * sizeof(uint16_t));
+    return result;
+}
+
+static intptr_t arc_utf8_decode(const unsigned char* data, intptr_t len, uint16_t* output) {
+    intptr_t count = 0;
+    for (intptr_t i = 0; i < len;) {
+        unsigned int scalar = data[i++];
+        if (scalar >= 0x80) {
+            int more = scalar >= 0xF0 ? 3 : scalar >= 0xE0 ? 2 : scalar >= 0xC2 ? 1 : 0;
+            unsigned int min = more == 3 ? 0x10000 : more == 2 ? 0x800 : 0x80;
+            scalar = more ? scalar & (0x7F >> (more + 1)) : 0xFFFD;
+            for (int j = 0; j < more; j++) {
+                if (i >= len || (data[i] & 0xC0) != 0x80) {
+                    scalar = 0xFFFD;
+                    break;
+                }
+                scalar = (scalar << 6) | (data[i++] & 0x3F);
+            }
+            if (scalar < min || scalar > 0x10FFFF || (scalar >= 0xD800 && scalar <= 0xDFFF))
+                scalar = 0xFFFD;
+        }
+        if (scalar > 0xFFFF) {
+            scalar -= 0x10000;
+            if (output) output[count] = (uint16_t)(0xD800 + (scalar >> 10));
+            count++;
+            scalar = 0xDC00 + (scalar & 0x3FF);
+        }
+        if (output) output[count] = (uint16_t)scalar;
+        count++;
+    }
+    return count;
+}
+
+static void* arc_str_new(const char* data, intptr_t len, const char* site) {
+    intptr_t count = arc_utf8_decode((const unsigned char*)data, len, NULL);
+    void* result = arc_str_alloc(count, site);
+    arc_utf8_decode((const unsigned char*)data, len, arc_str_data(result));
+    return result;
+}
 
 void* arc_str_lit(const char* data, intptr_t len, const char* site) { return arc_str_new(data, len, site); }
 intptr_t arc_str_length(void* s) { return s ? *(intptr_t*)((char*)s + 24) : 0; }
@@ -1292,18 +1348,153 @@ int arc_str_equal(void* a, void* b) {
     if (a == b) return 1;
     if (!a || !b) return 0;
     intptr_t len = arc_str_length(a);
-    return len == arc_str_length(b) && memcmp(arc_str_data(a), arc_str_data(b), (size_t)len) == 0;
+    return len == arc_str_length(b) && memcmp(arc_str_data(a), arc_str_data(b), (size_t)len * sizeof(uint16_t)) == 0;
 }
 
 void* arc_str_concat(void* a, void* b) {
     intptr_t la = arc_str_length(a), lb = arc_str_length(b);
-    void* r = arc_str_new(0, la + lb, "<runtime>");
-    char* buf = arc_str_data(r);
-    if (a) memcpy(buf,        arc_str_data(a), (size_t)la);
-    if (b) memcpy(buf + la,   arc_str_data(b), (size_t)lb);
-    buf[la + lb] = 0;
+    void* r = arc_str_alloc(la + lb, "<runtime>");
+    uint16_t* buf = arc_str_data(r);
+    if (la) memcpy(buf, arc_str_data(a), (size_t)la * sizeof(uint16_t));
+    if (lb) memcpy(buf + la, arc_str_data(b), (size_t)lb * sizeof(uint16_t));
     return r;
 }
+
+int arc_str_index(void* s, int index) {
+    if (index < 0 || index >= arc_str_length(s)) {
+        arc_raise(ARC_EXC_INDEX_OUT_OF_RANGE, "Index was outside the bounds of the string.");
+        return 0;
+    }
+    return arc_str_data(s)[index];
+}
+
+void* arc_str_substring(void* s, int start, int count, int has_count) {
+    intptr_t length = arc_str_length(s);
+    if (start < 0 || start > length || (has_count && (count < 0 || count > length - start))) {
+        arc_raise(ARC_EXC_ARGUMENT_OUT_OF_RANGE, "Substring bounds were outside the string.");
+        return NULL;
+    }
+    intptr_t units = has_count ? count : length - start;
+    if (units == length) {
+        arc_retain(s);
+        return s;
+    }
+    return arc_str_literal(arc_str_data(s) + start, units, "<runtime>");
+}
+
+int arc_str_find(void* s, void* value, int mode) {
+    if (!value) {
+        arc_raise(ARC_EXC_ARGUMENT_NULL, "Value cannot be null.");
+        return -1;
+    }
+    intptr_t count = arc_str_length(value);
+    intptr_t last = arc_str_length(s) - count;
+    if (last < 0) return -1;
+    intptr_t first = mode == 2 ? last : 0;
+    if (mode == 1) last = 0;
+    for (intptr_t i = first; i <= last; i++) {
+        if (!count || memcmp(arc_str_data(s) + i, arc_str_data(value), (size_t)count * sizeof(uint16_t)) == 0)
+            return (int)i;
+    }
+    return -1;
+}
+
+int arc_str_find_char(void* s, int value) {
+    intptr_t length = arc_str_length(s);
+    const uint16_t* data = arc_str_data(s);
+    for (intptr_t i = 0; i < length; i++) {
+        if (data[i] == value) return (int)i;
+    }
+    return -1;
+}
+
+static int arc_str_is_space(uint16_t unit) {
+    return (unit >= 0x9 && unit <= 0xD) || unit == 0x20 || unit == 0x85 || unit == 0xA0
+        || unit == 0x1680 || (unit >= 0x2000 && unit <= 0x200A) || unit == 0x2028
+        || unit == 0x2029 || unit == 0x202F || unit == 0x205F || unit == 0x3000;
+}
+
+int arc_str_is_blank(void* s) {
+    intptr_t length = arc_str_length(s);
+    for (intptr_t i = 0; i < length; i++) {
+        if (!arc_str_is_space(arc_str_data(s)[i])) return 0;
+    }
+    return 1;
+}
+
+void* arc_str_trim(void* s) {
+    const uint16_t* data = arc_str_data(s);
+    intptr_t start = 0, end = arc_str_length(s);
+    while (start < end && arc_str_is_space(data[start])) start++;
+    while (end > start && arc_str_is_space(data[end - 1])) end--;
+    return arc_str_substring(s, (int)start, (int)(end - start), 1);
+}
+
+void* arc_str_replace_char(void* s, int before, int after) {
+    int first = before == after ? -1 : arc_str_find_char(s, before);
+    if (first < 0) {
+        arc_retain(s);
+        return s;
+    }
+    intptr_t length = arc_str_length(s);
+    void* result = arc_str_literal(arc_str_data(s), length, "<runtime>");
+    uint16_t* data = arc_str_data(result);
+    for (intptr_t i = first; i < length; i++) {
+        if (data[i] == before) data[i] = (uint16_t)after;
+    }
+    return result;
+}
+
+void* arc_str_replace(void* s, void* before, void* after) {
+    if (!before) {
+        arc_raise(ARC_EXC_ARGUMENT_NULL, "Value cannot be null.");
+        return NULL;
+    }
+    intptr_t from = arc_str_length(before);
+    if (!from) {
+        arc_raise(ARC_EXC_ARGUMENT, "The value cannot be an empty string.");
+        return NULL;
+    }
+    intptr_t length = arc_str_length(s);
+    intptr_t to = arc_str_length(after);
+    const uint16_t* source = arc_str_data(s);
+    const uint16_t* needle = arc_str_data(before);
+    size_t match_bytes = (size_t)from * sizeof(uint16_t);
+    intptr_t matches = 0;
+    for (intptr_t i = 0; i <= length - from;) {
+        if (memcmp(source + i, needle, match_bytes) == 0) {
+            matches++;
+            i += from;
+        } else {
+            i++;
+        }
+    }
+    if (!matches) {
+        arc_retain(s);
+        return s;
+    }
+    void* result = arc_str_alloc(length + matches * (to - from), "<runtime>");
+    uint16_t* dest = arc_str_data(result);
+    for (intptr_t i = 0; i < length;) {
+        if (i <= length - from && memcmp(source + i, needle, match_bytes) == 0) {
+            if (to) memcpy(dest, arc_str_data(after), (size_t)to * sizeof(uint16_t));
+            dest += to;
+            i += from;
+        } else {
+            *dest++ = source[i++];
+        }
+    }
+    return result;
+}
+
+void* arc_str_newline(void) {
+#ifdef _WIN32
+    return arc_str_new("\r\n", 2, "<runtime>");
+#else
+    return arc_str_new("\n", 1, "<runtime>");
+#endif
+}
+
 void* arc_str_from_int(intptr_t v) {
     char tmp[32];
     int n = snprintf(tmp, sizeof tmp, "%lld", (long long)v);
@@ -1314,8 +1505,7 @@ void* arc_str_from_uint(uint64_t v) {
     int n = snprintf(tmp, sizeof tmp, "%llu", (unsigned long long)v);
     return arc_str_new(tmp, n, "<runtime>");
 }
-/* A C# char is one UTF-16 code unit. Encode a scalar in the BMP; a surrogate
-   has no character of its own. */
+/* Encode a Unicode scalar for console output. */
 static int arc_utf8_unit(unsigned int u, unsigned char* out) {
     if (u <= 0x7F) {
         out[0] = (unsigned char)u;
@@ -1332,13 +1522,19 @@ static int arc_utf8_unit(unsigned int u, unsigned char* out) {
         out[2] = (unsigned char)(0x80 | (u & 0x3F));
         return 3;
     }
+    if (u >= 0x10000 && u <= 0x10FFFF) {
+        out[0] = (unsigned char)(0xF0 | (u >> 18));
+        out[1] = (unsigned char)(0x80 | ((u >> 12) & 0x3F));
+        out[2] = (unsigned char)(0x80 | ((u >> 6) & 0x3F));
+        out[3] = (unsigned char)(0x80 | (u & 0x3F));
+        return 4;
+    }
     out[0] = '?';
     return 1;
 }
 void* arc_str_from_char(int c) {
-    unsigned char tmp[3];
-    int n = arc_utf8_unit((unsigned int)c, tmp);
-    return arc_str_new((const char*)tmp, n, "<runtime>");
+    uint16_t unit = (uint16_t)c;
+    return arc_str_literal(&unit, 1, "<runtime>");
 }
 void* arc_str_from_bool(int v) {
     return v ? arc_str_new("True", 4, "<runtime>") : arc_str_new("False", 5, "<runtime>");
@@ -1352,6 +1548,211 @@ void* arc_str_from_double(double v) {
     char tmp[64];
     int n = snprintf(tmp, sizeof tmp, "%g", v);
     return arc_str_new(tmp, n, "<runtime>");
+}
+
+void* arc_str_align(void* s, int width) {
+    intptr_t wanted = width < 0 ? -(intptr_t)width : width;
+    intptr_t length = arc_str_length(s);
+    if (length >= wanted) {
+        arc_retain(s);
+        return s;
+    }
+    void* result = arc_str_alloc(wanted, "<runtime>");
+    uint16_t* data = arc_str_data(result);
+    for (intptr_t i = 0; i < wanted; i++) data[i] = ' ';
+    if (length)
+        memcpy(data + (width < 0 ? 0 : wanted - length), arc_str_data(s), (size_t)length * sizeof(uint16_t));
+    return result;
+}
+
+static int arc_str_format_spec(void* format, const char* supported, int* precision) {
+    *precision = -1;
+    intptr_t length = arc_str_length(format);
+    if (!length) return 'G';
+    const uint16_t* data = arc_str_data(format);
+    int kind = data[0];
+    if (!kind || kind > 127 || !strchr(supported, kind)) return 0;
+    if (length > 1) {
+        *precision = 0;
+        for (intptr_t i = 1; i < length; i++) {
+            if (data[i] < '0' || data[i] > '9' || *precision > 9) return 0;
+            *precision = *precision * 10 + data[i] - '0';
+        }
+    }
+    return kind;
+}
+
+static void* arc_str_bad_format(void) {
+    arc_raise(ARC_EXC_FORMAT, "The numeric format specifier is not supported.");
+    return NULL;
+}
+
+static void* arc_str_format_int(uint64_t value, int width, void* format) {
+    int precision;
+    int kind = arc_str_format_spec(format, "DdGgXx", &precision);
+    if (!kind || ((kind == 'g' || kind == 'G') && precision > 0)) return arc_str_bad_format();
+    char text[104];
+    int count;
+    if (kind == 'x' || kind == 'X') {
+        int bits = width < 0 ? -width : width;
+        if (bits != 64) value &= (UINT64_C(1) << bits) - 1;
+        count = snprintf(text, sizeof text, kind == 'x' ? "%.*llx" : "%.*llX",
+            precision > 0 ? precision : 1, (unsigned long long)value);
+    } else {
+        int negative = width < 0 && (value >> 63);
+        uint64_t magnitude = negative ? UINT64_C(0) - value : value;
+        int digits = (kind == 'd' || kind == 'D') && precision > 0 ? precision : 1;
+        count = snprintf(text, sizeof text, "%s%.*llu", negative ? "-" : "", digits, (unsigned long long)magnitude);
+    }
+    return arc_str_new(text, count, "<runtime>");
+}
+
+static void* arc_str_format_real(double value, int single, void* format) {
+    int precision;
+    int kind = arc_str_format_spec(format, "FfEeGg", &precision);
+    if (!kind) return arc_str_bad_format();
+    if (isnan(value)) return arc_str_new("NaN", 3, "<runtime>");
+    if (isinf(value)) return value < 0 ? arc_str_new("-Infinity", 9, "<runtime>") : arc_str_new("Infinity", 8, "<runtime>");
+    char text[512];
+    int count;
+    if (kind == 'F' || kind == 'f') {
+        count = snprintf(text, sizeof text, "%.*f", precision < 0 ? 2 : precision, value);
+    } else if (kind == 'E' || kind == 'e') {
+        count = snprintf(text, sizeof text, kind == 'E' ? "%.*E" : "%.*e", precision < 0 ? 6 : precision, value);
+        char* exponent = strchr(text, kind);
+        if (exponent && strlen(exponent) == 4) {
+            memmove(exponent + 3, exponent + 2, 3);
+            exponent[2] = '0';
+            count++;
+        }
+    } else if (precision > 0) {
+        count = snprintf(text, sizeof text, kind == 'G' ? "%.*G" : "%.*g", precision, value);
+    } else {
+        int limit = single ? 9 : 17;
+        for (int digits = 1;; digits++) {
+            count = snprintf(text, sizeof text, kind == 'G' ? "%.*G" : "%.*g", digits, value);
+            double parsed = strtod(text, NULL);
+            if ((single ? (float)parsed == (float)value : parsed == value) || digits == limit) break;
+        }
+    }
+    return arc_str_new(text, count, "<runtime>");
+}
+
+/* Each format argument is a payload followed by its representation tag.
+   Tags +/-8 through +/-64 encode signedness and integer width. */
+void* arc_str_format_value(uint64_t value, int kind, void* format) {
+    if (kind == 0) {
+        void* text = (void*)(uintptr_t)value;
+        arc_retain(text);
+        return text;
+    }
+    if (kind == 1 || kind == 2) {
+        double real;
+        memcpy(&real, &value, sizeof real);
+        return arc_str_format_real(real, kind == 1, format);
+    }
+    return arc_str_format_int(value, kind, format);
+}
+
+typedef struct ArcTextBuffer {
+    uint16_t* data;
+    intptr_t length;
+    intptr_t capacity;
+} ArcTextBuffer;
+
+static void arc_str_buffer_add(ArcTextBuffer* buffer, const uint16_t* data, intptr_t count) {
+    if (!count) return;
+    intptr_t total = buffer->length + count;
+    if (total > buffer->capacity) {
+        intptr_t capacity = buffer->capacity + buffer->capacity / 2 + 16;
+        if (capacity < total) capacity = total;
+        uint16_t* grown = (uint16_t*)realloc(buffer->data, (size_t)capacity * sizeof(uint16_t));
+        if (!grown) {
+            fprintf(stderr, "OutOfMemoryException: cannot grow a formatting buffer\n");
+            exit(70);
+        }
+        buffer->data = grown;
+        buffer->capacity = capacity;
+    }
+    memcpy(buffer->data + buffer->length, data, (size_t)count * sizeof(uint16_t));
+    buffer->length = total;
+}
+
+static int arc_str_read_number(const uint16_t** cursor, const uint16_t* end, int* number) {
+    const uint16_t* p = *cursor;
+    if (p == end || *p < '0' || *p > '9') return 0;
+    int value = 0;
+    do {
+        int digit = *p++ - '0';
+        if (value > (INT32_MAX - digit) / 10) return 0;
+        value = value * 10 + digit;
+    } while (p < end && *p >= '0' && *p <= '9');
+    *cursor = p;
+    *number = value;
+    return 1;
+}
+
+void* arc_str_composite(void* format, const int64_t* arguments, intptr_t count) {
+    if (!format) {
+        arc_raise(ARC_EXC_ARGUMENT_NULL, "Value cannot be null.");
+        return NULL;
+    }
+    const uint16_t* p = arc_str_data(format);
+    const uint16_t* end = p + arc_str_length(format);
+    ArcTextBuffer buffer = { 0 };
+    while (p < end) {
+        uint16_t unit = *p++;
+        if (unit != '{' && unit != '}') {
+            arc_str_buffer_add(&buffer, &unit, 1);
+            continue;
+        }
+        if (p < end && *p == unit) {
+            p++;
+            arc_str_buffer_add(&buffer, &unit, 1);
+            continue;
+        }
+
+        int index, width = 0;
+        if (unit != '{' || !arc_str_read_number(&p, end, &index) || index >= count) goto invalid;
+        while (p < end && *p == ' ') p++;
+        if (p < end && *p == ',') {
+            p++;
+            while (p < end && *p == ' ') p++;
+            int left = p < end && *p == '-';
+            if (left) p++;
+            if (!arc_str_read_number(&p, end, &width)) goto invalid;
+            if (left) width = -width;
+            while (p < end && *p == ' ') p++;
+        }
+
+        const uint16_t* spec = p;
+        if (p < end && *p == ':') {
+            spec = ++p;
+            while (p < end && *p != '}' && *p != '{') p++;
+        }
+        if (p == end || *p != '}') goto invalid;
+        int kind = (int)arguments[2 * (intptr_t)index + 1];
+        void* pattern = kind && p != spec ? arc_str_literal(spec, p - spec, "<runtime>") : NULL;
+        void* value = arc_str_format_value((uint64_t)arguments[2 * (intptr_t)index], kind, pattern);
+        arc_release(pattern);
+        if (arc_exception) {
+            free(buffer.data);
+            return NULL;
+        }
+        void* field = arc_str_align(value, width);
+        arc_release(value);
+        if (field) arc_str_buffer_add(&buffer, arc_str_data(field), arc_str_length(field));
+        arc_release(field);
+        p++;
+    }
+    void* result = arc_str_literal(buffer.data, buffer.length, "<runtime>");
+    free(buffer.data);
+    return result;
+
+invalid:
+    free(buffer.data);
+    arc_raise(ARC_EXC_FORMAT, "Input string was not in a correct format.");
+    return NULL;
 }
 
 /* ---- WeakReference<T> ----------------------------------------------- */
@@ -1633,8 +2034,23 @@ static void arc_report_leaks(void) {
 }
 
 /* ---- console --------------------------------------------------------- */
+static void arc_str_write(FILE* stream, void* s) {
+    intptr_t length = arc_str_length(s);
+    for (intptr_t i = 0; i < length; i++) {
+        const uint16_t* data = arc_str_data(s);
+        unsigned int scalar = data[i];
+        if (scalar >= 0xD800 && scalar <= 0xDBFF && i + 1 < length
+            && data[i + 1] >= 0xDC00 && data[i + 1] <= 0xDFFF) {
+            scalar = 0x10000 + ((scalar - 0xD800) << 10) + (data[++i] - 0xDC00);
+        }
+        unsigned char bytes[4];
+        int count = arc_utf8_unit(scalar, bytes);
+        fwrite(bytes, 1, (size_t)count, stream);
+    }
+}
+
 void arc_console_write(void* s, int nl) {
-    if (s) fputs(arc_str_data(s), stdout);
+    arc_str_write(stdout, s);
     if (nl) fputc('\n', stdout);
 }
 void arc_console_write_int(long long v, int nl) {
@@ -1646,7 +2062,7 @@ void arc_console_write_uint(uint64_t v, int nl) {
     if (nl) putchar('\n');
 }
 void arc_console_write_char(int c, int nl) {
-    unsigned char tmp[3];
+    unsigned char tmp[4];
     int n = arc_utf8_unit((unsigned int)c, tmp);
     fwrite(tmp, 1, (size_t)n, stdout);
     if (nl) putchar('\n');

@@ -3,10 +3,8 @@
 //
 // Predefined type names (Object, String, Void, the numeric structs, Array,
 // ValueType) must stay in namespace System. Roslyn looks them up by those
-// names. Do not add members the compiler cannot lower. String.Concat and
-// Object.ToString are public because Roslyn lowers + through them, and a
-// direct call is not a supported library feature. There is no equality
-// operator on String, so == stays reference equality.
+// names. String.Concat and Object.ToString also let Roslyn bind concatenation
+// before ArcSharp lowers it.
 //
 // Every type a program names through `using System` is in namespace System,
 // including Console. System.Console.WriteLine and a using System directive
@@ -152,42 +150,60 @@ namespace System
 
     public struct Boolean
     {
+        public override string ToString() => null;
     }
 
     public struct Char
     {
+        public override string ToString() => null;
     }
 
     public struct SByte
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public struct Byte
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public struct Int16
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public struct UInt16
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public struct Int32
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public struct UInt32
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public struct Int64
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public struct UInt64
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     // Roslyn requires this predefined type when it emits a list pattern.
@@ -197,10 +213,14 @@ namespace System
 
     public struct Single
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public struct Double
     {
+        public override string ToString() => null;
+        public string ToString(string format) => null;
     }
 
     public sealed class String
@@ -213,6 +233,25 @@ namespace System
         {
             get { return 0; }
         }
+
+        public char this[int index] => default;
+        public override string ToString() => this;
+        public bool Equals(string value) => default;
+        public static bool Equals(string a, string b) => default;
+        public string Substring(int startIndex) => null;
+        public string Substring(int startIndex, int length) => null;
+        public bool Contains(string value) => default;
+        public bool Contains(char value) => default;
+        public int IndexOf(string value) => default;
+        public int IndexOf(char value) => default;
+        public bool StartsWith(string value) => default;
+        public bool EndsWith(string value) => default;
+        public static bool IsNullOrEmpty(string value) => default;
+        public static bool IsNullOrWhiteSpace(string value) => default;
+        public string Trim() => null;
+        public string Replace(char oldChar, char newChar) => null;
+        public string Replace(string oldValue, string newValue) => null;
+        public static string Format(string format, params object[] args) => null;
 
         public static string Concat(string str0, string str1)
         {
@@ -263,6 +302,11 @@ namespace System
         {
             return null;
         }
+    }
+
+    public static class Environment
+    {
+        public static string NewLine => null;
     }
 
     public abstract class Array

@@ -284,7 +284,8 @@ try {
     Invoke-Sample using_stmt     "alloc=25 dead=25 freed=25 live=0" "disposals=3"                @("using_stmt")           # using/IDisposable: declaration, expression, virtual, interface, null, return
     Invoke-Sample structs        "alloc=66 dead=66 freed=66 live=0" "card=card copy tags=1,2"    @("structs")              # struct codegen: value semantics, reference fields, ref/out, nesting
     Invoke-Sample boolprint      "alloc=9 dead=9 freed=9 live=0" "cmp=False/True direct=False" @("boolprint")       # false comparison printed with WriteLine, and bool concatenation
-    Invoke-Sample unicode        "alloc=9 dead=9 freed=9 live=0" "letter=A match=True bytes=4" @("unicode")         # \u and \U escapes
+    Invoke-Sample unicode        "alloc=9 dead=9 freed=9 live=0" "letter=A match=True units=2" @("unicode")         # \u and \U escapes
+    Invoke-Sample string_library "alloc=110 dead=110 freed=110 live=0" "string library PASS" @("string_library")
     Invoke-Sample overloads      "alloc=19 dead=19 freed=19 live=0" "int=7 str=ok 4 4"           @("overloads")        # same-arity overloads, static and instance
     Invoke-Sample charprint      "alloc=5 dead=5 freed=5 live=0" "concat=B direct=A"          @("charprint")        # char prints as a character
     Invoke-Sample staticprop     "alloc=3 dead=3 freed=3 live=0" "count=4"                    @("staticprop")       # static auto-property
@@ -390,6 +391,7 @@ Invoke-Sample delegates_lambdas "alloc=70 dead=70 freed=70 live=0" "delegates la
     Invoke-MustFail record_array_member "ARC3001" @("record_array_member")
     Invoke-MustFail decimal_constructor "ARC3001" @("decimal_constructor")
     Invoke-MustFail decimal_parse "CS0117" @("decimal_parse")
+    Invoke-MustFail string_format_array "ARC3001" @("string_format_array")
     Invoke-MustFail static_abstract_generic "ARC3001" @("static_abstract_generic")
     Invoke-MustFail foreach         "ARC3001" @("foreach")
     Invoke-MustFail lambda          "ARC3001" @("lambda")

@@ -29,12 +29,12 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (89 samples, Windows x64, 26 November 2026)
+## Results (90 samples, Windows x64, 26 November 2026)
 
-`tools\verify.ps1` reported **171 passed, 0 failed** with the .NET 11.0.100 SDK:
-89 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 60 must-fail
+`tools\verify.ps1` reported **173 passed, 0 failed** with the .NET 11.0.100 SDK:
+90 sample programs, 4 leak-report checks (`ARC_LEAKS=1`), 61 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 9 cycle checks,
-2 `ARC3200` checks, one run of the analyser unit tests (91 xUnit tests), and one
+2 `ARC3200` checks, one run of the analyser unit tests (93 xUnit tests), and one
 reference-surface check. `live=0` means every object was reclaimed.
 `byref` allocates nothing because it uses only value types, and `numerics` allocates only the strings of one concatenation check.
 `cycle_strong`, `cycle_struct`, `finaliser_cycle`, `lambda_cycle` and `event_cycle` are the leaks the harness
@@ -68,7 +68,8 @@ asserts on purpose.
 | `using_stmt` | `using`/`IDisposable`: declaration and expression forms, virtual and itable dispatch of `Dispose`, a `null` resource (cleanup skipped), and cleanup on the `return` path | alloc=25 dead=25 freed=25 **live=0** | `dispose a`, `tmp delete`, `db closed`, `disposals=3` |
 | `structs` | struct code generation: value semantics, reference fields, `ref`/`out`, structs inside classes, nested structs, and a temporary struct method call | alloc=66 dead=66 freed=66 **live=0** | `a.sum=5`, `card=card copy tags=1,2`, `temp=42` |
 | `boolprint` | `Console.WriteLine` of a false comparison, and concatenation of `bool` values | alloc=9 dead=9 freed=9 **live=0** | `cmp=False/True direct=False` |
-| `unicode` | `\u` and `\U` escapes in a string and a character literal | alloc=9 dead=9 freed=9 **live=0** | `A`, `letter=A match=True bytes=4` |
+| `unicode` | `\u` and `\U` escapes and UTF-16 length | alloc=9 dead=9 freed=9 **live=0** | `A`, `letter=A match=True units=2` |
+| `string_library` | UTF-16 indexing, string methods, primitive and composite formatting, builder snapshots and exception cleanup | alloc=110 dead=110 freed=110 **live=0** | `string library PASS` |
 | `overloads` | static and instance methods that share a name and an arity, chosen by argument type | alloc=19 dead=19 freed=19 **live=0** | `int=7 str=ok 4 4` |
 | `charprint` | `Console.WriteLine` of a `char`, and concatenation of a `char` | alloc=5 dead=5 freed=5 **live=0** | `concat=B direct=A` |
 | `staticprop` | a static auto-property, read and written | alloc=3 dead=3 freed=3 **live=0** | `count=4` |
@@ -265,7 +266,7 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 59 programs that must fail (`samples/negative/`) and
+The harness also compiles 61 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, including ref
 locals, ref returns, shift operators, exception filters, throw expressions and
 `GC.ReRegisterForFinalize`, `CS0029` for throwing a value that is not an

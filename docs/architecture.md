@@ -108,10 +108,11 @@ the compiler. The compiler loads that copy and lowers declarations and
 method bodies into the existing bound tree. It defines `object`, `string`, `void`, `System.ValueType`, the numeric types,
 `System.Array`, `System.Console`, `System.WeakReference<T>`, and
 `System.IDisposable`. A call written `System.Console.WriteLine` binds to that
-type, and so does `Console.WriteLine` after `using System`. `String.Concat` and
-`Object.ToString` are public because Roslyn lowers `+` through them; a direct
-call is not a supported library feature. `string` has no equality operator, so
-`==` stays reference equality. `System.Enum` and `System.Attribute` exist
+type, and so does `Console.WriteLine` after `using System`. Roslyn binds
+concatenation through the `String.Concat` and `Object.ToString` surface.
+The lowering handles string equality by content and recognises the supported
+string methods, primitive conversions and formatting intrinsics.
+`System.Enum` and `System.Attribute` exist
 because the C# compiler cannot emit the assembly without them, so an enum or a
 custom attribute binds here even though the language reference rejects both.
 A `using` on a type that has `Dispose()` but does not implement `IDisposable`
@@ -153,6 +154,10 @@ The weak word carries two flags above the count. Bit 32 means
 `GC.SuppressFinalize` was called, and bit 33 means a finaliser is running.
 Only the runtime reads or writes the word, so the emitter's offsets are
 unchanged.
+
+A string stores its UTF-16 code-unit count at byte 24 and its units from byte
+32. The payload is length-delimited. Native console output and exception
+reporting transcode it to UTF-8.
 
 The object's fields follow immediately after the header. A reference (`T r`) is
 just a pointer to the header; field/element access adds the field offset.
@@ -504,7 +509,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | ARC: retain/release/deinit, statement & scope cleanup  | Implemented                           |
 | `WeakReference<T>` fields, locals, and generic arguments | Implemented |
 | Arrays (value & reference element types)               | Implemented                           |
-| Strings + `Console`                                    | Implemented                           |
+| Strings + `Console`                                    | UTF-16 indexing, common methods, formatting, and `StringBuilder` |
 | Control flow (`if`/`while`/`do`/`for`/`break`/`continue`/`return`, array `foreach`, constant-label `switch`)             | Implemented                           |
 | `float` / `double`                                     | Implemented                           |
 | `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
@@ -623,6 +628,6 @@ Still open, and not required to start the Roslyn transition:
    local reads, a call that only borrows, a local-to-local move) and which ones
    fall back immediately is decided at the start of
    [M3](roadmap.md#m3--lifetime-pass).
-6. **String representation.** Strings are UTF-8 today, and `Length` counts
-   bytes. Full compatibility needs UTF-16 code units. This is decided at the
-   start of [M8](roadmap.md#m8--core-library-iterators-and-linq).
+6. **String representation.** M8 stores UTF-16 code units in ARC strings.
+   [Strings and formatting](features/strings.md) describes the layout and
+   the supported API surface.

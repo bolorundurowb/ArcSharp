@@ -159,6 +159,20 @@ namespace System
         }
     }
 
+    public class ArgumentOutOfRangeException : ArgumentException
+    {
+        public ArgumentOutOfRangeException() : base("Specified argument was out of the range of valid values.")
+        {
+        }
+    }
+
+    public class FormatException : SystemException
+    {
+        public FormatException() : base("Input string was not in a correct format.")
+        {
+        }
+    }
+
     public class InvalidOperationException : SystemException
     {
         public InvalidOperationException() : base("Operation is not valid due to the current state of the object.")

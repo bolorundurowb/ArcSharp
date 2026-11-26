@@ -4,6 +4,6 @@ class Program
     {
         var match = '\u0041' == 'A';
         Console.WriteLine("\u0041");
-        Console.WriteLine("letter=\u0041 match=" + match + " bytes=" + "\U0001F600".Length);
+        Console.WriteLine("letter=\u0041 match=" + match + " units=" + "\U0001F600".Length);
     }
 }

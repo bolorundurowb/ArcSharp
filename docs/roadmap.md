@@ -121,6 +121,9 @@ results are in [Verification](verification.md).
   and static auto-properties, with the restrictions in the language reference.
 - The integer and floating-point numeric types, strings, single-dimensional
   arrays, `is`, `as`, and checked array covariance.
+- UTF-16 strings, common string methods, primitive text conversion,
+  interpolation, composite formatting, and `StringBuilder`. See
+  [Strings and formatting](features/strings.md).
 - `using` with an explicit `Dispose()` on the normal completion path.
 - `WeakReference<T>`, the `ARC3100` cycle warning, and the opt-in leak report
   (`ARC_LEAKS=1`).
@@ -483,8 +486,8 @@ C# against the ARC rules. The rest of the .NET base class library is not built.
 1. **Done.** Embed the sources under `corelib/` in the compiler and compile them
    with every program. Build the same sources into the reference assembly
    so metadata consumers see the exception and delegate declarations.
-2. Strings: the common methods, `ToString()` for the primitive types,
-   formatting, and `StringBuilder`.
+2. **Done.** Common string methods, primitive `ToString()`, formatting,
+   and `StringBuilder`. See [Strings and formatting](features/strings.md).
 3. Collections: `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`,
    `Queue<T>`, and `Stack<T>`.
 4. Iterators: `yield`, `IEnumerable<T>`, and `foreach` over any enumerable.
@@ -496,9 +499,9 @@ C# against the ARC rules. The rest of the .NET base class library is not built.
 samples run with `live=0`. Reusing an algorithm from the base class library is
 allowed only when it does not assume a garbage collector.
 
-**Decided at the start of this milestone.** String representation. Today a
-string is UTF-8 and `Length` counts bytes. Full compatibility needs UTF-16 code
-units for `Length`, indexing, and `char`.
+Strings store UTF-16 code units for `Length`, indexing and `char`.
+The current `StringBuilder` copies its text on each append. An amortised
+character buffer is a possible optimisation when append-heavy workloads justify it.
 
 ---
 

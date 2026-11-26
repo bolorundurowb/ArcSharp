@@ -310,6 +310,20 @@ public sealed class BoundAs : BoundExpr
     public required TypeSymbol TestType;
 }
 
+public enum StringOp
+{
+    ToString, Index, Equals, Substring, IndexOf, IndexOfChar, Contains,
+    ContainsChar, StartsWith, EndsWith, IsNullOrEmpty, IsNullOrWhiteSpace,
+    Trim, Replace, ReplaceChar, Concat, NewLine, Format, Align, CompositeFormat
+}
+
+public sealed class BoundStringOp : BoundExpr
+{
+    public required StringOp Op { get; init; }
+    public BoundExpr? Receiver { get; init; }
+    public required List<BoundExpr> Arguments { get; init; }
+}
+
 public sealed class BoundLength : BoundExpr      // array.Length or string.Length
 {
     public required BoundExpr Receiver;
