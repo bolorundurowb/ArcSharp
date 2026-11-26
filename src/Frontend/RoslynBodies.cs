@@ -272,7 +272,7 @@ sealed partial class RoslynLowering
             ConditionIsTop = loop.ConditionIsTop
         },
         IForLoopOperation loop => LowerFor(loop),
-        IForEachLoopOperation loop => LowerArrayForEach(loop),
+        IForEachLoopOperation loop => LowerForEach(loop),
         ISwitchOperation selection => LowerSwitch(selection),
         IBranchOperation { BranchKind: BranchKind.Break or BranchKind.Continue } branch =>
             new BoundBranch { IsContinue = branch.BranchKind == BranchKind.Continue },
@@ -430,7 +430,7 @@ sealed partial class RoslynLowering
         return result;
     }
 
-    private BoundStmt LowerArrayForEach(IForEachLoopOperation loop)
+    private BoundStmt LowerForEach(IForEachLoopOperation loop)
     {
         if (loop.Syntax is not ForEachStatementSyntax syntax
             || loop.IsAsynchronous
@@ -442,7 +442,7 @@ sealed partial class RoslynLowering
         var model = _compilation.GetSemanticModel(syntax.SyntaxTree);
         if (model.GetTypeInfo(syntax.Expression).Type is not IArrayTypeSymbol { IsSZArray: true })
         {
-            return UnsupportedStmt(loop);
+            return LowerEnumeratorForEach(loop, variable, model.GetForEachStatementInfo(syntax));
         }
 
         var conversion = model.GetForEachStatementInfo(syntax).ElementConversion;
@@ -467,21 +467,6 @@ sealed partial class RoslynLowering
 
         BoundLocal Read(LocalSymbol local) => new() { Symbol = local, Type = local.Type };
         BoundLiteral Number(int value) => new() { Type = _int, LitKind = LiteralKind.Int, IntValue = value };
-        BoundTry ReleaseAfter(LocalSymbol local, BoundBlock body) => new()
-        {
-            Body = body,
-            Finally = new BoundBlock
-            {
-                Statements = [new BoundExprStmt
-                {
-                    Expression = new BoundAssign
-                    {
-                        Target = Read(local), Value = DefaultValue(local.Type), Type = local.Type
-                    }
-                }]
-            }
-        };
-
         _captureCells.TryGetValue(variable.Symbol, out var cell);
         var iteration = cell?.Local ?? Local(variable.Symbol);
         var itemType = cell?.Value.Type ?? iteration.Type;
@@ -513,7 +498,7 @@ sealed partial class RoslynLowering
                 Right = new BoundLength { Receiver = Read(array), Type = _int }
             },
             Body = iteration.Type.IsReferenceType || iteration.Type.Kind == BoundKind.Struct
-                ? ReleaseAfter(iteration, body)
+                ? ReleaseForEachLocal(iteration, body)
                 : body,
             Update = new BoundAssign
             {
@@ -528,10 +513,114 @@ sealed partial class RoslynLowering
         {
             Statements = [
                 new BoundLocalDecl { Symbol = array, Initializer = receiver },
-                ReleaseAfter(array, new BoundBlock { Statements = [lowered] })
+                ReleaseForEachLocal(array, new BoundBlock { Statements = [lowered] })
             ]
         };
     }
+
+    private BoundStmt LowerEnumeratorForEach(IForEachLoopOperation loop, IVariableDeclaratorOperation variable,
+        ForEachStatementInfo info)
+    {
+        var collection = loop.Collection is IConversionOperation { IsImplicit: true } conversion
+            ? conversion.Operand : loop.Collection;
+        if (info.GetEnumeratorMethod is not { IsStatic: false, ReturnType.IsReferenceType: true } factory
+            || factory.Parameters.Length != 0 || collection.Type is not { IsReferenceType: true }
+            || info.MoveNextMethod is not { } advance || info.CurrentProperty?.GetMethod is not { } current
+            || !info.CurrentConversion.IsIdentity || info.ElementConversion.IsUserDefined
+            || info.ElementConversion.IsBoxing || info.ElementConversion.IsUnboxing)
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var location = loop.Syntax.GetLocation();
+        if (MapMethod(factory, location) is not { } getEnumerator
+            || MapMethod(advance, location) is not { } moveNext
+            || MapMethod(current, location) is not { } getCurrent)
+        {
+            return UnsupportedStmt(loop);
+        }
+
+        var receiver = LowerExpr(collection);
+        var enumerator = new LocalSymbol { Name = "#foreach_enumerator", Type = getEnumerator.ReturnType, Id = _localId++ };
+        _methodLocals.Add(enumerator);
+
+        BoundLocal ReadEnumerator() => new() { Symbol = enumerator, Type = enumerator.Type };
+
+        _captureCells.TryGetValue(variable.Symbol, out var cell);
+        var iteration = cell?.Local ?? Local(variable.Symbol);
+        var itemType = cell?.Value.Type ?? iteration.Type;
+        BoundExpr item = BindMemberCall(ReadEnumerator(), getCurrent, []);
+        if (item.Type != itemType)
+        {
+            item = new BoundConversion
+            {
+                Operand = item,
+                Type = itemType,
+                CastCheck = info.ElementConversion is { IsReference: true, IsImplicit: false } && itemType != _object
+            };
+        }
+
+        var body = new BoundBlock
+        {
+            Statements = [
+                cell == null ? new BoundLocalDecl { Symbol = iteration, Initializer = item } : InitialiseCapture(cell, item),
+                LowerStmt(loop.Body)
+            ]
+        };
+        var lowered = new BoundWhile
+        {
+            ConditionIsTop = true,
+            Condition = BindMemberCall(ReadEnumerator(), moveNext, []),
+            Body = iteration.Type.IsReferenceType || iteration.Type.Kind == BoundKind.Struct
+                ? ReleaseForEachLocal(iteration, body) : body
+        };
+        var scope = new BoundBlock { Statements = [lowered] };
+        if (info.DisposeMethod != null && _disposable.Methods.FirstOrDefault() is { } dispose)
+        {
+            // Test the runtime type because a subtype can implement IDisposable.
+            scope = new BoundBlock
+            {
+                Statements = [new BoundTry
+                {
+                    Body = scope,
+                    Finally = new BoundBlock
+                    {
+                        Statements = [new BoundIf
+                        {
+                            Condition = new BoundIs { Operand = ReadEnumerator(), TestType = _disposable, Type = _bool },
+                            Then = new BoundExprStmt { Expression = BindMemberCall(
+                                new BoundConversion { Operand = ReadEnumerator(), Type = _disposable }, dispose, []) }
+                        }]
+                    }
+                }]
+            };
+        }
+
+        return new BoundBlock
+        {
+            Statements = [
+                new BoundLocalDecl { Symbol = enumerator, Initializer = BindMemberCall(receiver, getEnumerator, []) },
+                ReleaseForEachLocal(enumerator, scope)
+            ]
+        };
+    }
+
+    private BoundTry ReleaseForEachLocal(LocalSymbol local, BoundBlock body) => new()
+    {
+        Body = body,
+        Finally = new BoundBlock
+        {
+            Statements = [new BoundExprStmt
+            {
+                Expression = new BoundAssign
+                {
+                    Target = new BoundLocal { Symbol = local, Type = local.Type },
+                    Value = DefaultValue(local.Type),
+                    Type = local.Type
+                }
+            }]
+        }
+    };
 
     private BoundStmt LowerUsing(IUsingOperation operation)
     {

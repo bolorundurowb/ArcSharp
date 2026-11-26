@@ -363,7 +363,7 @@ error.
 | `do`/`while` | Evaluates the condition after each iteration. |
 | `break`, `continue` | `break` exits the innermost switch or loop. `continue` advances the innermost loop. |
 | `switch` | Constant cases, supported pattern cases with optional `when` guards, and `default`. |
-| `foreach` | Iterates over single-dimensional arrays. |
+| `foreach` | Iterates over single-dimensional arrays and supported reference enumerators, including `IEnumerable<T>`. See [Enumerable foreach](features/enumerable-foreach.md). |
 | `for` | Each of the three clauses is optional. |
 | `using` | `using (var x = expr) { ... }` or `using (expr) { ... }`. See below. |
 | `return` | With or without a value. |
@@ -534,7 +534,7 @@ initialisers, and object initialisers on structs.
 Expression and block lambdas can target any delegate type in the program,
 generic or not, and `System.Action`, `System.Func` and `System.Predicate<T>`.
 Their parameters and results are by value. Lambdas can be nested and can
-capture ordinary locals, array `foreach` iteration variables, by-value
+capture ordinary locals, `foreach` iteration variables, by-value
 parameters and class receivers. Captured variables are shared and remain
 available after the method returns.
 

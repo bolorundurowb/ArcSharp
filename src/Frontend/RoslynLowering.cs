@@ -286,7 +286,11 @@ sealed partial class RoslynLowering
             return _object;
         }
 
-        if (!SymbolEqualityComparer.Default.Equals(named.ContainingAssembly, _compilation.Assembly))
+        // Roslyn recognises these interfaces by their core assembly identity.
+        if (named.OriginalDefinition.SpecialType is not (
+                SpecialType.System_Collections_IEnumerable or SpecialType.System_Collections_IEnumerator
+                or SpecialType.System_Collections_Generic_IEnumerable_T or SpecialType.System_Collections_Generic_IEnumerator_T)
+            && !SymbolEqualityComparer.Default.Equals(named.ContainingAssembly, _compilation.Assembly))
         {
             Report(location, $"library type '{named.ToDisplayString()}' is not supported", DiagnosticCatalog.UnsupportedConstructId);
             return _error;

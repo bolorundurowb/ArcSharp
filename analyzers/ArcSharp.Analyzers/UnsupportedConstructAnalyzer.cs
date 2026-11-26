@@ -248,12 +248,16 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         var loop = (ForEachStatementSyntax)context.Node;
         var model = context.SemanticModel;
         var type = model.GetTypeInfo(loop.Expression, context.CancellationToken).Type;
-        var conversion = model.GetForEachStatementInfo(loop).ElementConversion;
-        if (type is not IArrayTypeSymbol { IsSZArray: true } || loop.Type is RefTypeSyntax
+        var info = model.GetForEachStatementInfo(loop);
+        var conversion = info.ElementConversion;
+        var supportedEnumerator = type is { IsReferenceType: true, SpecialType: not SpecialType.System_String }
+            && info.GetEnumeratorMethod is { IsStatic: false, ReturnType.IsReferenceType: true, Parameters.Length: 0 }
+            && info.CurrentConversion.IsIdentity;
+        if ((type is not IArrayTypeSymbol { IsSZArray: true } && !supportedEnumerator) || loop.Type is RefTypeSyntax
             || conversion.IsUserDefined || conversion.IsBoxing || conversion.IsUnboxing)
         {
             context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct,
-                loop.GetLocation(), "'foreach' requires a single-dimensional array and a supported element conversion"));
+                loop.GetLocation(), "'foreach' requires a single-dimensional array or a supported reference enumerator, and a supported element conversion"));
         }
     }
 

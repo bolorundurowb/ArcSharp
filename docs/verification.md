@@ -126,6 +126,7 @@ asserts on purpose.
 | `arguments` | Named evaluation order for methods and constructors, defaults, parameter arrays and cleanup when an array element throws | alloc=9 dead=9 freed=9 **live=0** | `arguments PASS` |
 | `operators_members` | Direct operator overloads, conversion symbols, expression bodies, constants, readonly fields and nested names | alloc=4 dead=4 freed=4 **live=0** | `operators and members PASS` |
 | `array_foreach` | Single evaluation, numeric conversion and reference iteration with early exits | alloc=5 dead=5 freed=5 **live=0** | `array foreach PASS` |
+| `enumerable_foreach` | Interface dispatch and enumerator disposal on completion, break and exception | alloc=11 dead=11 freed=11 **live=0** | `enumerable foreach PASS` |
 | `checked_arithmetic` | Checked integral overflow and conversions, catchable exceptions, and nested unchecked arithmetic | alloc=13 dead=13 freed=13 **live=0** | `checked PASS` |
 | `bitwise` | Eager Boolean operators, masked shifts, signed and unsigned shifts, and compound updates | alloc=1 dead=1 freed=1 **live=0** | `bitwise PASS` |
 | `numeric_compound` | One evaluation of an update target, numeric promotion, and auto-property updates including string concatenation | alloc=10 dead=10 freed=10 **live=0** | `compound PASS` |
