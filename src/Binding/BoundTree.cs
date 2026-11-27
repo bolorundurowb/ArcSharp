@@ -430,6 +430,24 @@ public sealed class BoundBranch : BoundStmt
 public sealed class BoundReturn : BoundStmt
 {
     public BoundExpr? Value;
+
+    // Leaves the method without running the cleanup of the try and using
+    // regions it is inside. A suspended iterator body returns this way, because
+    // its cleanups belong to the point where it resumes.
+    public bool SkipCleanups;
+}
+
+// A target for BoundGoto. The only user is the iterator lowering, which jumps
+// from the entry of a body to the point after the yield it was suspended at,
+// so a goto never leaves a try or using region and needs no cleanup.
+public sealed class BoundLabel : BoundStmt
+{
+    public required string Name;
+}
+
+public sealed class BoundGoto : BoundStmt
+{
+    public required string Name;
 }
 
 // 'using' statement: the resource local holds the owned (+1) resource for the
@@ -474,6 +492,10 @@ public sealed class BoundMethodBody
     public required MethodSymbol Method;
     public required BoundBlock Body;
     public List<LocalSymbol> AllLocals = [];
+
+    // A generated body reads locals that may not be assigned yet, such as the
+    // saved locals of an iterator. Roslyn has already checked the user's code.
+    public bool SkipDefiniteAssignment;
 }
 
 public sealed class BoundProgram

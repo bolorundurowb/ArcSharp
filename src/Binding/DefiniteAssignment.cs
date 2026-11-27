@@ -15,7 +15,7 @@ public static class DefiniteAssignment
 {
     public static void Analyze(BoundProgram program, Action<int, string> report)
     {
-        foreach (var body in program.MethodBodies)
+        foreach (var body in program.MethodBodies.Where(body => !body.SkipDefiniteAssignment))
         {
             new Analyzer(body.Method.DeclarationLine, report).Run(body.Body);
         }
