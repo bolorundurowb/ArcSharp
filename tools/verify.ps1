@@ -311,6 +311,8 @@ try {
     Invoke-Sample arrays_wide_index "alloc=39 dead=39 freed=39 live=0" "arrays wide index PASS" @("arrays_wide_index") # long, uint and ulong array lengths and indices
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
     Invoke-Sample enumerable_foreach "alloc=11 dead=11 freed=11 live=0" "enumerable foreach PASS" @("enumerable_foreach")
+    Invoke-Sample iterators "alloc=120 dead=120 freed=120 live=0" "iterators done" @("iterators")                          # yield return and yield break in methods and getters, finally on dispose
+    Invoke-Sample iterators_regions "alloc=99 dead=99 freed=99 live=0" "regions done" @("iterators_regions")              # struct, array and string locals; nested try regions; recursion
     Invoke-Sample variance "alloc=5 dead=5 freed=5 live=0" "variance PASS" @("variance")
     Invoke-Sample nullable_values "alloc=4 dead=4 freed=4 live=0" "nullable values PASS" @("nullable_values")
     Invoke-Sample operator_updates "alloc=9 dead=9 freed=9 live=0" "operator updates PASS" @("operator_updates")
@@ -385,6 +387,8 @@ Invoke-Sample delegates_lambdas "alloc=70 dead=70 freed=70 live=0" "delegates la
     Invoke-MustFail do_while_condition "CS0029" @("do_while_condition")
     Invoke-MustFail break           "CS0139" @("break")
     Invoke-MustFail exception_filter "ARC3001" @("exception_filter")
+    Invoke-MustFail iterator_struct "an iterator in a struct is not supported" @("iterator_struct")
+    Invoke-MustFail iterator_local_function "'yield' is supported only in the body of a method or a property getter" @("iterator_local_function")
     Invoke-MustFail throw_expression "throw expressions are not supported" @("throw_expression")
     Invoke-MustFail throw_non_exception "CS0029" @("throw_non_exception")
     Invoke-MustFail list_pattern "ARC3001" @("list_pattern")
