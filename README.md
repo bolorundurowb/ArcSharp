@@ -175,7 +175,7 @@ the way.
 | [Diagnostics](docs/diagnostics.md) | Every error and warning code |
 | [Troubleshooting](docs/troubleshooting.md) | Build failures, crashes, and leaks |
 | [Architecture](docs/architecture.md) | Compiler internals, object layout, and the ARC rules |
-| [Roadmap](docs/roadmap.md) | Thirteen milestones, in order: the Roslyn frontend, a verification baseline, the lifetime pass, finalisers and exceptions (both landed), and then the rest of the compatibility target |
+| [Roadmap](docs/roadmap.md) | Fourteen milestones, in order: the Roslyn frontend, a verification baseline, the lifetime pass, finalisers and exceptions (both landed), and then the rest of the compatibility target |
 
 Contributors should read [`AGENTS.md`](AGENTS.md), which lists the invariants
 the compiler and runtime depend on.
