@@ -42,6 +42,7 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         context.RegisterSyntaxNodeAction(AnalyzeInvocation, SyntaxKind.InvocationExpression);
         context.RegisterOperationAction(AnalyzeDelegateCreation, OperationKind.DelegateCreation);
         context.RegisterSyntaxNodeAction(AnalyzeEventField, SyntaxKind.EventFieldDeclaration);
+        context.RegisterSyntaxNodeAction(AnalyzeYield, SyntaxKind.YieldReturnStatement, SyntaxKind.YieldBreakStatement);
         context.RegisterOperationAction(AnalyzeConditionalAccess, OperationKind.ConditionalAccess);
     }
 
@@ -54,8 +55,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.ThrowExpression,
         SyntaxKind.CatchFilterClause,
         SyntaxKind.LockStatement,
-        SyntaxKind.YieldReturnStatement,
-        SyntaxKind.YieldBreakStatement,
         SyntaxKind.UnsafeStatement,
         SyntaxKind.FixedStatement,
         SyntaxKind.StackAllocArrayCreationExpression,
@@ -108,6 +107,22 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         && symbol.ContainingType.TypeKind == TypeKind.Class
         && symbol.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax()
             is VariableDeclaratorSyntax { Parent.Parent: EventFieldDeclarationSyntax };
+
+    private static void AnalyzeYield(SyntaxNodeAnalysisContext context)
+    {
+        var owner = context.Node.Ancestors().FirstOrDefault(node =>
+            node is LocalFunctionStatementSyntax or BaseMethodDeclarationSyntax or AccessorDeclarationSyntax);
+        if (owner is LocalFunctionStatementSyntax)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, context.Node.GetLocation(),
+                "'yield' is supported only in the body of a method or a property getter"));
+        }
+        else if (owner?.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault() is StructDeclarationSyntax)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(Descriptors.UnsupportedConstruct, context.Node.GetLocation(),
+                "an iterator in a struct is not supported"));
+        }
+    }
 
     private static void AnalyzeEventField(SyntaxNodeAnalysisContext context)
     {
@@ -269,8 +284,6 @@ public sealed class UnsupportedConstructAnalyzer : DiagnosticAnalyzer
         SyntaxKind.ThrowExpression => "throw expressions are not supported: use a 'throw' statement",
         SyntaxKind.CatchFilterClause => "exception filters are not supported",
         SyntaxKind.LockStatement => "'lock' is not supported: there are no threads",
-        SyntaxKind.YieldReturnStatement or SyntaxKind.YieldBreakStatement =>
-            "'yield' is not supported: iterators are not implemented",
         SyntaxKind.UnsafeStatement => "'unsafe' is not supported",
         SyntaxKind.FixedStatement => "'fixed' is not supported",
         SyntaxKind.StackAllocArrayCreationExpression or SyntaxKind.ImplicitStackAllocArrayCreationExpression =>

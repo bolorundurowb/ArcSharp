@@ -44,11 +44,15 @@ public sealed class UnsupportedConstructTests
         { "ref return", "class C { static ref int Get(ref int x) { return ref x; } }" },
         { "decimal constructor with parts", "class C { static void Main() { decimal d = new decimal(1, 2, 3, false, 0); } }" },
         { "nullable primitive boxing", "class C { static void Main() { int? n = 1; object o = n; } }" },
-        { "GC.ReRegisterForFinalize", "class C { static void Main() { System.GC.ReRegisterForFinalize(new C()); } }" }
+        { "GC.ReRegisterForFinalize", "class C { static void Main() { System.GC.ReRegisterForFinalize(new C()); } }" },
+        { "iterator in a struct", "struct S { public System.Collections.Generic.IEnumerable<int> Numbers() { yield return 1; } }" },
+        { "yield in a local function", "class C { static void Main() { System.Collections.Generic.IEnumerable<int> Local() { yield return 1; } Local(); } }" }
     };
 
     public static TheoryData<string, string> SupportedSources => new()
     {
+        { "iterator method", "class C { static System.Collections.Generic.IEnumerable<int> Count() { yield return 1; yield break; } }" },
+        { "iterator getter", "class C { public System.Collections.Generic.IEnumerable<int> Numbers { get { yield return 1; } } }" },
         { "lambda capture", "delegate int D(); class C { static int M(int x) { D d = () => ++x; return d(); } }" },
         { "generic delegate", "delegate void D<T>(T value); class C { static void M(D<int> d) { d(1); } }" },
         { "method group delegate", "delegate void D(); class C { static void M() { D d = M; } }" },
