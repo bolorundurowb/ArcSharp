@@ -927,6 +927,8 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
             case BoundSwitch selection: EmitSwitch(selection); break;
             case BoundBranch branch: EmitBranch(branch); break;
             case BoundReturn r: EmitReturn(r); break;
+            case BoundLabel label: EmitLabel(label); break;
+            case BoundGoto jump: Term($"br label %{UserLabel(jump.Name)}"); break;
             case BoundUsing u: EmitUsing(u); break;
             case BoundTry t: EmitTry(t); break;
             case BoundThrow th: EmitThrow(th); break;
@@ -1244,7 +1246,11 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
 
         ReleaseTemps(mark);
         ReleaseStructTemps(smark);
-        EmitRegionCleanups(0, abandonReturn);
+        if (!r.SkipCleanups)
+        {
+            EmitRegionCleanups(0, abandonReturn);
+        }
+
         if (_terminated)
         {
             return;
@@ -1256,6 +1262,20 @@ public sealed class Emitter(BoundProgram program, string triple, LifetimeAnalysi
         }
 
         Term("br label %func.exit");
+    }
+
+    // The prefix keeps a label named by the bound tree apart from the labels the
+    // emitter numbers itself.
+    private static string UserLabel(string name) => "user." + name;
+
+    private void EmitLabel(BoundLabel label)
+    {
+        if (!_terminated)
+        {
+            Term($"br label %{UserLabel(label.Name)}");
+        }
+
+        Lbl(UserLabel(label.Name));
     }
 
     // Regions still open run their cleanup on the way out, innermost first,

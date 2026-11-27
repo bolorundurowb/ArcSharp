@@ -77,6 +77,7 @@ before you rely on it for anything beyond experiments.
 - [Strings and formatting](features/strings.md)
 - [Collections](features/collections.md)
 - [Enumerable foreach](features/enumerable-foreach.md)
+- [Iterators](features/iterators.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo

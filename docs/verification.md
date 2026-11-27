@@ -29,12 +29,12 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (93 samples, Windows x64, 26 November 2026)
+## Results (97 samples, Windows x64, 27 November 2026)
 
-`tools\verify.ps1` reported **182 passed, 0 failed** with the .NET 11.0.100 SDK:
-93 sample programs, 5 leak-report checks (`ARC_LEAKS=1`), 65 must-fail
+`tools\verify.ps1` reported **187 passed, 0 failed** with the .NET 11.0.100 SDK:
+97 sample programs, 5 leak-report checks (`ARC_LEAKS=1`), 66 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 10 cycle checks,
-2 `ARC3200` checks, one run of the analyser unit tests (93 xUnit tests), and one
+2 `ARC3200` checks, one run of the analyser unit tests (97 xUnit tests), and one
 reference-surface check. `live=0` means every object was reclaimed.
 `byref` allocates nothing because it uses only value types, and `numerics` allocates only the strings of one concatenation check.
 `cycle_strong`, `cycle_struct`, `finaliser_cycle`, `lambda_cycle` and `event_cycle` are the leaks the harness
@@ -127,6 +127,8 @@ asserts on purpose.
 | `operators_members` | Direct operator overloads, conversion symbols, expression bodies, constants, readonly fields and nested names | alloc=4 dead=4 freed=4 **live=0** | `operators and members PASS` |
 | `array_foreach` | Single evaluation, numeric conversion and reference iteration with early exits | alloc=5 dead=5 freed=5 **live=0** | `array foreach PASS` |
 | `enumerable_foreach` | Interface dispatch and enumerator disposal on completion, break and exception | alloc=11 dead=11 freed=11 **live=0** | `enumerable foreach PASS` |
+| `iterators` | Iterator methods and getters, repeated enumeration, `finally` on dispose, `using`, `foreach` and lambdas inside iterators, generics | alloc=120 dead=120 freed=120 **live=0** | `iterators done` |
+| `iterators_regions` | Struct, array and string locals across a `yield`, nested `try` regions, an exception caught inside an iterator, recursion | alloc=99 dead=99 freed=99 **live=0** | `regions done` |
 | `checked_arithmetic` | Checked integral overflow and conversions, catchable exceptions, and nested unchecked arithmetic | alloc=13 dead=13 freed=13 **live=0** | `checked PASS` |
 | `bitwise` | Eager Boolean operators, masked shifts, signed and unsigned shifts, and compound updates | alloc=1 dead=1 freed=1 **live=0** | `bitwise PASS` |
 | `numeric_compound` | One evaluation of an update target, numeric promotion, and auto-property updates including string concatenation | alloc=10 dead=10 freed=10 **live=0** | `compound PASS` |
@@ -272,7 +274,7 @@ when the error count is non-zero. Warnings, including definite-assignment
 `ARC2100` and cycle `ARC3100`, do not fail the build unless `-Werror` is
 passed, so the samples above still pass.
 
-The harness also compiles 65 programs that must fail (`samples/negative/`) and
+The harness also compiles 66 programs that must fail (`samples/negative/`) and
 checks the expected code: `ARC3001` for unsupported constructs, including collection element types with no equality or hash (`collection_float_element`, `collection_object_key`, and two struct elements that lack a method, `collection_struct_no_equals` and `collection_struct_no_hash`), ref
 locals, ref returns, shift operators, exception filters, throw expressions and
 `GC.ReRegisterForFinalize`, `CS0029` for throwing a value that is not an

@@ -150,10 +150,6 @@ sealed partial class RoslynLowering
                 case SyntaxKind.LockStatement:
                     Reject(node, "'lock' is not supported");
                     break;
-                case SyntaxKind.YieldReturnStatement:
-                case SyntaxKind.YieldBreakStatement:
-                    Reject(node, "'yield' is not supported");
-                    break;
                 case SyntaxKind.UnsafeStatement:
                     Reject(node, "'unsafe' is not supported");
                     break;

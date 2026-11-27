@@ -364,6 +364,7 @@ error.
 | `break`, `continue` | `break` exits the innermost switch or loop. `continue` advances the innermost loop. |
 | `switch` | Constant cases, supported pattern cases with optional `when` guards, and `default`. |
 | `foreach` | Iterates over single-dimensional arrays and supported reference enumerators, including `IEnumerable<T>`. See [Enumerable foreach](features/enumerable-foreach.md). |
+| `yield return`, `yield break` | Iterator methods and property getters that return `IEnumerable<T>`, `IEnumerator<T>`, `IEnumerable` or `IEnumerator`. See [Iterators](features/iterators.md). |
 | `for` | Each of the three clauses is optional. |
 | `using` | `using (var x = expr) { ... }` or `using (expr) { ... }`. See below. |
 | `return` | With or without a value. |
@@ -372,7 +373,7 @@ error.
 | `throw` | `throw expr;` and the rethrow `throw;`. See [Exceptions](#exceptions). |
 
 Not supported: tuple, extension-method and indexer patterns, list patterns on types other than arrays, `goto`,
-`lock`, `yield`, `unsafe`, and `fixed`.
+`lock`, `unsafe`, and `fixed`.
 
 ### Exceptions
 
@@ -618,7 +619,7 @@ items that target marks as full and items it marks as limited.
 - Exception filters (`catch ... when`), throw expressions, and the exception
   types that are not listed under [Exceptions](#exceptions).
 - Custom, virtual, abstract, override, extern, interface and struct events, and delegates bound to library methods or to struct instance methods. Record structs, generic records, and records with a struct or array member are also rejected.
-- Async lambdas, lambdas with `ref` parameters or results, anonymous methods, ref-returning local functions, `async`, `await`, and iterators.
+- Async lambdas, lambdas with `ref` parameters or results, anonymous methods, ref-returning local functions, `async`, `await`, and iterators in structs or local functions.
 - LINQ.
 - Threads and anything else that shares objects between threads. Reference
   counts are not atomic.

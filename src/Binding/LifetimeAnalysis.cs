@@ -275,7 +275,7 @@ public sealed class LifetimeAnalysis
         BoundFor loop => [loop.Init, loop.Condition, loop.Body, loop.Update],
         BoundSwitch selection => [selection.Value, .. selection.Sections],
         BoundSwitchSection section => [.. section.Tests, section.Body],
-        BoundBranch => [],
+        BoundBranch or BoundLabel or BoundGoto => [],
         BoundReturn statement => [statement.Value],
         BoundUsing scope => [scope.ResourceInit, scope.Body],
         BoundThrow statement => [statement.Value],

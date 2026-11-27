@@ -46,6 +46,21 @@ sealed partial class RoslynLowering
 
         var block = new BoundBlock();
         var syntax = roslyn.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+        if (syntax != null && roslyn.MethodKind is MethodKind.Ordinary or MethodKind.PropertyGet
+            && ContainsYield(syntax) && IteratorBody(syntax) is { } iteratorBody)
+        {
+            // The iterator lowering makes its own capture cells, inside the generated Step method.
+            LowerIterator(method, roslyn, syntax, iteratorBody, block);
+            _readyBodies.Add(new BoundMethodBody { Method = method, Body = block, AllLocals = _methodLocals });
+            _substitution.Clear();
+            foreach (var pair in saved)
+            {
+                _substitution[pair.Key] = pair.Value;
+            }
+
+            return;
+        }
+
         if (syntax != null)
         {
             PrepareCaptures(roslyn, syntax, block);
@@ -283,6 +298,8 @@ sealed partial class RoslynLowering
         {
             Value = thrown.Exception == null ? null : LowerExpr(thrown.Exception)
         },
+        IReturnOperation { Kind: OperationKind.YieldReturn } yielded => LowerYieldReturn(yielded),
+        IReturnOperation { Kind: OperationKind.YieldBreak } yielded => LowerYieldBreak(yielded),
         IReturnOperation returned => new BoundReturn
         {
             Value = returned.ReturnedValue == null ? null : LowerExpr(returned.ReturnedValue)
@@ -865,12 +882,22 @@ sealed partial class RoslynLowering
             return capture;
         }
 
-        var symbol = _currentMethod.Parameters.FirstOrDefault(candidate => candidate.Index == parameter.Ordinal)
-            ?? _currentMethod.Parameters.FirstOrDefault(candidate => candidate.Name == parameter.Name);
+        // The body of an iterator runs in the generated Step method, which has no
+        // parameters. The method's own parameters are locals of Step.
+        var iterator = _iterator != null && _currentMethod == _iterator.Step ? _iterator : null;
+        var owner = iterator?.Method ?? _currentMethod;
+        var symbol = owner.Parameters.FirstOrDefault(candidate => candidate.Index == parameter.Ordinal)
+            ?? owner.Parameters.FirstOrDefault(candidate => candidate.Name == parameter.Name);
         if (symbol == null)
         {
             Report(parameter.Locations.FirstOrDefault(), $"unknown parameter '{parameter.Name}'", "ARC2002");
             return ErrorExpr();
+        }
+
+        if (iterator != null)
+        {
+            var local = iterator.Parameters[symbol];
+            return new BoundLocal { Symbol = local, Type = local.Type };
         }
 
         return new BoundParam { Symbol = symbol, Type = symbol.Type, ByRef = symbol.RefKind != RefKind.None };

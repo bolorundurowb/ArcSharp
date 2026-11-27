@@ -512,6 +512,7 @@ The [compatibility target](roadmap.md#compatibility-target) is the bound. These 
 | Strings + `Console`                                    | UTF-16 indexing, common methods, formatting, and `StringBuilder` |
 | Collections                                            | `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`, `Queue<T>`, `Stack<T>` (corelib, specialised per closed type; no enumeration yet) |
 | Control flow (`if`/`while`/`do`/`for`/`break`/`continue`/`return`, `foreach` over arrays and supported reference enumerators, constant-label `switch`)             | Implemented                           |
+| Iterator methods and getters (`yield return`, `yield break`)  | Implemented                           |
 | `float` / `double`                                     | Implemented                           |
 | `byte` / `sbyte` / `short` / `ushort` / `uint` / `ulong` | Implemented                         |
 | `ref` / `out` / `in` parameters                        | Implemented                           |
