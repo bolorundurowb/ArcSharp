@@ -657,7 +657,11 @@ written.
    which is what the SDK reads. The open question is what the SDK does with a
    package that ships `.cs` content without the tag. The default is to refuse
    it with an error, because the package author has not said the source is
-   compatible.
+   compatible. A source library that references another source package must
+   allow `contentFiles` to flow through that reference. Set `PrivateAssets`
+   to `analyzers;build` on the source dependency so the generated NuGet
+   dependency includes its content files. The consumer reads the resolved
+   `Compile` items for both direct and transitive source packages.
 2. **The origin label.** `<package id>/<version>` for a package, and the
    project name for a project reference. It appears in diagnostics.
 3. **Warnings from library code.** Whether `-Werror` applies to them. The
@@ -708,8 +712,11 @@ written.
    ordinary `Microsoft.NET.Sdk`, so its authors can test it on .NET.
 7. **Source packages (needs M13).** `dotnet pack` on a library project produces
    the package described in decision 1. A `PackageReference` restores it, and
-   the SDK passes its files with their labels. The SDK refuses a package that
-   ships only assemblies, with an error that says ArcSharp consumes source.
+   the SDK passes the direct and transitive source files once, with their
+   labels. The SDK reports an error if a package provides assembly assets
+   for the program and supplies no ArcSharp source. Analyser and build-only
+   assets can still be used by MSBuild and are excluded from ArcSharp's input
+   list. This allows the M13 analyser package alongside source libraries.
    Applications commit `packages.lock.json` and restore in locked mode in CI.
    NuGet verifies the hashes, and the project builds no pin system of its own.
 8. **Analyser coverage.** The analyser already reports `ARC3001` and `ARC3100`
@@ -722,16 +729,22 @@ written.
    `StringBuilder` and `List<T>`. Two applications use it: first through a
    project reference, then through a package from a local folder feed, so the
    restore needs no network. The two routes must print the same output and
-   report the same `[arc]` counts. Extend the `verify.ps1` helpers to take a
-   response file and a library directory.
+   report the same `[arc]` counts. Give the library a dependency on a second
+   source library and exercise code from it on both routes. The packaged app
+   references only the first package and also uses the M13 analyser package.
+   Extend the `verify.ps1` helpers to take a response file and a library
+   directory.
 
 **Verification.** `tools\verify.ps1` gains these checks.
 
 - A sample for each route, from step 9, with `live=0` and its expected output.
+  The package route must restore and compile the second library through the
+  first package's dependency, and build with the M13 analyser enabled.
 - A must-fail sample for each of these, with the expected code and the origin
   label in the message: a library that uses an unsupported construct, a library
   that uses an unsupported BCL type, two packages that define the same type,
-  and a package that declares a type in `System`.
+  a package that declares a type in `System`, and an assembly-only program
+  library package.
 - A check-mode run over the library alone, which must succeed, and over a
   broken library, which must fail with the library's file and label.
 - A reproducibility check. The SDK-generated list, built twice, gives
