@@ -495,10 +495,12 @@ C# against the ARC rules. The rest of the .NET base class library is not built.
    `Queue<T>`, and `Stack<T>`. Element equality and hashing are lowered for each
    closed element type. See [Collections](features/collections.md).
 4. **In progress.** [Enumerable foreach](features/enumerable-foreach.md) supports
-   `IEnumerable<T>` and reference enumerators. Iterator methods with `yield`
-   and enumeration of the core collections remain open.
+   `IEnumerable<T>` and reference enumerators. [Iterators](features/iterators.md)
+   are done: methods and property getters with `yield`. Enumeration of the core
+   collections remains open.
    The state machine is an ARC object. Its lowering is the base for `async` in
-   M9.
+   M9. Saving only the locals that are live across a `yield`, rather than every
+   local, is a possible optimisation.
 5. LINQ to objects, in method syntax and query syntax.
 
 **Done when.** Every API has a lifetime test that checks its accounting. LINQ

@@ -467,7 +467,7 @@ The [compatibility target](docs/roadmap.md#compatibility-target) is the language
 - Boxing a primitive, an enum or a nullable primitive, and `??=` (`ARC3001`)
 - Non-virtual field-like events on classes and delegates over method groups and lambdas work. Custom accessors, virtual, abstract, override and extern events, and events on interfaces or structs report `ARC3001`.
 - A delegate cannot bind to a library method or a struct instance method (`ARC3001`), and a lambda cannot take a `ref` or `out` parameter (`ARC3001`)
-- Anonymous methods, `async` lambdas, ref-returning local functions, `async`, `await`, iterators, and LINQ
+- Anonymous methods, `async` lambdas, ref-returning local functions, `async`, `await`, iterators in structs or local functions, and LINQ
 - Null safety: a trailing `?` is accepted and ignored
 - Reassigning a reference-typed parameter (rejected by the binder)
 - Any BCL beyond `Console.Write` and `WriteLine`, the strings and formatting APIs

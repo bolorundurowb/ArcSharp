@@ -92,6 +92,7 @@ reclaimed.
   alive for the call. Also `is` and `as`.
 - `if`, `while`, `do`/`while`, `for`, `break`, `continue`, `return`, constant-label
   and pattern `switch`, and `foreach` over arrays and supported reference enumerators.
+- Iterator methods and property getters with `yield return` and `yield break`.
 - Bitwise operators, shifts, prefix and postfix updates, compound assignments,
   and checked numeric arithmetic.
 - `using` statements with deterministic `Dispose()` at scope exit, including

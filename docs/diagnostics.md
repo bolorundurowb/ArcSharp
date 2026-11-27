@@ -137,7 +137,7 @@ C# construct it cannot lower. The message names the construct.
 
 The rule covers generic interface methods on structs, generic `static abstract` methods, exception filters
 (`catch ... when`), throw expressions, `lock`, `foreach`, `switch`, `break`, `continue`, `do`/`while`, `goto`,
-async lambdas, anonymous methods, unsupported event declarations, ref-returning local functions, `async`/`await`, `yield`, LINQ, pattern matching,
+async lambdas, anonymous methods, unsupported event declarations, ref-returning local functions, `async`/`await`, an iterator in a struct, `yield` in a local function, LINQ, pattern matching,
 interpolated strings, top-level statements,
 attributes, expression-bodied members, `sealed`/`readonly`/`const`,
 `base.` access and the struct
