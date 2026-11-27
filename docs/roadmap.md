@@ -53,6 +53,7 @@ These are settled. The milestones follow them.
 | **Intermediate representation** | The ownership tree between Roslyn and LLVM. Stock CIL is not a stage in the pipeline. CIL emitted for the CLR no longer records which store escapes or when the last strong reference dies, and both the lifetime pass and deterministic finalisation need those facts. Consuming precompiled assemblies is not a target. |
 | **Cycles** | Closed. `ARC3100` warns when a cycle is visible in the type graph. The program still compiles. If the developer, or a library they use, ignores the warning, the cycle leaks and its finalisers do not run. There is no backup collector. `WeakReference<T>` is how a cycle is broken. |
 | **Finalisation** | Specified in the [memory model](memory-model.md#finalisation). A finaliser runs synchronously when the last strong reference is released, on that thread, derived class before base, before the object's children are released. Lexical scope is not the trigger. `Dispose()` stays separate. Resurrection and `GC.ReRegisterForFinalize` are rejected. `GC.Collect` and `GC.WaitForPendingFinalizers` are documented no-ops. The compiler may delete a redundant retain, and it must not move a finaliser past the last release. |
+| **Shared libraries** | A library is C# source. ArcSharp does not load a compiled assembly, so a library is compiled together with the program that uses it, in one compilation. Local source references and source-only NuGet packages both feed one list of `.cs` files to the compiler. There is no ArcSharp-specific manifest, resolver, or Git fetcher. See [M14](#m14--shared-source-libraries). |
 | **Order** | Roslyn first, before any new language feature. The lifetime pass and finalisers come before the language features that create hidden lifetimes: exceptions, delegates, iterators, and `async`. |
 
 ---
@@ -609,6 +610,168 @@ analyser package matches the compiler release it describes.
 
 ---
 
+## M14 — Shared source libraries
+
+**Goal.** A developer shares code between ArcSharp programs the way they share
+any .NET code: a project reference inside one repository, and a
+`PackageReference` across repositories. Both routes hand the compiler one list
+of `.cs` files. Nothing new is added to the native runtime.
+
+**Starts after M13.** The SDK and the analyser package are the delivery
+vehicle for steps 6 to 9. Steps 1 to 5 are compiler work and do not need the
+SDK. Until M14 lands, share a library by passing its files on the command line,
+as the `multifile` sample does, or by vendoring a pinned copy.
+
+**Why source, and why NuGet.** ArcSharp cannot load a compiled assembly, so a
+library has to arrive as source. NuGet already restores versioned files,
+resolves transitive dependencies, picks one version for the whole graph, and
+records hashes in `packages.lock.json`. That one-version rule matches the
+compiler, which builds a single compilation and cannot hold two versions of
+the same type. A Git-based fetcher would need its own manifest, resolver, and
+source-set convention, and would be a second workflow for the same job. It is
+not planned.
+
+**What the compiler does today.** These facts were checked against the
+compiler on 27 November 2026 with small probe programs. They set the work in
+this milestone.
+
+| Observation | Consequence |
+|---|---|
+| Every input joins one compilation, and a namespace is part of a type's identity. | Libraries need their own namespaces. This is the whole isolation model. |
+| An `internal` type in one input is usable from another input. | Package boundaries do not hide `internal` members. Authors must not rely on them being private. This is documented, not fixed. |
+| Two inputs that define the same type give `CS0101`, `CS0111`, and `CS0121`. The messages name the files, not the package. | Duplicate types are already an error. The message needs the package that owns each file. |
+| A second `Main` gives `CS0017`. A library with no `Main` gives `CS5001` and nothing else. | A library cannot be checked on its own. Step 3 adds a check mode. |
+| Swapping the input order changes the order of declarations in the `.ll` file, not their content. | The list must be in a fixed order for a reproducible build. Step 2 sets it. |
+| `ARC3001` and `CS` errors in library code carry the file and line, including in methods nobody calls. | Unsupported constructs in a library are already found. They only need the package name. |
+| `ARC3100` for a cycle inside library code prints no file. | A cycle warning cannot yet be traced to its package. Step 4 fixes it. |
+| An unsupported BCL type, such as `System.Threading.Tasks`, gives `CS0234` in the library file. | The same rule applies. The diagnostic must say which package needs the API. |
+
+**Decisions to settle first.** Step 1 settles each of these and records them in
+a feature document, `docs/features/source-libraries.md`, before any code is
+written.
+
+1. **The package convention.** A source package puts its files under
+   `contentFiles/cs/any/`, marks them `buildAction="Compile"`, and carries the
+   tag `arcsharp-source`. NuGet then adds the files to the consumer's
+   `Compile` items with `NuGetPackageId` and `NuGetPackageVersion` metadata,
+   which is what the SDK reads. The open question is what the SDK does with a
+   package that ships `.cs` content without the tag. The default is to refuse
+   it with an error, because the package author has not said the source is
+   compatible.
+2. **The origin label.** `<package id>/<version>` for a package, and the
+   project name for a project reference. It appears in diagnostics.
+3. **Warnings from library code.** Whether `-Werror` applies to them. The
+   default is that it does, because an ignored `ARC3100` leaks, and the
+   escape is the `--nowarn` option from step 4.
+4. **Reserved namespaces.** Whether a package may declare types in `System` or
+   `System.*`. The default is an error, because the embedded `corelib` owns
+   that space and may grow into any name a package picked.
+
+**Steps.**
+
+1. **Design record.** Write `docs/features/source-libraries.md` with the four
+   decisions above, the table of observations, and the trade-offs. Link it from
+   `docs/README.md`.
+2. **Response files, origin labels, and a fixed order.** Add `@<file>` to the
+   command line, with one argument per line, blank lines ignored, and `#`
+   comments. Add `--origin <label>`, which applies to the inputs that follow it
+   until the next `--origin`. The application's own files come first and carry
+   no label. The compiler keeps the order it is given. The SDK owns the order
+   it generates: dependencies before dependents, then ordinal path order.
+   Update `Program.cs`, `Options`, the usage text, and
+   [`docs/cli-reference.md`](cli-reference.md).
+3. **Check mode.** Add `--check`. It runs Roslyn binding, the unsupported-
+   syntax and lifetime rules, and lowering, reports every diagnostic, needs no
+   entry point, and writes no files. It compiles as a library for Roslyn, which
+   removes `CS5001`. The step also finds out, and documents, which diagnostics
+   fire for generic code that nothing instantiates, because a check run must
+   not claim more than it covers.
+4. **Diagnostics from library code.** Every diagnostic from a labelled input
+   ends with `[from <label>]`. `ARC3100` gains a file and line, taken from the
+   first type in the cycle. Duplicate-type errors name both owners. Add
+   `--nowarn <code>` so that an application can silence a warning it cannot fix
+   in a package's source, since a `#pragma` in that source is not the
+   application's to edit. Update [`docs/diagnostics.md`](diagnostics.md).
+5. **Boundary rules.** Document the rules a package author must follow: a
+   package keeps its types in its own namespace, ships no `Main`, ships no
+   `global using` that would leak into the application, and does not rely on
+   `internal` being private. Enforce the reserved namespace rule with a new
+   `ARC2xxx` error, allocated when it is written. Add the section to
+   [`docs/language-reference.md`](language-reference.md) and the cycle rule to
+   [`docs/memory-model.md`](memory-model.md): a cycle inside a library leaks in
+   every application that uses it, and `WeakReference<T>` is the fix.
+6. **Local source references (needs M13).** A library project sets
+   `ArcSharpLibrary` to `true`. An application's `ProjectReference` to it adds
+   the library's `Compile` items to the application's list, with the project
+   name as the origin, instead of linking an assembly. References through
+   other projects are followed. The library project must also build under an
+   ordinary `Microsoft.NET.Sdk`, so its authors can test it on .NET.
+7. **Source packages (needs M13).** `dotnet pack` on a library project produces
+   the package described in decision 1. A `PackageReference` restores it, and
+   the SDK passes its files with their labels. The SDK refuses a package that
+   ships only assemblies, with an error that says ArcSharp consumes source.
+   Applications commit `packages.lock.json` and restore in locked mode in CI.
+   NuGet verifies the hashes, and the project builds no pin system of its own.
+8. **Analyser coverage.** The analyser already reports `ARC3001` and `ARC3100`
+   from `dotnet build`. Add an xUnit test with the unsupported construct in a
+   second syntax tree, to prove the diagnostic points at the library file.
+   Package files arrive as `Compile` items, so no analyser change is expected.
+   If the test shows otherwise, fix it in this step.
+9. **One real library, used twice.** Add a small library inside the supported
+   subset under `samples/libs/`, such as a text helper written against
+   `StringBuilder` and `List<T>`. Two applications use it: first through a
+   project reference, then through a package from a local folder feed, so the
+   restore needs no network. The two routes must print the same output and
+   report the same `[arc]` counts. Extend the `verify.ps1` helpers to take a
+   response file and a library directory.
+
+**Verification.** `tools\verify.ps1` gains these checks.
+
+- A sample for each route, from step 9, with `live=0` and its expected output.
+- A must-fail sample for each of these, with the expected code and the origin
+  label in the message: a library that uses an unsupported construct, a library
+  that uses an unsupported BCL type, two packages that define the same type,
+  and a package that declares a type in `System`.
+- A check-mode run over the library alone, which must succeed, and over a
+  broken library, which must fail with the library's file and label.
+- A reproducibility check. The SDK-generated list, built twice, gives
+  identical `.ll` files, and a shuffled list gives the same program output and
+  accounting.
+- A warning check. An `ARC3100` from a package names the package, and
+  `--nowarn ARC3100` silences it, including under `-Werror`.
+- The analyser test from step 8.
+- A sample that records the `internal` behaviour, so that a later change to it
+  is deliberate.
+
+**Documentation.** Besides the files named above, update
+[`README.md`](../README.md) (feature summary and status),
+[`docs/getting-started.md`](getting-started.md) (how to add a library),
+[`docs/architecture.md`](architecture.md) (the pipeline and the status table),
+[`docs/verification.md`](verification.md) (new samples and counts), and
+`docs/README.md` (the milestone count). Every example program in the guides
+must compile and run.
+
+**Done when.** One library is used from two applications, by project reference
+and by a restored package, with the same output and the same accounting, and
+`tools\verify.ps1` passes. A broken library names its package and file in the
+diagnostic. The boundary rules are documented. The medians from
+`tools\compare-gc.ps1 -Runs 5` are added to the
+[GC comparison](features/gc-comparison.md).
+
+**Not part of this milestone.**
+
+- Compiled assemblies as input. See [Decisions](#decisions).
+- Several versions of one library in one program, and enforced `internal`
+  hiding. Both need separate compilation units, which the compiler does not
+  have.
+- A Git-based fetcher, an ArcSharp manifest, and a private package registry.
+  NuGet feeds already cover the last.
+- Publishing a package to nuget.org. The tooling makes the package. Releasing
+  it is the author's decision.
+- Source generators and analysers that run during the restore.
+
+---
+
 ## Not scheduled
 
 These are outside the compatibility target, or closed. They are recorded so
@@ -623,6 +786,7 @@ they are not reopened by accident.
 | Stack allocation of a non-escaping object | Possible after M12, as an optimisation on the same object identity. Not planned. |
 | A global weak table and a non-zeroing `unowned` reference | Not decided. `WeakReference<T>` meets the target as it is. |
 | The rest of the .NET base class library | Outside the target. |
+| Compiled .NET assemblies as libraries, side-by-side library versions, and a Git-based package fetcher | Outside the target. A library is source compiled with the program. See [M14](#m14--shared-source-libraries). |
 | 32-bit, ARM, and big-endian targets | Outside the target. They need the 8-byte slot assumption removed. |
 
 ---
