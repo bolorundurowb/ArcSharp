@@ -310,6 +310,7 @@ try {
     Invoke-Sample exceptions_runtime "alloc=60 dead=60 freed=60 live=0" "exceptions runtime PASS" @("exceptions_runtime") # runtime checks raise catchable exceptions
     Invoke-Sample arrays_wide_index "alloc=39 dead=39 freed=39 live=0" "arrays wide index PASS" @("arrays_wide_index") # long, uint and ulong array lengths and indices
     Invoke-Sample array_foreach "alloc=5 dead=5 freed=5 live=0" "array foreach PASS" @("array_foreach")
+    Invoke-Sample enumerable_foreach "alloc=11 dead=11 freed=11 live=0" "enumerable foreach PASS" @("enumerable_foreach")
     Invoke-Sample variance "alloc=5 dead=5 freed=5 live=0" "variance PASS" @("variance")
     Invoke-Sample nullable_values "alloc=4 dead=4 freed=4 live=0" "nullable values PASS" @("nullable_values")
     Invoke-Sample operator_updates "alloc=9 dead=9 freed=9 live=0" "operator updates PASS" @("operator_updates")

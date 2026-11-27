@@ -76,6 +76,7 @@ before you rely on it for anything beyond experiments.
 - [Core library sources](features/core-library.md)
 - [Strings and formatting](features/strings.md)
 - [Collections](features/collections.md)
+- [Enumerable foreach](features/enumerable-foreach.md)
 - [Comparing ArcSharp with the .NET garbage collector](features/gc-comparison.md)
 
 ## Logo
