@@ -84,7 +84,7 @@ reclaimed.
   `ToString()`, interpolation, composite formatting, and
   `System.Text.StringBuilder`. See [Strings and formatting](docs/features/strings.md).
 - `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`, `Queue<T>` and `Stack<T>`,
-  with element equality taken from `Equals` and `GetHashCode`. See
+  with generic enumeration and element equality taken from `Equals` and `GetHashCode`. See
   [Collections](docs/features/collections.md).
 - Record classes with value equality, `with` and deconstruction, and object
   initialisers on classes.

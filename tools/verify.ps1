@@ -353,6 +353,7 @@ Invoke-Sample delegates_lambdas "alloc=70 dead=70 freed=70 live=0" "delegates la
     Invoke-Sample exceptions_using "alloc=74 dead=74 freed=74 live=0" "exceptions using PASS" @("exceptions_using")       # Dispose runs while unwinding
     Invoke-Sample exceptions_finaliser "alloc=32 dead=32 freed=32 live=0" "exceptions finaliser PASS" @("exceptions_finaliser") # a throwing finaliser is reported and teardown continues
     Invoke-Sample collections "alloc=270 dead=270 freed=270 live=0" "collections PASS" @("collections") # List, Dictionary, HashSet, Queue, Stack; element equality and hashing; removal releases at once
+    Invoke-Sample collection_enumeration "alloc=38 dead=38 freed=38 live=0" "collection enumeration PASS" @("collection_enumeration")
 
     Write-Host "--- leak detector (ARC_LEAKS=1) ---"
     Invoke-LeakCheck leaks 6 "leaks reported" @("leaks") @(

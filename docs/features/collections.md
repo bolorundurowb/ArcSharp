@@ -28,9 +28,9 @@ Job next = pending.Dequeue();
 | `Queue<T>` | `Count`, `Enqueue`, `Dequeue`, `Peek`, `Clear` |
 | `Stack<T>` | `Count`, `Push`, `Pop`, `Peek`, `Clear` |
 
-None of these types can be enumerated yet. `foreach`, `IEnumerable<T>`, and
-LINQ come with iterators in M8 step 4 and step 5, so the collections are read
-through their indexers or their `Dequeue`, `Pop` and `ToArray` members.
+All five types support generic `foreach` and expose `GetEnumerator()`.
+See [Collection enumeration](collection-enumeration.md) for ordering, mutation
+and ARC lifetime behaviour.
 
 ## How elements are compared and hashed
 

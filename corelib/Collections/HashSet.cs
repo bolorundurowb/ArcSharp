@@ -1,6 +1,8 @@
+using System.Collections;
+
 namespace System.Collections.Generic;
 
-public sealed class HashSet<T>
+public sealed class HashSet<T> : IEnumerable<T>
 {
     private readonly Dictionary<T, bool> _items;
 
@@ -10,6 +12,16 @@ public sealed class HashSet<T>
     }
 
     public int Count => _items.Count;
+
+    public IEnumerator<T> GetEnumerator()
+    {
+        return new HashSetEnumerator<T>(_items.GetEnumerator());
+    }
+
+    IEnumerator IEnumerable.GetEnumerator()
+    {
+        return GetEnumerator();
+    }
 
     public bool Add(T item)
     {
@@ -35,5 +47,40 @@ public sealed class HashSet<T>
     public void Clear()
     {
         _items.Clear();
+    }
+}
+
+internal sealed class HashSetEnumerator<T> : IEnumerator<T>
+{
+    private readonly IEnumerator<KeyValuePair<T, bool>> _entries;
+
+    public HashSetEnumerator(IEnumerator<KeyValuePair<T, bool>> entries)
+    {
+        _entries = entries;
+    }
+
+    public T Current => _entries.Current.Key;
+
+    object IEnumerator.Current
+    {
+        get
+        {
+            throw new NotSupportedException("Non-generic enumeration is not supported.");
+        }
+    }
+
+    public bool MoveNext()
+    {
+        return _entries.MoveNext();
+    }
+
+    public void Reset()
+    {
+        _entries.Reset();
+    }
+
+    public void Dispose()
+    {
+        _entries.Dispose();
     }
 }
