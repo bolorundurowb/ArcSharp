@@ -29,10 +29,10 @@ Peak memory and collector pauses are a separate measurement. The programs in
 The script is not part of this harness, and GitHub Actions does not run it.
 The numbers depend on the machine.
 
-## Results (97 samples, Windows x64, 27 November 2026)
+## Results (98 samples, Windows x64, 28 November 2026)
 
-`tools\verify.ps1` reported **187 passed, 0 failed** with the .NET 11.0.100 SDK:
-97 sample programs, 5 leak-report checks (`ARC_LEAKS=1`), 66 must-fail
+`tools\verify.ps1` reported **188 passed, 0 failed** with the .NET 11.0.100 SDK:
+98 sample programs, 5 leak-report checks (`ARC_LEAKS=1`), 66 must-fail
 diagnostics, 2 run-time abort checks, 3 command-line checks, 10 cycle checks,
 2 `ARC3200` checks, one run of the analyser unit tests (97 xUnit tests), and one
 reference-surface check. `live=0` means every object was reclaimed.
@@ -139,6 +139,7 @@ asserts on purpose.
 | `exceptions_using` | `Dispose()` while an exception unwinds, a `Dispose()` that throws after the body and during an unwind, `return` from `using`, and `using` inside `try` with `finally` | alloc=74 dead=74 freed=74 **live=0** | `exceptions using PASS` |
 | `exceptions_finaliser` | a finaliser that throws is reported and ignored, the object's children are still finalised, an exception already unwinding survives it, and a finaliser that catches its own exception | alloc=32 dead=32 freed=32 **live=0** | `exceptions finaliser PASS` |
 | `collections` | `List<T>`, `Dictionary<TKey, TValue>` (including `KeyNotFoundException`), `HashSet<T>`, `Queue<T>` and `Stack<T>`, with int, string, `long`, class, `record` and struct keys. A `WeakReference<T>` shows that each removal, replacement, dequeue, pop and clear releases its element at that statement | alloc=270 dead=270 freed=270 **live=0** | `collections PASS` |
+| `collection_enumeration` | Generic enumeration of all five core collections, reference-valued dictionary pairs, skipped entries, queue wraparound, early exit and mutation detection | alloc=38 dead=38 freed=38 **live=0** | `collection enumeration PASS` |
 
 The two new generic samples were also built and run with the normal .NET 8
 compiler, producing the same stdout. The generic identity example in the

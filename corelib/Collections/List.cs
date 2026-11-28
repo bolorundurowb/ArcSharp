@@ -1,9 +1,12 @@
+using System.Collections;
+
 namespace System.Collections.Generic;
 
-public sealed class List<T>
+public sealed class List<T> : IEnumerable<T>
 {
     private T[] _items;
     private int _count;
+    private int _version;
 
     public List()
     {
@@ -22,6 +25,8 @@ public sealed class List<T>
 
     public int Count => _count;
 
+    internal int Version => _version;
+
     public T this[int index]
     {
         get
@@ -32,6 +37,7 @@ public sealed class List<T>
         set
         {
             CheckIndex(index);
+            _version++;
             _items[index] = value;
         }
     }
@@ -43,6 +49,7 @@ public sealed class List<T>
             Grow(_count + 1);
         }
 
+        _version++;
         _items[_count] = item;
         _count++;
     }
@@ -59,6 +66,7 @@ public sealed class List<T>
             Grow(_count + 1);
         }
 
+        _version++;
         for (int i = _count; i > index; i--)
         {
             _items[i] = _items[i - 1];
@@ -83,6 +91,7 @@ public sealed class List<T>
     public void RemoveAt(int index)
     {
         CheckIndex(index);
+        _version++;
         _count--;
         for (int i = index; i < _count; i++)
         {
@@ -95,6 +104,7 @@ public sealed class List<T>
 
     public void Clear()
     {
+        _version++;
         for (int i = 0; i < _count; i++)
         {
             _items[i] = default(T);
@@ -132,6 +142,16 @@ public sealed class List<T>
         return result;
     }
 
+    public IEnumerator<T> GetEnumerator()
+    {
+        return new ListEnumerator<T>(this);
+    }
+
+    IEnumerator IEnumerable.GetEnumerator()
+    {
+        return GetEnumerator();
+    }
+
     private void CheckIndex(int index)
     {
         if (index < 0 || index >= _count)
@@ -160,5 +180,63 @@ public sealed class List<T>
         }
 
         _items = items;
+    }
+}
+
+internal sealed class ListEnumerator<T> : IEnumerator<T>
+{
+    private List<T> _list;
+    private int _version;
+    private int _index;
+    private T _current;
+
+    public ListEnumerator(List<T> list)
+    {
+        _list = list;
+        _version = list.Version;
+        _current = default(T);
+    }
+
+    public T Current => _current;
+
+    object IEnumerator.Current
+    {
+        get
+        {
+            throw new NotSupportedException("Non-generic enumeration of a collection is not supported.");
+        }
+    }
+
+    public bool MoveNext()
+    {
+        CheckVersion();
+        if (_index < _list.Count)
+        {
+            _current = _list[_index];
+            _index++;
+            return true;
+        }
+
+        _current = default(T);
+        return false;
+    }
+
+    public void Reset()
+    {
+        CheckVersion();
+        _index = 0;
+        _current = default(T);
+    }
+
+    public void Dispose()
+    {
+    }
+
+    private void CheckVersion()
+    {
+        if (_version != _list.Version)
+        {
+            throw new InvalidOperationException("Collection was modified during enumeration.");
+        }
     }
 }

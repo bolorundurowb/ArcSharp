@@ -601,7 +601,7 @@ collections and exceptions.
 | `new WeakReference<T>(target)` | |
 | `weak.TryGetTarget(out T target)` | Returns `true` and a strong reference if the target is alive |
 | `weak.SetTarget(target)` | |
-| `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`, `Queue<T>`, `Stack<T>` | Count, indexers and the members listed in [Collections](features/collections.md). No enumeration yet |
+| `List<T>`, `Dictionary<TKey, TValue>`, `HashSet<T>`, `Queue<T>`, `Stack<T>` | Count, indexers, generic enumeration and the other members listed in [Collections](features/collections.md) |
 
 The reference assembly provides these types under their standard `System`
 names. General-purpose file and network APIs are outside the currently

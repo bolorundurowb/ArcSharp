@@ -3,7 +3,7 @@ namespace System.Collections.Generic;
 // Entries live in parallel arrays, so no nested entry type is needed. A removed
 // entry is unlinked from its bucket and cleared at once, and the next resize
 // compacts the arrays. Entries stay in insertion order until a resize.
-public sealed class Dictionary<TKey, TValue>
+public sealed class Dictionary<TKey, TValue> : IEnumerable<KeyValuePair<TKey, TValue>>
 {
     private int[] _buckets;
     private int[] _next;
@@ -13,6 +13,7 @@ public sealed class Dictionary<TKey, TValue>
     private TValue[] _values;
     private int _used;
     private int _count;
+    private int _version;
 
     public Dictionary()
     {
@@ -30,6 +31,16 @@ public sealed class Dictionary<TKey, TValue>
     }
 
     public int Count => _count;
+
+    public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
+    {
+        return new DictionaryEnumerator<TKey, TValue>(this, _version);
+    }
+
+    IEnumerator IEnumerable.GetEnumerator()
+    {
+        return GetEnumerator();
+    }
 
     public TValue this[TKey key]
     {
@@ -150,6 +161,33 @@ public sealed class Dictionary<TKey, TValue>
         }
     }
 
+    internal void CheckEnumerationVersion(int version)
+    {
+        if (version != _version)
+        {
+            throw new InvalidOperationException("The dictionary was modified during enumeration.");
+        }
+    }
+
+    internal int FindNextLiveEntry(int index)
+    {
+        while (index < _used)
+        {
+            if (_live[index])
+            {
+                return index;
+            }
+            index++;
+        }
+
+        return -1;
+    }
+
+    internal KeyValuePair<TKey, TValue> ReadEntry(int index)
+    {
+        return new KeyValuePair<TKey, TValue>(_keys[index], _values[index]);
+    }
+
     private int FindEntry(TKey key, int hash)
     {
         for (int entry = _buckets[BucketOf(hash, _buckets.Length)]; entry >= 0; entry = _next[entry])
@@ -181,6 +219,8 @@ public sealed class Dictionary<TKey, TValue>
         _next[entry] = _buckets[bucket];
         _buckets[bucket] = entry;
         _count++;
+        // Only insertion can resize and shift the indices of existing entries.
+        _version++;
     }
 
     // Doubles the arrays unless at least half the entries are holes, in which
@@ -230,5 +270,59 @@ public sealed class Dictionary<TKey, TValue>
     private static int BucketOf(int hash, int bucketCount)
     {
         return (hash & 0x7FFFFFFF) % bucketCount;
+    }
+}
+
+internal sealed class DictionaryEnumerator<TKey, TValue> : IEnumerator<KeyValuePair<TKey, TValue>>
+{
+    private readonly Dictionary<TKey, TValue> _dictionary;
+    private readonly int _version;
+    private int _index;
+    private KeyValuePair<TKey, TValue> _current;
+
+    public DictionaryEnumerator(Dictionary<TKey, TValue> dictionary, int version)
+    {
+        _dictionary = dictionary;
+        _version = version;
+    }
+
+    public KeyValuePair<TKey, TValue> Current => _current;
+
+    object IEnumerator.Current
+    {
+        get
+        {
+            throw new NotSupportedException("Non-generic enumeration of a dictionary is not supported.");
+        }
+    }
+
+    public bool MoveNext()
+    {
+        _dictionary.CheckEnumerationVersion(_version);
+        if (_index >= 0)
+        {
+            int entry = _dictionary.FindNextLiveEntry(_index);
+            if (entry >= 0)
+            {
+                _index = entry + 1;
+                _current = _dictionary.ReadEntry(entry);
+                return true;
+            }
+        }
+
+        _index = -1;
+        _current = default(KeyValuePair<TKey, TValue>);
+        return false;
+    }
+
+    public void Reset()
+    {
+        _dictionary.CheckEnumerationVersion(_version);
+        _index = 0;
+        _current = default(KeyValuePair<TKey, TValue>);
+    }
+
+    public void Dispose()
+    {
     }
 }
